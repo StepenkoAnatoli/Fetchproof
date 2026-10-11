@@ -360,6 +360,41 @@ export function recordSpend(pages, env = process.env) {
   return state;
 }
 
+export function reserveCollection(pages, pauseReason, env = process.env) {
+  if (!Number.isSafeInteger(pages) || pages < 0 || pages > REQUEST_LIMITS.maxPages || !pauseReason) {
+    throw new Error('invalid collection reservation');
+  }
+  const state = readAutoCollect(env);
+  if (state.paused) throw new Error('auto-collect is paused; collection was not started');
+  if (state.spent.pages + pages > state.settings.dailyPages) throw new Error('the daily page allowance changed; collection was not started');
+  const reservation = { day: state.spent.day, pages, pauseReason: String(pauseReason), settled: false };
+  state.spent.pages += pages;
+  state.paused = reservation.pauseReason;
+  writeAutoCollect(state, env);
+  return reservation;
+}
+
+export function settleCollection(reservation, measured, pauseReason = '', env = process.env) {
+  if (reservation.settled) return readAutoCollect(env);
+  if (measured !== null && (!Number.isSafeInteger(measured) || measured < 0 || measured > reservation.pages)) {
+    throw new Error('invalid collection settlement');
+  }
+  const state = readAutoCollect(env);
+  const charged = measured ?? reservation.pages;
+  const sameDay = state.spent.day === reservation.day;
+  if (sameDay && state.spent.pages >= reservation.pages) state.spent.pages -= reservation.pages - charged;
+  else state.spent.pages += charged;
+  let nextPause = String(pauseReason);
+  if (measured === null && !nextPause) nextPause = reservation.pauseReason;
+  if (!sameDay && state.spent.pages > state.settings.dailyPages && !nextPause) {
+    nextPause = 'collection crossed the daily meter boundary; its completion-day charge exceeds today\'s cap. Inspect the run before pressing Resume.';
+  }
+  if (state.paused === reservation.pauseReason || (!state.paused && nextPause)) state.paused = nextPause;
+  writeAutoCollect(state, env);
+  reservation.settled = true;
+  return state;
+}
+
 /** Stop auto-collect until the operator resumes it; '' resumes. */
 export function setPaused(reason, env = process.env) {
   const state = readAutoCollect(env);

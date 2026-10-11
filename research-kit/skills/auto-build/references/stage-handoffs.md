@@ -1,9 +1,11 @@
 # Stage Handoffs
 
+<!-- Modified by Research-Kit on 2026-10-08: approval handoffs and unattended owner stops align with the governing Research-Kit note and ADR-0146; ADR-0150 adds complete-review/Git-ownership handoff guidance. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+
 How auto-build hands each stage to the skill that owns it, what that skill must leave behind
 before the next stage may start, where auto-build adapts the skill's rules (and why), and what
-to do when the skill is not installed. The adaptations are few and each one exists because the
-user asked for one decision point; nothing else in a delegated skill is changed.
+to do when the skill is not installed. Design questions are batched into the Mandate;
+the governing Research-Kit note keeps separate owner stops and completed-head merge approval.
 
 ## Contents
 
@@ -53,18 +55,27 @@ the protocol, exit codes, machine roles and kit-finding format. One researcher p
 question, each in its own research project folder, each with a page budget.
 
 **Must leave, per topic:** the research project folder under the project's convention (default
-`docs/research/<YYYY-MM-DD>-<topic>/`), `preflight` exit 0 recorded, `research/BRIEF.md`, and
-a row in `RUN.md`'s Research table with status BRIEFED or COMMITTED.
+`docs/research/<YYYY-MM-DD>-<topic>/`), handoff and `preflight` exit 0 recorded,
+classified MAP, rewritten Findings and an authored brief with both judged sections
+answered and current stamped inputs (authored unstamped compatibility remains under
+ADR-0138), plus a row in `RUN.md`'s Research table with status BRIEFED or COMMITTED.
+File presence or a Git request result marked `collected` alone is not this handoff.
 
 **Sufficiency gate** (the lead's check, after the kit's): read each brief against the task and
 write under "Decisions and assumptions" one line per design-critical question with the claim
 that answers it (`E-nn`). A question with no claim is either a KNOWN-UNKNOWN with a verification
 step the design will include, or a reason to return the brief.
 
-**Adaptation:** none to the protocol. Budget: if the user is absent and no standing mandate sets
-one, collect only through the free transports (`http-keyless`, `browser`) and record that the
-evidence policy was therefore `pluralist` with keyless warnings; never spend a metered budget
-nobody agreed to.
+For Git requests, the builder reads and judges the returned captures, while the
+collector records Findings, closures, the map and current authored brief. Return a
+review-only gap in prose; fetch only a missing fact. ADR-0052's received-package local
+review and re-packaging remains available without collection (ADR-0150).
+
+**Adaptation:** the governing Research-Kit note keeps the owner stops and the separate
+completed-head approval. A standing budget is a preference; paid collection requires
+the owner's authorization for that unchanged collection. Without it, use only free
+transports (`http-keyless`, `browser`) and record the actual evidence policy and
+keyless warnings. Free collection does not change the configured policy to pluralist.
 
 **When the trigger is not met:** SKIPPED, with the one-sentence reason in the stage table. The
 reason must be checkable ("all behaviour depends on code under `src/` and the project's own
@@ -84,7 +95,7 @@ finding - a spike's output is an answer, and keeping its code is a new auto-buil
 
 - Brainstorming asks "does this look right so far?" after each section and asks for a spec
   review as a separate question. Auto-build batches these into the Mandate because the user asked
-  for one decision point. The content is unchanged: every section is presented, every assumption
+  for one design approval. The content is unchanged: every section is presented, every assumption
   is labelled, the recommendation leads with the case against it.
 - Brainstorming's one-way ratchet is kept. Hidden complexity discovered after the Mandate
   upgrades the classification; the lead stops, says what it found, and presents a revised
@@ -101,10 +112,11 @@ builder brief: the requirement rows (`R-nn`) the unit satisfies and the research
 it implements from. The unit reviewer checks the unit against those rows as well as the brief.
 
 **Adaptation:** lead-orchestrator asks for explicit approval before merging and before expanding
-scope. The Mandate is that approval for the merge (`GO MERGE`) and for work inside the task
-statement. It is not approval for scope beyond the task statement, invariant changes, data
-deletion, production changes or force-pushes: those still require the user, and in an unattended
-run they are recorded as BLOCKED items.
+scope. The Mandate approves work inside the task statement, while merge still requires
+the owner's separate reply for the completed head. Scope beyond the task statement,
+invariant changes, data deletion, production changes and force-pushes remain owner stops.
+At any unanswered required stop, record "awaiting owner" and end the turn, including
+an unattended run. A changed Mandate requires fresh approval.
 
 ## 6. Stage 6: Harden
 

@@ -60,7 +60,7 @@ function renderRequests(r) {
     $('auto-every').value = r.settings.intervalMinutes;
     $('auto-topics').value = r.settings.topicsFolder;
   }
-  const parts = [`${r.spent.pages} of ${r.settings.dailyPages} page(s) spent today`];
+  const parts = [`${r.spent.pages} of ${r.settings.dailyPages} page(s) used or reserved today`];
   if (r.busy) parts.push('collecting now');
   if (r.lastCheck) parts.push(`last check ${r.lastCheck}`);
   if (r.blocked) parts.push(`BLOCKED: ${r.blocked}`);

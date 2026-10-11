@@ -49,6 +49,25 @@ try {
   throw err;
 }
 
+if (!isGated(root)) {
+  // This adapter scope notice is not a research judgment or a registry warning to
+  // promote. Exit 0 means inspection completed; pass:false grants no build approval.
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({
+      pass: false,
+      counts: { pass: 0, warn: 1, fail: 0 },
+      evidencePolicy: verdict.evidencePolicy,
+      findings: [{
+        severity: 'warn', check: 'gate', rule: 'not-gated',
+        detail: 'This project holds none of the four gate markers; no research verdict or permission to build was established.',
+      }],
+    }, null, 2)}\n`);
+    await exitAfterFlush(0);
+  }
+  process.stdout.write('not gated - this project holds none of the four gate markers, so there is nothing to judge.\n');
+  process.exit(0);
+}
+
 if (flags.json) {
   process.stdout.write(`${JSON.stringify({
     pass: verdict.pass,
@@ -57,11 +76,6 @@ if (flags.json) {
     findings: verdict.findings.map(({ severity, check, rule, detail }) => ({ severity, check, rule, detail })),
   }, null, 2)}\n`);
   await exitAfterFlush(verdict.pass ? 0 : 1);
-}
-
-if (!isGated(root)) {
-  process.stdout.write('not gated - this project holds none of the four gate markers, so there is nothing to judge.\n');
-  process.exit(0);
 }
 
 if (!flags.quiet) {

@@ -385,7 +385,7 @@ ${compatibility.remedy}`);
   let overBudget = 0;
   const { exhausted, live, onExhaustion, countUncollected, countSkippedSearch } = credits;
 
-  const seen = new Set(corpus.captures.entries.map((e) => e.url).filter(Boolean).map(urlKey));
+  const seen = new Set();
   const targets = [];
 
   // The plan's own URLs, compared with each other by `urlKey`: a page written down twice -
@@ -477,7 +477,9 @@ ${compatibility.remedy}`);
     if (!found.ok) continue;
     discovered.push({ query: text, results: found.results, provider: found.provider, searchId: found.searchId });
     noteOutcome(found.results, found.provider);
-    for (const candidate of selectCandidates(found.results, { prefer, perQuery: settings.perQuery, seen, query: text })) {
+    const eligible = found.results.filter((row) => isWebUrl(row?.url)
+      && !cacheDecision(corpus.captures, row.url, { refreshDays: freshness, force, now }).hit);
+    for (const candidate of selectCandidates(eligible, { prefer, perQuery: settings.perQuery, seen, query: text })) {
       // Discovered by a search, not chosen by a person: context until an agent reads the
       // page and promotes it. Ranking preference is not source authority. The target row is
       // this coordinator's, and the two paths spell it differently (ADR-0135 leaves that):

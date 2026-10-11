@@ -168,3 +168,50 @@ test('invisible formatting characters are not part of the passage either', async
   assert.deepEqual(judged.filter((f) => f.rule === 'quote-not-found').map((f) => f.detail), [],
     'a passage the capture holds word for word was refused over a character nobody can see');
 });
+
+test('a quote with no normalized text cannot be found', () => {
+  const sentence = 'The free plan allows 10 requests per minute.';
+  for (const [name, raw] of [
+    ['emphasis only', '*'.repeat(40)],
+    ['invisible format only', '\u200B'.repeat(40)],
+    ['three raw formatting words', '**** **** ****'],
+    ['empty Markdown label', `[](https://x.invalid/${'q'.repeat(40)})`],
+  ]) {
+    const [anchor] = quoteAnchors(`[quote: ${raw}]`);
+    assert.ok(anchor, name);
+    assert.equal(normalizeForMatch(anchor.quote), '', name);
+    assert.equal(anchorFound(anchor.fragments, sentence), false, `${name} was reported as found without matching text`);
+    assert.equal(anchorFound(anchor.fragments, ''), false, `${name} was found in an empty body`);
+  }
+  assert.equal(anchorFound([], sentence), false, 'an empty fragment list proves no occurrence');
+  assert.equal(anchorFound(['***', 'The free plan', '\u200B', 'allows 10 requests'], sentence), true,
+    'formatting-only fragments alongside actual quoted text are still ignored');
+  assert.equal(anchorFound(['allows 10 requests', '***', 'The free plan'], sentence), false,
+    'the remaining nonempty fragments must occur in order');
+  assert.equal(anchorFound(['***', 'The free plan allows 100 requests'], sentence), false,
+    'an invented visible number remains unfound');
+});
+
+test('citations refuse a formatting-only quote that clears a raw length or word floor', () => {
+  for (const [name, raw] of [
+    ['forty emphasis characters', '*'.repeat(40)],
+    ['forty invisible format characters', '\u200B'.repeat(40)],
+    ['three raw formatting words', '**** **** ****'],
+    ['long empty Markdown label', `[](https://x.invalid/${'q'.repeat(40)})`],
+  ]) {
+    const judged = quoted(`No literal passage. [quote: ${raw}]`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', `${name}: ${JSON.stringify(judged)}`);
+    assert.equal(judged.find((f) => f.rule === 'quote-too-short'), undefined,
+      `${name}: the raw floors are unchanged`);
+    assert.ok(!judged.some((f) => f.severity === 'pass' && /quote.*found/.test(f.detail)),
+      `${name}: the PASS message must not claim a quote was found`);
+  }
+  const short = quoted('Below both raw floors. [quote: ***]');
+  assert.equal(short.find((f) => f.rule === 'quote-too-short')?.severity, 'warn');
+  assert.equal(short.find((f) => f.rule === 'quote-not-found'), undefined,
+    'the existing short-quote warning still stops the matching path');
+  const token = 'x'.repeat(40);
+  assert.deepEqual(quotedToken(token, `Real token at the raw floor. [quote: ${token}]`)
+    .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [],
+    'a found forty-character token keeps its existing exemption');
+});

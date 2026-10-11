@@ -105,3 +105,20 @@ Your part in all of this is reading `research/BRIEF.md` when the agent says it p
 | `collect` answers 403 or 404 | the token lacks **Actions: Read and write** on that repository, or the repository name is wrong |
 | `fetch_corpus` says the run finished `failure` | open the run link it gives; the first failing step names the cause, most often the Firecrawl environment not yet set up in that repository |
 | the agent wants to build and the package says `buildAuthorized: false` | it skipped step 3; tell it to review first |
+
+### A certificate error on a network with TLS inspection
+
+If Node cannot verify a certificate and your network uses TLS inspection, obtain its
+approved CA certificate from the network owner. When that trusted root is what is
+missing, set `NODE_EXTRA_CA_CERTS` to its PEM file in the environment of the Node
+process **before starting it**. For the MCP server above, add it to that server's `env`
+block and restart the agent. The file must exist on the machine running Node; a client
+setting does not configure a collector running on GitHub.
+
+Node reads this variable only at process launch. A missing or malformed file produces
+a warning once, with other extra-certificate errors ignored. The variable is ignored
+for setuid-root execution or Linux file capabilities; an explicit TLS/HTTPS `ca`
+option bypasses the default and extra certificates. This addresses a missing approved
+trust root, not every certificate error. Keep certificate verification enabled.
+See the [Node v24.20.0 CLI reference](https://raw.githubusercontent.com/nodejs/node/v24.20.0/doc/api/cli.md);
+the retained evidence is E-03/E-06 in `docs/decisions/2026-10-07-break-test-external-facts/`.

@@ -12,8 +12,9 @@ SPDX-FileCopyrightText = "the owner of each captured page - see NOTICE"
 SPDX-License-Identifier = "LicenseRef-Captured-Page"
 
 # The vendored skills (ADR-0146): received from StepenkoAnatoli/SkillsMDs under Apache-2.0
-# and shipped as received, except five auto-build files changed to agree with the kit (each
-# marked at its top; listed in ADR-0146 decision 3). The kit's own notes beside
+# and shipped with recorded file renames and six marked auto-build adaptations (the
+# original five plus stage-handoffs; dated adaptations in ADR-0146 and ADR-0150). Receipt hashes are
+# retained as historical provenance. The kit's own notes beside
 # lead-orchestrator and auto-build (references/research-kit.md) are the kit's work.
 [[annotations]]
 path = [

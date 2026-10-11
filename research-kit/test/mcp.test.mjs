@@ -132,6 +132,18 @@ test('arguments that fail the schema come back as a tool result the model can re
   const typo = await call('collect', { repository: 'o/r', topic: 'x', token: 'oops' });
   assert.equal(typo.result?.isError, true);
   assert.match(typo.result.content[0].text, /unknown argument token/);
+  // JSON.parse preserves an own __proto__ key; an object literal would exercise its
+  // special prototype syntax instead of the argument a JSON-RPC client can send.
+  for (const key of ['constructor', 'toString', '__proto__']) {
+    const args = JSON.parse(`{"repository":"o/r","topic":"x",${JSON.stringify(key)}:"stray"}`);
+    const d = deps();
+    const r = await handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'collect', arguments: args } }, d);
+    assert.equal('dispatch' in d.seen, false, `${key}: unknown own argument reached dispatch`);
+    assert.equal(r.error, undefined, 'a schema failure must be a tool result');
+    assert.equal(r.result.isError, true);
+    assert.match(r.result.content[0].text, new RegExp(`unknown argument ${key}`));
+    assert.match(r.result.content[0].text, /inputSchema allows/);
+  }
   const unknown = await call('no_such_tool', {});
   assert.equal(unknown.error?.code, ERRORS.INVALID_PARAMS, 'an unknown tool stays a protocol error');
 });
@@ -246,6 +258,43 @@ test('an unknown or mistyped argument is refused, not ignored', () => {
 
 // ---------------------------------------------------------------- collecting
 
+test('collect refuses non-array query and URL arguments before dispatch', async () => {
+  const cases = [
+    ['queries', 42], ['queries', 'q'], ['queries', {}], ['queries', null],
+    ['urls', 'https://a.example/x'], ['urls', 42], ['urls', {}], ['urls', null],
+  ];
+  for (const [key, value] of cases) {
+    const d = deps();
+    const r = await handle(call('collect', { repository: 'o/r', topic: 'x', [key]: value }), d);
+    assert.equal('dispatch' in d.seen, false, `${key}: malformed argument reached dispatch`);
+    assert.equal(r.error, undefined, `${key}: this must be a tool result`);
+    assert.equal(r.result.isError, true);
+    assert.match(r.result.content[0].text, new RegExp(`${key} must be an array`));
+    assert.match(r.result.content[0].text, /inputSchema allows/);
+  }
+  const absent = deps({ env: {} });
+  const r = await handle(call('collect', { repository: 'o/r', topic: 'x', queries: 42 }), absent);
+  assert.equal('dispatch' in absent.seen, false);
+  assert.equal(r.error, undefined);
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /queries must be an array/,
+    'a missing credential must not hide an argument error');
+});
+
+test('collect refuses non-string query and URL items before dispatch', async () => {
+  for (const key of ['queries', 'urls']) {
+    for (const items of [[null], [42], [{}], [true], Array(1)]) {
+      const d = deps();
+      const r = await handle(call('collect', { repository: 'o/r', topic: 'x', [key]: items }), d);
+      assert.equal('dispatch' in d.seen, false, `${key}: malformed item reached dispatch`);
+      assert.equal(r.error, undefined, `${key}: this must be a tool result`);
+      assert.equal(r.result.isError, true);
+      assert.match(r.result.content[0].text, new RegExp(`${key}\\[0\\] must be a string`));
+      assert.match(r.result.content[0].text, /inputSchema allows/);
+    }
+  }
+});
+
 test('collect takes pages to fetch by URL, in the same input as the queries', async () => {
   const d = deps();
   await handle(call('collect', { repository: 'o/r', topic: 'x', queries: ['q'], urls: ['https://a.example/x'] }), d);
@@ -254,6 +303,12 @@ test('collect takes pages to fetch by URL, in the same input as the queries', as
   const r = await handle(call('collect', { repository: 'o/r', topic: 'x', urls: ['file:///etc/passwd'] }), bad);
   assert.equal(r.result.isError, true, 'a non-http URL must be refused, not dispatched');
   assert.equal(bad.seen.dispatch, undefined, 'nothing was dispatched');
+  for (const arrays of [{}, { queries: [], urls: [] }, { queries: ['  '], urls: [''] }]) {
+    const empty = deps();
+    const r = await handle(call('collect', { repository: 'o/r', topic: 'x', ...arrays }), empty);
+    assert.equal(r.result.isError, undefined, 'omitted, empty or blank string arrays remain valid');
+    assert.equal(empty.seen.dispatch.inputs.queries, '', 'the existing topic-based default is preserved');
+  }
 });
 
 test('collect returns the run id immediately and says the work is not finished', async () => {
@@ -567,9 +622,8 @@ test('a stream that ends on a newline produces no extra reply', async () => {
 // default thing while the operator believes otherwise, which cost this project 26
 // Firecrawl credits once (see refuseUnknownFlags in lib/core.mjs).
 //
-// It cannot use refuseUnknownFlags: that helper lists the options an entrypoint DOES
-// accept, and this one accepts none, so its list would be empty and it would refuse a
-// bare invocation too.
+// The entrypoint checks the whole argv, including positionals; refuseUnknownFlags
+// only sees parsed named flags and allows an empty map even with an empty whitelist.
 test('the server refuses any argument, because its configuration is its environment', () => {
   const server = path.join(KIT_ROOT, 'bin', 'mcp-server.mjs');
   const run = (args) => spawnSync(process.execPath, [server, ...args], {
@@ -582,8 +636,34 @@ test('the server refuses any argument, because its configuration is its environm
   for (const args of [['--zzz-not-a-flag'], ['--directory', tempDir('rk-mcp-arg-')], ['--token', 'x']]) {
     const r = run(args);
     assert.equal(r.status, 2, `mcp-server.mjs accepted ${args.join(' ')} (exit ${r.status})`);
-    assert.match(r.stderr, /unknown option/, `${args.join(' ')} was not named in the refusal`);
+    assert.match(r.stderr, /unknown option/, 'the refusal did not identify an unexpected startup argument');
     assert.match(r.stderr, /takes no options/, 'the refusal does not say why there is nothing to accept');
+  }
+});
+
+test('the server refuses startup arguments without echoing synthetic credential values', () => {
+  const server = path.join(KIT_ROOT, 'bin', 'mcp-server.mjs');
+  const shaped = 'github_' + 'pat_' + 'SYNTHETIC'.repeat(4);
+  const opaque = 'opaque-argv-value-' + 'example-only'.repeat(3);
+  const positional = 'opaque-positional-' + 'example-only'.repeat(3);
+  for (const { args, value } of [
+    { args: ['--token', shaped], value: shaped },
+    { args: ['--token', opaque], value: opaque },
+    { args: [positional], value: positional },
+  ]) {
+    const r = spawnSync(process.execPath, [server, ...args], {
+      encoding: 'utf8', timeout: 30_000, windowsHide: true, input: '',
+    });
+    assert.equal(r.status, 2, 'a refused startup argument must remain exit 2');
+    assert.equal(r.stdout, '', 'a refused startup must not write the protocol stream');
+    assert(!r.stdout.includes(value) && !r.stderr.includes(value), 'startup refusal echoed a synthetic argument value');
+    assert.match(r.stderr, /unknown option/);
+    assert.match(r.stderr, new RegExp(`started with ${args.length} argument\\(s\\)`));
+    assert.match(r.stderr, /takes no options/);
+    assert.match(r.stderr, /ENVIRONMENT/);
+    assert.match(r.stderr, /RESEARCH_KIT_GITHUB_TOKEN/);
+    assert.match(r.stderr, /never from an argument/);
+    assert.match(r.stderr, /Run it with --help/);
   }
 });
 

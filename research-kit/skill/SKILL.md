@@ -24,7 +24,8 @@ Signals that you are in the wrong place: no `AGENTS.md`, no `research/` director
 node "$HOME/.agents/research-kit/bin/doctor.mjs"
 ```
 
-A **collector** holds the key and produces the corpus. A **builder** consumes one and
+A **collector** produces the corpus, using Firecrawl with its key or an explicitly chosen
+keyless route (ADR-0095). A **builder** consumes a corpus and
 must not collect: `research.mjs` and `decompose.mjs` refuse there (exit 2) rather than
 fall back on another transport. A page fetched by hand is not evidence in this kit.
 
@@ -61,17 +62,26 @@ decompose -> contract -> prior -> collect -> gate -> brief
 
 4. **Collect.** `node "$HOME/.agents/research-kit/bin/research.mjs"`. Prefer the page that
    *owns* the fact - official docs, the repo, the pricing page, the statute - over any
-   write-up about it. Every scrape spends a credit; plan the queries first.
+   write-up about it. Firecrawl collection spends credits; chosen keyless pages still
+   use the planned page allowance. Plan the queries first.
 
 5. **Rewrite the findings.** The `Finding` cell arrives auto-extracted. Turn it into a
    real claim with the number or quote that proves it, and keep `Raw` pointing at the
-   cached page.
+   cached page. For a Git builder request, the collector records this review and the
+   unknown closure; the builder reports review-only gaps in prose (ADR-0150).
 
 6. **Gate.** `node "$HOME/.agents/research-kit/bin/preflight.mjs"`. **Do not build until it
    prints PASS.**
 
 7. **Brief.** `node "$HOME/.agents/research-kit/bin/brief.mjs"` drafts the phase-1 -> phase-2
    handoff. Answer the two sections the corpus cannot fill.
+
+Before building, check the intact handoff, PASS, classified MAP, rewritten Findings,
+and an authored brief with both judged sections answered. `brief.mjs --state` reports
+the state and judged sections; it does not establish currency by itself. A stamped
+brief needs current inputs; authored unstamped briefs retain approval with currency
+unknown (ADR-0138). Approval has no machine-role predicate. ADR-0052's local review and
+re-packaging of a received package remains available without collecting.
 
 ## The question budget
 

@@ -206,7 +206,7 @@ test('the suite rule runs the checkout\'s own runner and reads its result file',
 import fs from 'node:fs';
 const red = fs.existsSync(new URL('../../RED', import.meta.url));
 fs.writeFileSync(new URL('../../ENV.json', import.meta.url), JSON.stringify(process.env));
-fs.writeFileSync(process.env.RESEARCH_KIT_RESULT_FILE, JSON.stringify({ passed: red ? 4 : 5, failures: red ? 1 : 0, unsupported: 0, exit: red ? 1 : 0 }));
+fs.writeFileSync(process.env.RESEARCH_KIT_RESULT_FILE, JSON.stringify({ passed: red ? 4 : 5, failures: red ? 1 : 0, failed: red ? ['stand-in > intentional failure'] : [], unsupported: 0, exit: red ? 1 : 0 }));
 process.exit(red ? 1 : 0);
 `);
   writeText(resolve(dir, 'RED'), '');
@@ -223,6 +223,7 @@ process.exit(red ? 1 : 0);
   }
   assert.equal(red?.rule, SUITE_RULE, JSON.stringify(red));
   assert.match(red.detail, /1 failed, 4 passed/);
+  assert.match(red.detail, /stand-in > intentional failure/, 'the gate discarded the label before deleting the scratch result');
   const given = JSON.parse(readText(resolve(dir, 'ENV.json')));
   for (const k of Object.keys(hookEnv)) assert.equal(given[k], undefined, `${k} reached the suite`);
   assert.equal(given.RESEARCH_KIT_ALLOW_UNSUP, '1', 'an unsupported test must not make the run exit 1 (ADR-0108)');
@@ -526,4 +527,41 @@ test('the edit gate denies typing into research/raw/, even on a passing gate', (
   assert.equal(editGate(dir, { file_path: path.join(dir, 'research/raw/.fetches.jsonl') }, dir, off).permissionDecision, 'allow', 'editGate.mode=off turns the whole gate off');
   fs.writeFileSync(path.join(dir, 'research/GATE_OFF'), '');
   assert.equal(editGate(dir, { file_path: path.join(dir, 'research/raw/.fetches.jsonl') }).permissionDecision, 'allow', 'GATE_OFF turns the whole gate off');
+});
+
+// Reproduced 2026-10-10: a Write to GATE_OFF was allowed as research and the next
+// product edit, plus the commit gate, allowed the override. No override is written
+// through these payloads: denial must happen before the tool can change the file.
+test('the edit gate denies creating GATE_OFF before the phase-1 allowance', () => {
+  for (const passing of [false, true]) {
+    const dir = passing ? makePassingProject() : makeProject();
+    const targets = ['research/GATE_OFF', 'research/../research/GATE_OFF',
+      'research/GATE_OFF/note.md', 'research/GATE_OFF/..note.md', path.join(dir, 'research/GATE_OFF')];
+    if (process.platform === 'win32') targets.push('RESEARCH/gate_off');
+    for (const target of targets) {
+      for (const key of ['file_path', 'notebook_path']) {
+        const out = editGate(dir, { [key]: target, content: 'x' });
+        assert.equal(out.permissionDecision, 'deny', `${target}: ${out.permissionDecisionReason}`);
+        assert.match(out.permissionDecisionReason, /operator override/);
+      }
+    }
+    assert.equal(editGate(dir, { file_path: 'research/notes.md', notebook_path: 'research/GATE_OFF' }).permissionDecision, 'deny');
+    assert.equal(fs.existsSync(resolve(dir, PATHS.gateOff)), false, 'a permission decision must not create the override');
+    assert.equal(editGate(dir, { file_path: 'research/GATE_OFF-notes.md' }).permissionDecision, 'allow', 'a sibling name is ordinary research');
+    if (!passing) {
+      assert.equal(editGate(dir, { file_path: 'src/app.js' }).permissionDecision, 'ask');
+      assert.equal(evaluate(dir, { gate: 'commit', stagedPaths: ['src/app.js'] }).allow, false);
+    }
+  }
+});
+
+test('GATE_OFF edit protection preserves deliberate operator off-switches', () => {
+  const dir = makeProject();
+  const off = path.join(tempDir(), 'off.json');
+  writeJson(off, { editGate: { mode: 'off' } });
+  assert.equal(editGate(dir, { file_path: 'research/GATE_OFF' }, dir, off).permissionDecision, 'allow');
+  fs.writeFileSync(resolve(dir, PATHS.gateOff), 'operator fixture override');
+  assert.equal(editGate(dir, { file_path: 'research/GATE_OFF' }).permissionDecision, 'allow');
+  assert.equal(editGate(dir, { file_path: 'src/app.js' }).permissionDecision, 'allow');
+  assert.equal(evaluate(dir, { gate: 'commit', stagedPaths: ['src/app.js'] }).allow, true);
 });

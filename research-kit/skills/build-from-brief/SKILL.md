@@ -11,15 +11,30 @@ not a judgement call.
 
 ## Before the first edit
 
+Confirm the intended project before any command below, and record doctor's actual
+verdict and role. An unresolved role or blocking diagnostic needs resolution; key
+presence alone is not readiness (ADR-0095).
+
 1. `node "$HOME/.agents/research-kit/bin/handoff.mjs"` - exit 0, or stop: the corpus did
    not arrive whole, and the command names the cause (not pushed, or line endings
    rewritten here) and the remedy.
 2. `node "$HOME/.agents/research-kit/bin/preflight.mjs"` - `PASS`, or stop.
-3. `node "$HOME/.agents/research-kit/bin/brief.mjs" --state` - `authored`. A `draft` brief
-   is not reviewed and not a handoff.
+3. `node "$HOME/.agents/research-kit/bin/brief.mjs" --state` - `authored`, with both
+   judged sections present and answered. A `draft` brief is not a handoff. State alone
+   does not establish current inputs: a stamped brief must match the corpus. An
+   authored unstamped brief keeps ADR-0138's compatibility path, with currency unknown.
 4. Read the brief whole: intent, what was verified, contradictions, known unknowns, the
    decision and its first build step. PASS reports the configured checks; the gate
    warnings the brief lists still apply.
+5. Check the classified MAP and rewritten extractor Findings. The intact handoff,
+   PASS and completed/current review are the existing role-agnostic approval
+   conditions (`lib/artifact.mjs`); no machine-role predicate is added by this skill.
+
+For a Git builder request, `collected` delivers captures. Read and judge them, then
+report any review-only gap in prose for the collector to record in Findings, unknown
+closures, map and brief (ADR-0150). Stop dependent building until that handoff is
+complete. Request a fetch only when an external fact is missing. ADR-0052's local
+review and re-packaging of a received package remains available without collection.
 
 ## While building
 

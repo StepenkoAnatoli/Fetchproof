@@ -50,8 +50,11 @@ second collection route.
    page says to run its login and press Doctor. The kit still never reads that key.
 6. **Four checks on every request:** the 127.0.0.1 bind; a Host header naming it (DNS
    rebinding); an Origin, when present, that is the panel's own; and on `/api/` a
-   per-launch token carried in the URL fragment, so it reaches no server log, history sync
-   or Referer. POSTs must be JSON, which a plain cross-site form cannot send.
+   per-launch token initialized from the URL fragment and sent as `x-panel-token`.
+   POSTs must be JSON, which a plain cross-site form cannot send. Clarified 2026-10-08:
+   the CLI prints the token-bearing launch URL; the code does not establish privacy
+   guarantees for browser history/sync or terminal output. The fragment/header boundary
+   is not a promise that the launch capability cannot be recorded.
 7. **Update installs the copy the panel runs from.** Run from the installed copy, there is
    nothing newer, and the panel says so instead of copying a tree onto itself.
 

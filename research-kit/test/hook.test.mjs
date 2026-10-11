@@ -9,7 +9,7 @@ import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path,
 import { PATHS, resolve, writeText, readText } from '../lib/core.mjs';
 import { posture } from '../lib/machine.mjs';
 import { hookExecutability, scaffoldProject } from '../lib/scaffold.mjs';
-import { splitPathList, SUITE_TIMEOUT_MS } from '../lib/gate.mjs';
+import { readStagedPaths, SUITE_TIMEOUT_MS } from '../lib/gate.mjs';
 // Read off the namespace, so a missing helper fails its own test, not the file.
 import * as gateLib from '../lib/gate.mjs';
 
@@ -251,15 +251,16 @@ test('a git that cannot list the staged paths does not let product code through 
   assert.match(result.stderr, /could not list the staged paths/, 'the hook must say why it judged without a list');
 });
 
-test('a git that cannot list the staged paths still lets a passing project commit', () => {
+test('a git that cannot list the staged paths blocks a passing project by the map rule even under fail-open', () => {
   requireCapability(SH, 'SHELL-NOT-FOUND', `no POSIX sh on this host (tried: ${SH_TRIED.join(', ')})`);
   const dir = makeRepo();
   writeText(resolve(dir, 'README.md'), '# fixture\n');
   git(dir, ['add', 'README.md']);
   git(dir, ['config', 'diff.orderFile', path.join(dir, 'no-such-order-file')]);
-  const result = runHook(dir);
-  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  const result = runHook(dir, { env: { RESEARCH_KIT_CONFIG: isolatedConfig({ failOpen: true }) } });
+  assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
   assert.match(result.stderr, /could not list the staged paths/);
+  assert.match(result.stderr, /architecture-map rule/);
 });
 
 test('a fresh project\'s first commit - scaffold and corpus together - is ALLOWED while the verdict fails', () => {
@@ -363,19 +364,33 @@ for (const row of POSTURE_ROWS) {
 
 test('the staged path list is DATA, not arguments: argv stays bounded', () => {
   const many = Array.from({ length: 5000 }, (_, i) => `src/file-${i}.js`);
-  // The structural pin is an argument count, not a clock: 10,005 arguments before, 6 after.
+  // The structural pin is an argument count, not a clock: 10,005 arguments before,
+  // six for the actual Git read now. Every path arrives in its checked output.
   const argvBefore = many.flatMap((p) => ['--staged', p]).length + 5;
-  const argvAfter = ['--gate', 'commit', '--staged-stdin'].length + 3;
+  let calls = 0;
+  let gitArgs;
+  const received = readStagedPaths('/fixture', { run: (args, options) => {
+    calls += 1;
+    gitArgs = args;
+    assert.equal(options.cwd, '/fixture');
+    return `${many.join('\0')}\0`;
+  } });
+  const argvAfter = gitArgs.length + 1;
   assert.equal(argvBefore, 10_005);
   assert.equal(argvAfter, 6);
-  assert.equal(splitPathList(many.join('\0')).length, 5000, 'all 5,000 still arrive, on the pipe');
+  assert.deepEqual(gitArgs, ['diff', '--cached', '--name-only', '--no-renames', '-z']);
+  assert.equal(calls, 1, 'only the actual read may supply the staged set');
+  assert.deepEqual(received, many, 'all 5,000 paths still arrive as data');
 });
 
-test('the hook pipes the list and never accumulates argv', () => {
+test('the hook delegates one checked staged read and never accumulates argv', () => {
   const text = readText(HOOK);
-  assert.match(text, /git diff --cached --name-only --no-renames -z \|/, 'the list must travel on a pipe, and name both paths of a rename');
+  const dispatches = text.match(/^\$WATCHDOG node "\$KIT_HOME\/bin\/gate\.mjs" --gate commit$/gm) ?? [];
+  assert.equal(dispatches.length, 1, 'one fixed invocation delegates acquisition to the gate');
+  assert.doesNotMatch(text, /^\s*(?:if\s+)?git diff --cached --name-only/m,
+    'an unchecked shell read must not compete with the checked Node read');
   assert.doesNotMatch(text, /set -- "\$@" --staged/, 'the O(n^2) argv loop must not come back');
-  assert.match(text, /--staged-stdin/);
+  assert.doesNotMatch(text, /--staged-stdin/, 'the default gate invocation owns the actual read');
 });
 
 test('the hook is watchdogged, and a watchdog kill is an internal error', () => {

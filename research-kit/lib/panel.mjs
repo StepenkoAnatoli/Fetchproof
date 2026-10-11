@@ -15,8 +15,9 @@
 // A local server answers whatever reaches its port, so four checks guard every request:
 // the socket is bound to 127.0.0.1 only; the Host header must name that address and port
 // (a rebinding DNS name does not); an Origin header, when sent, must be the panel's own; and
-// every /api request carries the per-launch token, which travels in the URL's fragment and
-// so never reaches a log, a history sync or a Referer.
+// every /api request carries the per-launch token, initialized from the launch URL's
+// fragment. The launcher prints that URL; treat it as a capability. This module cannot
+// promise that terminal logs or browser history/sync will keep it private.
 
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -94,25 +95,37 @@ export function projectTopic(project) {
  */
 export function builderInstructions({ topic = '', brief = false } = {}) {
   const collector = [
-    'On the collector (this machine), once preflight prints PASS and research/BRIEF.md is written:',
+    brief
+      ? 'research/BRIEF.md is present. Complete the checks below before handing off dependent work.'
+      : 'research/BRIEF.md does not exist yet - phase 1 is unfinished. The collector must complete it before dependent building.',
+    'On the collector (this machine), verify handoff, preflight PASS, and reviewed research:',
+    `  ${homeCommand('handoff.mjs')}`,
+    `  ${homeCommand('preflight.mjs')}`,
+    `  ${homeCommand('brief.mjs', '--state')}  # must say authored; inspect its judged sections and current inputs`,
+    '  Check that the map is classified, Findings are rewritten, and the authored brief is complete.',
+    '  A stamped brief must match the current corpus; the existing unstamped compatibility still applies.',
+    'After those checks succeed, commit and push the corpus. Replace the report placeholders with observed results:',
     '  git add research/',
     '  git add -f research/raw/.fetches.jsonl',
     '  git commit -m "research: corpus and brief" \\',
     '    -m "what changed: collected corpus and builder brief" \\',
     '    -m "why: complete the phase-one handoff" \\',
-    '    -m "what you verified: verified preflight PASS and handoff checks" \\',
-    '    -m "what you got wrong: nothing to report"',
+    '    -m "what you verified: <actual commands/results, labeled verified, untested or expected>" \\',
+    '    -m "what you got wrong: <record the correction and proof, or nothing to report>"',
     '  git push',
   ];
   const builder = [
-    `You are the BUILDER for this project${topic ? `: "${topic}"` : ''}. The collector has finished phase 1; you do phase 2.`,
+    `You are the BUILDER for this project${topic ? `: "${topic}"` : ''}. Begin phase 2 only after the collector's review and the checks below succeed.`,
     '1. Pull or clone the repository. Declare this machine a builder, once:',
     `     ${homeCommand('install-hooks.mjs', '--role builder')}`,
     '2. Check the corpus arrived whole - it must exit 0:',
     `     ${homeCommand('handoff.mjs')}`,
     '3. Confirm the gate still passes here:',
     `     ${homeCommand('preflight.mjs')}`,
-    '4. Read research/BRIEF.md. It is your input; build from it and cite its E-## rows in code and tests.',
+    `4. Check ${homeCommand('brief.mjs', '--state')} reports authored; read research/BRIEF.md whole.`,
+    '   Check the answered judged sections, classified map, rewritten Findings and applicable gate warnings.',
+    '   If the brief has an input stamp, it must be current. A missing, draft, incomplete or stale brief stops dependent work.',
+    '   Once research is ready and the work is authorized, build from the brief and cite its E-## rows in code and tests.',
     '5. Do not collect, fetch pages or research facts yourself - this machine refuses to, by design.',
     '   If a fact you need is missing or wrong, ask the collector for it: write one file per fact,',
     `   ${REQUESTS_DIR}/<id>.json (id: lower-case letters, digits, dashes), commit it and push:`,
@@ -121,13 +134,14 @@ export function builderInstructions({ topic = '', brief = false } = {}) {
     '   Optional: "prefer" (owner domains), "unknown" (an existing U-n row), "maxPages",',
     '   "topic" (a whole new research project instead of one fact).',
     '   The collector collects it automatically and pushes the corpus with <id>.result.json beside the',
-    '   request. Pull, read the result, review the new evidence rows, and carry on.',
+    '   request. Pull and read the result and evidence. A collected result records delivery; dependent work',
+    '   waits for the collector to record reviewed Findings, close the unknowns and update the current brief.',
+    '   Report a review-only gap to the collector in prose; request a fetch only when a needed fact is missing.',
   ];
   return [
     ...collector,
-    ...(brief ? [] : ['  (research/BRIEF.md does not exist yet - phase 1 is not finished, so there is nothing to hand off.)']),
     '',
-    '--- paste to the builder (an AI agent or a person) ---',
+    '--- builder checklist (an AI agent or a person): complete the readiness checks before building ---',
     ...builder,
   ].join('\n') + '\n';
 }

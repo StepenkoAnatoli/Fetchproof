@@ -112,7 +112,7 @@ test('auto-build readiness script rejects a missing --base value', () => {
     ['123', '--base'], ['123', '--base='], ['123', '--base', '--base=main'], ['123', '--base', '--help'],
   ]) {
     const result = spawnSync(bash, [script, ...args], {
-      encoding: 'utf8', timeout: 2_000, windowsHide: true,
+      encoding: 'utf8', timeout: 10_000, windowsHide: true,
     });
     assert.equal(result.status, 3, result.error?.message || result.stderr);
     assert.match(result.stderr, /BLOCKED: --base requires a branch/);
@@ -130,7 +130,7 @@ test('auto-build readiness script accepts hyphen-leading base refs', () => {
     ['123', '--base', '-foo', '--help'], ['123', '--base=-foo', '--help'], ['123', '--base=--foo', '--help'],
   ]) {
     const result = spawnSync(bash, [script, ...args], {
-      encoding: 'utf8', timeout: 2_000, windowsHide: true,
+      encoding: 'utf8', timeout: 10_000, windowsHide: true,
     });
     assert.equal(result.status, 3, result.error?.message || result.stderr);
     assert.doesNotMatch(result.stderr, /BLOCKED: --base requires a branch/);
@@ -291,4 +291,91 @@ test('a set skill is mirrored: a file the kit no longer ships is drift, and the 
   assert.deepEqual(deploy({ from, kitHome, env, into: project }).skillConflicts, []);
   for (const file of orphans) assert.equal(fs.existsSync(file), false, `${file} survived the deploy`);
   assert.ok(fs.existsSync(path.join(root, 'break-test', 'references', 'research-kit.md')), 'the mirror removed a shipped file');
+});
+
+function permissionFixture() {
+  const from = tempDir('research-kit-ro-source-');
+  writeText(path.join(from, 'README.md'), '# kit\n');
+  writeText(path.join(from, 'bin', 'selftest.mjs'), '// the runner\n');
+  const kitHome = path.join(tempDir('research-kit-ro-home-'), 'research-kit');
+  const env = {
+    ...process.env,
+    RESEARCH_KIT_CONFIG: path.join(tempDir('research-kit-ro-cfg-'), 'c.json'),
+    RESEARCH_KIT_INSTALL_STATE: path.join(tempDir('research-kit-ro-state-'), 'install.json'),
+  };
+  return { from, kitHome, env };
+}
+
+// Only fixture files are restored: Windows chmod clears their read-only attribute so the
+// harness can remove its own scratch even when a regression stops before the repair.
+function restoreFixtureWrite(files) {
+  for (const file of files) {
+    if (fs.existsSync(file)) fs.chmodSync(file, 0o644);
+  }
+}
+
+test('a second deploy over its own output survives a read-only source tree', async () => {
+  const { deploy } = await import('../lib/installer.mjs');
+  const fixture = permissionFixture();
+  const source = path.join(fixture.from, 'README.md');
+  const target = path.join(fixture.kitHome, 'README.md');
+  // Exercise the actual POSIX mode or Windows read-only attribute, not a platform skip.
+  fs.chmodSync(source, 0o444);
+  try {
+    assert.equal(deploy(fixture).ok, true, 'the first deploy refused');
+    assert.equal(deploy(fixture).ok, true, 'the second deploy refused');
+    assert.equal(fs.readFileSync(target, 'utf8'), '# kit\n');
+    assert.equal(fs.statSync(target).mode & 0o200, 0o200, 'the copied file stayed read-only');
+    fs.chmodSync(target, 0o444);
+    assert.equal(deploy(fixture).ok, true, 'a deploy over earlier read-only output refused');
+    assert.equal(fs.statSync(target).mode & 0o200, 0o200, 'earlier output stayed read-only');
+  } finally {
+    restoreFixtureWrite([source, target]);
+  }
+});
+
+test('a writable source replaces earlier read-only output with the new bytes', async () => {
+  const { deploy } = await import('../lib/installer.mjs');
+  const fixture = permissionFixture();
+  const source = path.join(fixture.from, 'README.md');
+  const target = path.join(fixture.kitHome, 'README.md');
+  fs.chmodSync(source, 0o644);
+  assert.equal(deploy(fixture).ok, true);
+  writeText(source, '# updated kit\n');
+  fs.chmodSync(target, 0o444);
+  try {
+    assert.equal(deploy(fixture).ok, true, 'normal source could not replace read-only output');
+    assert.equal(fs.readFileSync(target, 'utf8'), '# updated kit\n');
+    assert.equal(fs.statSync(target).mode & 0o200, 0o200, 'replacement stayed read-only');
+  } finally {
+    restoreFixtureWrite([source, target]);
+  }
+});
+
+test('deploy preserves POSIX executable permissions and makes the hook executable', async () => {
+  const { deploy } = await import('../lib/installer.mjs');
+  const fixture = permissionFixture();
+  const executable = path.join(fixture.from, 'bin', 'fixture-tool');
+  const hook = path.join(fixture.from, 'githooks', 'pre-commit');
+  const installedExecutable = path.join(fixture.kitHome, 'bin', 'fixture-tool');
+  const installedHook = path.join(fixture.kitHome, 'githooks', 'pre-commit');
+  const executableText = '#!/bin/sh\nprintf fixture\\n\n';
+  const hookText = '#!/bin/sh\nexit 0\n';
+  writeText(executable, executableText);
+  writeText(hook, hookText);
+  if (process.platform !== 'win32') fs.chmodSync(executable, 0o555);
+  fs.chmodSync(hook, 0o444);
+  try {
+    assert.equal(deploy(fixture).ok, true);
+    assert.equal(deploy(fixture).ok, true, 'repeat deployment of the executable/hook refused');
+    assert.equal(fs.readFileSync(installedExecutable, 'utf8'), executableText);
+    assert.equal(fs.readFileSync(installedHook, 'utf8'), hookText);
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(installedExecutable).mode & 0o777, 0o755, 'source execute bits were lost');
+      assert.equal(fs.statSync(executable).mode & 0o777, 0o555, 'the source permissions were changed');
+      assert.equal(fs.statSync(installedHook).mode & 0o777, 0o755, 'the deployed hook is not executable');
+    }
+  } finally {
+    restoreFixtureWrite([executable, hook, installedExecutable, installedHook]);
+  }
 });

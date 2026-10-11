@@ -397,12 +397,20 @@ export function validateArgs(tool, args) {
     if (args[key] === undefined) return `missing required argument ${key}`;
   }
   for (const [key, value] of Object.entries(args)) {
-    const prop = schema.properties[key];
     // `additionalProperties: false` is in the schema; enforcing it is what makes a
     // caller's typo an error rather than a silently dropped argument.
-    if (!prop) return `unknown argument ${key}`;
+    if (!Object.prototype.hasOwnProperty.call(schema.properties, key)) return `unknown argument ${key}`;
+    const prop = schema.properties[key];
     if (prop.type === 'integer' && !Number.isInteger(value)) return `${key} must be an integer`;
     if (prop.type === 'string' && typeof value !== 'string') return `${key} must be a string`;
+    if (prop.type === 'array') {
+      if (!Array.isArray(value)) return `${key} must be an array`;
+      if (prop.items?.type === 'string') {
+        for (let index = 0; index < value.length; index += 1) {
+          if (typeof value[index] !== 'string') return `${key}[${index}] must be a string`;
+        }
+      }
+    }
     // Counted after trimming, so a blank topic is refused here rather than by GitHub's 422
     // after a dispatch round trip (found 2026-09-27).
     if (prop.minLength !== undefined && typeof value === 'string' && value.trim().length < prop.minLength) return `${key} must not be empty`;

@@ -50,3 +50,21 @@ a page was Firecrawl, which is metered, and whose credits can run out (ADR-0086)
 - **Auto-selecting the browser whenever one is installed.** An opt-in that changes the
   default is not an opt-in, and collection results would shift under operators who never
   asked for it.
+
+## Clarification, 2026-10-08: a retained DOM and process completion
+
+The original timeout-failure bullet describes a render without a complete DOM. The
+implementation has already distinguished this since 2026-10-01: a whole HTML dump
+followed by an exit hang and `ETIMEDOUT` remains a render. A timeout without a complete
+dump remains a failure. Guard refusals, Chromium's own error page, the observed origin
+status, and completeness grading still judge the retained document. The existing
+`a browser that printed the page and then hung is a render, not a timeout` unit test
+records that exception. This clarification documents the existing behavior; it does not
+reverse the transport decision or introduce another timeout policy.
+
+The guard's `elapsedMs` timestamps process completion, not DOM arrival. Its pending
+requests are also a snapshot at process completion. Subtracting startup can support the
+existing conservative partial classification, but cannot establish the instant loading
+stopped or locate the historical wait inside the browser. The diagnostic therefore
+states the configured loading deadline and the request state at process completion.
+No timing field, budget, or completeness rule changes with this wording correction.

@@ -3,8 +3,8 @@
 // `isGated` (the four markers), `evaluate` (commit and edit), the GATE_OFF recording,
 // and the architecture-map rule. Contains no repo-specific path.
 //
-// One deliberate exception to "no CLI parsing": the commit gate's staged-path list
-// arrives as DATA ON A PIPE, because argv was O(n^2) to build and bounded besides.
+// Explicit staged-path lists arrive as DATA ON A PIPE, because argv was O(n^2) to
+// build and bounded besides. The hook's default CLI reads one actual Git list in Node.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,7 +91,16 @@ function withinAny(pathName, dirs) {
  * the map was staged, not that it is current. A prompt, not a proof.
  */
 export function architectureMapBreach(root, stagedPaths) {
-  if (!Array.isArray(stagedPaths) || !stagedPaths.length) return null;
+  if (!Array.isArray(stagedPaths)) {
+    return {
+      rule: 'architecture-map-same-commit',
+      touched: [],
+      detail: 'could not list the staged paths, so the gate cannot check whether a code change stages docs/ARCHITECTURE.md with it',
+      fix: 'check that git can list the staged paths (git diff --cached --name-only --no-renames), then commit again; '
+        + 'git commit --no-verify overrides, and records nothing - say so in your reply',
+    };
+  }
+  if (!stagedPaths.length) return null;
   const { codePaths } = loadGateConfig(root);
   const touched = stagedPaths.filter((p) => withinAny(p, codePaths));
   if (!touched.length) return null;
@@ -232,6 +241,19 @@ export function runSuiteHere(root, { timeout = suiteBudgetMs() } = {}) {
   }
 }
 
+// The scratch result is removed after reading it. Preserve enough of its failing
+// identifiers in the verdict to diagnose a red without an unbounded/control-filled log.
+function suiteFailureIdentifiers(failed) {
+  const labels = Array.isArray(failed) ? failed : [];
+  const shown = labels.slice(0, 5).flatMap((label) => {
+    if (typeof label !== 'string') return [];
+    const prefix = label.slice(0, 160).replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+    return prefix ? [`${JSON.stringify(prefix)}${label.length > 160 ? ' (truncated)' : ''}`] : [];
+  });
+  if (!shown.length) return '; failing test identifiers unavailable';
+  return `; failing tests: ${shown.join('; ')}${labels.length > 5 ? `; ${labels.length - 5} more identifiers omitted` : ''}`;
+}
+
 export function suiteBreach(root, stagedPaths, { run = () => runSuiteHere(root), announce = null } = {}) {
   if (!suiteOwed(root, stagedPaths)) return null;
   const fix = `make the suite green (node ${KIT_DIR}/bin/selftest.mjs), then commit again; git commit --no-verify overrides, and records nothing - say so in your reply`;
@@ -255,7 +277,7 @@ export function suiteBreach(root, stagedPaths, { run = () => runSuiteHere(root),
   if (failures > 0) {
     return {
       rule: SUITE_RULE,
-      detail: `the suite is red: ${failures} failed, ${Number(result.passed) || 0} passed${unsupported ? `, ${unsupported} unsupported` : ''} - a red suite stops work (ADR-0120)`,
+      detail: `the suite is red: ${failures} failed, ${Number(result.passed) || 0} passed${unsupported ? `, ${unsupported} unsupported` : ''}${suiteFailureIdentifiers(result.failed)} - a red suite stops work (ADR-0120)`,
       fix,
     };
   }
@@ -295,6 +317,24 @@ export function stagedPathsFromStdin(readSync) {
   } catch {
     return null;
   }
+}
+
+/**
+ * One actual, successful Git read, never a probe followed by an unchecked pipeline.
+ * gitCapture returns null for nonzero exit and maxBuffer failure, so partial stdout
+ * cannot become a list. Git -z ends every path with NUL; no paths is exactly ''.
+ * Preserve names verbatim rather than the explicit stdin adapter's legacy trimming.
+ */
+export function readStagedPaths(root, { run = gitCapture } = {}) {
+  let text;
+  try {
+    text = run(['diff', '--cached', '--name-only', '--no-renames', '-z'], { cwd: root });
+  } catch { return null; }
+  if (typeof text !== 'string') return null;
+  if (text === '') return [];
+  if (!text.endsWith('\0')) return null;
+  const paths = text.slice(0, -1).split('\0');
+  return paths.every((name) => name.length > 0) ? paths : null;
 }
 
 // ---------------------------------------------------------------- the index snapshot
@@ -377,7 +417,10 @@ function gitCapture(args, { cwd }) {
  * and allows changes confined to it: committing collected evidence is the workflow, and
  * blocking it would make the gate a nuisance and guarantee its removal.
  */
-export function evaluate(root, { gate = 'commit', stagedPaths = null, corpus = null, env = process.env, record = true,
+export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpus = null, env = process.env, record = true,
+  // Only the CLI's default commit invocation supplies this private lazy acquisition.
+  // Explicit lists/null retain their meaning; overrides and edit never invoke it.
+  listStaged = null,
   // Injectable so the index-read FAILURE can be tested. A gate whose behaviour on a
   // broken git is untestable is a gate whose most dangerous path is unexercised.
   materialize = materializeIndex,
@@ -399,6 +442,15 @@ export function evaluate(root, { gate = 'commit', stagedPaths = null, corpus = n
       reason: `${PATHS.gateOff} is present - the gate is off for this repository, and it is recorded`,
       findings: [],
     };
+  }
+
+  if (gate === 'commit' && stagedPaths === undefined && listStaged !== null) {
+    let listed;
+    try { listed = listStaged(); } catch { listed = null; }
+    // A bad acquisition answer is unknown scope, not an internal exception that a
+    // fail-open hook may waive. Empty [] is valid; an empty or non-string name is not.
+    stagedPaths = Array.isArray(listed) && listed.every((name) => typeof name === 'string' && name.length > 0)
+      ? listed : null;
   }
 
   // The commit gate judges the INDEX; every other caller judges the working tree.

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { test, describe, assert, makePassingProject, makeProject, corrupt, tempDir, fs, path, KIT_ROOT, requireCapability, requireGit, fixtureInitArgs } from './harness.mjs';
 import { TESTED_CLI_VERSION } from '../lib/firecrawl.mjs';
 import { PATHS, resolve, readText, writeText, readJson } from '../lib/core.mjs';
-import { runDoctor, machineHealth, gateHealth, editGateState } from '../lib/doctor.mjs';
+import { runDoctor, machineHealth, gateHealth, editGateState, scanForSecrets } from '../lib/doctor.mjs';
 import { installEditGate, removeEditGate, installCommitGate, removeCommitGate, settingsState, retiredRepairNote, MATCHER } from '../lib/installer.mjs';
 import { EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS } from '../lib/machine.mjs';
 
@@ -25,6 +25,60 @@ function machine({ config = {}, settings = undefined } = {}) {
 }
 
 const find = (findings, name) => findings.find((f) => f.name === name);
+
+// A no-hit result describes inspected files. Reaching the count at the final file is
+// different from returning at that count while another path remains uninspected.
+test('secret cap: coverage distinguishes a complete boundary from an uninspected path', () => {
+  const complete = tempDir('rk-secret-cap-complete-');
+  writeText(path.join(complete, 'one.txt'), 'ordinary fixture text\n');
+  writeText(path.join(complete, 'two.txt'), 'another ordinary fixture\n');
+  const all = scanForSecrets(complete, { maxFiles: 2 });
+  assert.equal(all.scanned, 2);
+  assert.deepEqual(all.hits, []);
+  assert.doesNotMatch(all.coverage, /incomplete|stopped at/i,
+    'reaching the limit on the final file must not invent an omitted path');
+
+  const capped = tempDir('rk-secret-cap-extra-');
+  for (const name of ['one.txt', 'two.txt', 'three.txt']) writeText(path.join(capped, name), 'ordinary fixture text\n');
+  const part = scanForSecrets(capped, { maxFiles: 2 });
+  assert.equal(part.scanned, 2);
+  assert.deepEqual(part.hits, []);
+  assert.match(part.coverage, /incomplete/i, 'a bounded no-hit scan must identify omitted coverage');
+  assert.match(part.coverage, /stopped at.*2.*file cap/i);
+  assert.equal(all.capped, false);
+  assert.equal(part.capped, true);
+});
+
+// Every candidate file has the same content, so these default-cap fixtures require no
+// filesystem enumeration order. They exercise runDoctor's real scanner and finding path.
+test('secret cap: doctor warns when its clean scan stops at the default file cap', () => {
+  const dir = tempDir('rk-secret-cap-doctor-clean-');
+  for (let i = 0; i < 2001; i += 1) writeText(path.join(dir, `entry-${i}.txt`), 'ordinary fixture text\n');
+  const { env } = machine({ config: { role: 'collector' } });
+  const report = runDoctor(dir, { env, probe: READY, record: false });
+  const scan = find(report.findings, 'secret-scan');
+  assert.equal(scan?.severity, 'warn', 'a capped no-hit scan must not report PASS');
+  assert.match(scan.detail, /incomplete/i);
+  assert.match(scan.detail, /stopped at.*2000.*file cap/i);
+  assert.doesNotMatch(scan.detail, /no secrets|repository.*clear|whole.*clear/i);
+});
+
+test('secret cap: doctor retains critical hits alongside incomplete coverage', () => {
+  const dir = tempDir('rk-secret-cap-doctor-hit-');
+  const sentinel = `fc-${'Z'.repeat(24)}`; // synthetic pattern fixture, never a credential
+  for (let i = 0; i < 2001; i += 1) writeText(path.join(dir, `entry-${i}.txt`), `${sentinel}\n`);
+  const { env } = machine({ config: { role: 'collector' } });
+  const report = runDoctor(dir, { env, probe: READY, record: false });
+  const hits = report.findings.filter((finding) => finding.name === 'secret');
+  assert.equal(hits.length, 2000, 'the default cap remains 2000 inspected text files');
+  assert.ok(hits.every((hit) => hit.severity === 'critical'), 'incomplete coverage must not weaken actual hits');
+  assert.ok(hits.every((hit) => /firecrawl-key/.test(hit.detail)));
+  const scan = find(report.findings, 'secret-scan');
+  assert.equal(scan?.severity, 'warn', 'incomplete coverage must remain visible when a hit was found');
+  assert.match(scan.detail, /incomplete/i);
+  assert.equal(report.ok, false, 'actual detected keys still block doctor readiness');
+  assert.equal(report.blocking.filter((finding) => finding.name === 'secret').length, 2000);
+});
 
 // Found 2026-10-02 (break-test pass 3, a fake CLI reporting v2.0.0): doctor printed
 // `pass firecrawl-cli 2.0.0` while research.mjs refused that CLI before spending - the

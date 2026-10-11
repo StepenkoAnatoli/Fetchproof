@@ -135,24 +135,24 @@ export function deadlineFor(timeout = TIMEOUT_MS) {
 }
 
 /**
- * When Chromium printed the page before every load was answered - at its deadline, or
- * with a request still open at the guard - what it was waiting for, from the guard's
- * record; or, when the guard had answered everything and the render still ran to the
- * deadline, that the wait was inside the browser. Null for a render that settled on its
- * own. The guard's record is the signal, not Chromium's stderr: it logs "Page load timed
- * out" only when the navigation itself never committed, not for a stalled resource.
+ * A conservative partial-capture note from process duration and the guard's final
+ * pending snapshot. State the configured deadline and requests at process completion:
+ * neither observation timestamps the DOM dump or identifies the historical wait.
+ * Null when the process finished below the threshold and no request remained pending.
+ * Chromium's stderr is not the signal: it logs "Page load timed out" only when the
+ * navigation itself never committed, not for a stalled resource.
  */
 export function cutAtDeadline(result, timeout) {
   const pending = Array.isArray(result.pending) ? result.pending : [];
   const deadline = deadlineFor(timeout);
-  // The render's own time: from the browser's first request, not from the launch (ADR-0119).
+  // Process time after the first guard request (ADR-0119), not a measured DOM-arrival time.
   const ranToDeadline = ((Number(result.elapsedMs) || 0) - (Number(result.startupMs) || 0)) >= deadline - 500;
   if (!pending.length && !ranToDeadline) return null;
+  const head = `the browser had a configured ${Math.round(deadline / 1000)} s loading deadline`;
   if (pending.length) {
-    const head = ranToDeadline ? `the browser stopped loading at its ${Math.round(deadline / 1000)} s deadline` : 'the browser printed the page before every load was answered';
-    return `${head}; still unanswered through the guard: ${pending.map((p) => `${p.target} (${Math.round(p.ms / 1000)} s)`).join(', ')}`;
+    return `${head}; still unanswered through the guard at process completion: ${pending.map((p) => `${p.target} (${Math.round(p.ms / 1000)} s)`).join(', ')}`;
   }
-  return `the browser stopped loading at its ${Math.round(deadline / 1000)} s deadline; every one of the ${Number(result.requests) || 0} requests through the guard had been answered, so the wait was inside the browser`;
+  return `${head}; every one of the ${Number(result.requests) || 0} requests through the guard had been answered at process completion`;
 }
 
 /**
@@ -329,6 +329,10 @@ export function scrape(url, { render = renderGuarded, browserPath = null, env = 
       : '';
     return { ok: false, url: target, transport: name, cmd, error: `the browser was killed by ${result.signal}${said}${denied}` };
   }
+  // The guard child refused the URL asked for before launching anything: a caller that said
+  // `false` and a target inside this machine's network (ADR-0155). The refusal, not a launch
+  // failure, is what happened.
+  if (result.error?.code === 'EINTERNAL') return { ok: false, url: target, transport: name, cmd, error: result.error.message };
   if (result.error && !timedOut) return { ok: false, url: target, transport: name, cmd, error: `the browser could not start: ${result.error.message}` };
   if (result.status !== 0 && !timedOut) {
     return { ok: false, url: target, transport: name, cmd, error: `the browser exited ${result.status}${said}` };

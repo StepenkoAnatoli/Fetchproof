@@ -68,7 +68,7 @@ function discoveryContract(corpus) {
   const out = [];
   if (!corpus.discovery.present) {
     return [finding('fail', 'discovery-contract', 'contract-missing',
-      `${PATHS.discovery} is missing. A gated project without its contract fails harder, not open.`)];
+      `${PATHS.discovery} is missing or could not be read. A gated project without its contract fails harder, not open.`)];
   }
   if (!corpus.intent.trim()) {
     // Missing and empty are different fixes: a renamed heading read as "is empty" while the
@@ -371,7 +371,7 @@ function unknownClosure(corpus, options = {}) {
       if (age !== null && age > maxAgeDays) {
         // A refresh that has already happened is a different instruction from one that
         // has not: "go and collect" versus "go and read what was collected".
-        const fresher = corpus.evidence.find((e) => e.url === row.url && freshnessDay(corpus, e) > freshnessDay(corpus, row));
+        const fresher = corpus.evidence.find((e) => urlKey(e.url) === urlKey(row.url) && freshnessDay(corpus, e) > freshnessDay(corpus, row));
         // When the capture and the cell disagree, the reader looking at the table sees a
         // date that does not explain the age - so the judging date is named.
         const judged = retrievedDay(dated) !== retrievedDay(row.retrieved)
@@ -607,8 +607,9 @@ export function supersededRows(corpus) {
   const byUrl = new Map();
   for (const row of corpus.evidence) {
     if (!row.url) continue;
-    if (!byUrl.has(row.url)) byUrl.set(row.url, []);
-    byUrl.get(row.url).push(row);
+    const key = urlKey(row.url);
+    if (!byUrl.has(key)) byUrl.set(key, []);
+    byUrl.get(key).push(row);
   }
 
   // On ONE date the ledger decides, as `newer` (corpus.mjs) decides for the collector: the row
@@ -730,7 +731,8 @@ function hygiene(corpus) {
   const seenUrl = new Map();
   for (const row of corpus.evidence) {
     if (!row.url) continue;
-    const held = seenUrl.get(row.url);
+    const key = urlKey(row.url);
+    const held = seenUrl.get(key);
     if (held) {
       const isRefresh = superseded.has(held.id.toUpperCase())
         && (held.retrieved !== row.retrieved || fetchedEach(row));
@@ -742,7 +744,7 @@ function hygiene(corpus) {
       }
     }
     // The LATEST row for a URL is the one a further duplicate should be compared against.
-    if (!held || compareText(row.retrieved, held.retrieved) >= 0) seenUrl.set(row.url, row);
+    if (!held || compareText(row.retrieved, held.retrieved) >= 0) seenUrl.set(key, row);
   }
 
   const ids = new Set();

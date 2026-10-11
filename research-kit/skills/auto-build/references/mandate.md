@@ -1,16 +1,17 @@
 # The Mandate
 
-<!-- Modified by Research-Kit (ADR-0146): section 4 - a standing mandate no longer removes the Mandate wait; `Architectural tasks: proceed` is withdrawn. The rest is as received from StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Research-Kit: ADR-0146 standing-mandate corrections and 2026-10-08 corrections to approval summaries, reply/default tables and saved consent. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; Architectural tasks: proceed remains withdrawn. -->
 
-The Mandate is the one message in an auto-build run that needs the user, and the one reply that
-authorizes everything after it. It is presented after the research is proven and the design is
+The Mandate presents the current design for the owner's approval. Inside a Research-Kit
+project, `research-kit.md` also requires the owner's reply at consequential stops and a
+separate approval of the completed head before merge. The Mandate is presented after
+the research is reviewed and the design is
 on disk, because that is the first moment the user can make an informed decision, and before any
 code meant to be kept is written, because that is the last moment a wrong decision is cheap.
 
-It replaces three separate asks the delegated skills would otherwise make - brainstorming's
-section-by-section approval, lead-orchestrator's merge approval, gap-audit's implementation
-phrase - with one, and it does so by carrying each of those decisions explicitly. It does not
-replace the asks those skills reserve for the stop-list.
+It batches the design questions and authorizes in-scope implementation once the owner
+approves. It does not replace completed-head merge approval or the stops in the governing
+Research-Kit note.
 
 ## Contents
 
@@ -80,28 +81,29 @@ a gate or a hook; merging a pull request this run did not open; spending beyond 
 above. These stop the run and ask.
 
 ## Questions that block
-1. <question> - my default if unanswered: <default>
+1. <question> - options and recommendation: <choice and consequence>
 2. ...
 
 ## Reply
 `GO` - build, open the pull request, hold the merge.
-`GO MERGE` - build and merge once every check is green and the gate equals the baseline.
-Add corrections to either. Anything else, I revise and present again.
+`GO MERGE` - build and open the pull request; merge is intended, but still needs the
+owner's separate reply approving its completed head and the required checks.
+Corrections require a revised Mandate and fresh approval; an earlier reply does not
+approve changed design. An unanswered question or required stop stays awaiting owner.
 ```
 
 ## 2. The reply vocabulary
 
 | Reply                         | Meaning                                                                           |
 |-------------------------------|-----------------------------------------------------------------------------------|
-| `GO`                          | Stages 5–9 run; Stage 8 stops at an open pull request with Next action "merge when ready" |
-| `GO MERGE`                    | Stages 5–9 run; Stage 8 merges under the merge protocol and verifies the base afterwards |
-| `GO` or `GO MERGE` + text     | The text is a correction to apply first. If a correction changes the classification, the engagement, the base branch or a decision record, present the revised Mandate and wait again; otherwise apply it, record it under "Decisions and assumptions", and proceed |
+| `GO`                          | Approves the current design and in-scope build; Stage 8 holds the merge for the owner's completed-head reply |
+| `GO MERGE`                    | Approves the same build and records merge intent; it does not approve a future head |
+| `GO` or `GO MERGE` + corrections | Present the corrected Mandate and wait for fresh approval; a correction is not approval of the revision |
 | `STOP AFTER DESIGN`           | Stages 5–9 do not run; the run ends COMPLETE with the research, requirements and design delivered. For a user who wanted the thinking, not the code |
 | Anything else                 | Not an approval. Incorporate what it says; present again                           |
 
-Unanswered blocking questions are answered by their stated defaults only when the reply is
-`GO` or `GO MERGE` and the default was shown in the message. A default never applies to a
-stop-list item.
+Record the owner's actual answers to blocking questions. Standing preferences may settle
+ordinary choices inside the approved design; defaults never answer an owner stop.
 
 ## 3. The stop-list
 
@@ -117,9 +119,9 @@ These are the user's decisions in every delegated skill, and the Mandate does no
 - spending a metered budget beyond what the Mandate agreed (Research-Kit)
 - a gap-audit gap that needs a design change (gap-audit)
 
-With the user present: stop and ask in one message, then continue from the answer. With nobody
-present: record the item as BLOCKED or RECORDED with the decision needed, finish everything that
-does not depend on it, and leave Next action pointing at it.
+At a required stop, record Next action "awaiting owner" and end the turn. Resume from
+the recorded reply for that unchanged action. Unattended mode, silence and timeout do
+not supply permission; use the complete stop table in `research-kit.md`.
 
 ## 4. The standing mandate section
 
@@ -128,13 +130,13 @@ A project that runs auto-build often can record the stable decisions in its agen
 
 ```markdown
 ## Auto-build mandate
-- Default reply for bounded tasks: GO MERGE
+- Default reply offered for bounded tasks: GO MERGE (merge intent; the run still waits for the owner's reply)
 - Architectural tasks: wait
 - Base branch: main; working branch pattern: auto/<slug>
 - Merge method: repository default; delete branch after merge: yes; wait for base CI: yes
 - Check timeout: 45 minutes
-- Research page budget per run without asking: 30 (free transports only above that)
-- Unanswered questions: take the stated default; if none is safe, take the most reversible option and record it | wait
+- Research page budget proposed in the Mandate: 30; paid collection waits for the owner's authorization
+- Unanswered owner questions: wait
 - Audit depth: scoped at Light, full at Full
 - Design-change gaps from the audit: record as open items | wait
 - Break-test: standard; never probe against <service>
@@ -142,16 +144,16 @@ A project that runs auto-build often can record the stable decisions in its agen
 - Stop-list additions: <project-specific items, or "none">
 ```
 
-Each line removes one reason to stop, and each trades something:
+These lines record preferences; they remove no required owner stop:
 
 | Line                          | Stop it removes                                      | What it trades away                                           |
 |-------------------------------|------------------------------------------------------|---------------------------------------------------------------|
 | Default reply `GO MERGE`      | none - it is the reply offered; the Mandate wait holds | nothing: the user still replies, and may correct the design |
-| `Unanswered questions: ...`   | a stop for a question with no safe default           | the user's answer; the run picks the most reversible reading and names it in "Decisions made without asking" |
-| `Design-change gaps: record`  | a stop when gap-audit finds a gap needing a design change | that gap stays open until the next run                   |
+| `Unanswered owner questions: wait` | none | the run waits for an actual reply |
+| `Design-change gaps: record`  | none | record the gap; dependent work waits for approval of the changed design |
 | `Queue: ...`                  | the "what next?" question on a bare invocation       | the user's choice of order; the queue's order is used         |
-| `Queue: continuous`           | the stop between runs                                | the review of one run's report before the next one starts     |
-| A large page budget           | the budget question                                  | metered credits                                               |
+| `Queue: continuous`           | choosing the next queued task | each new Mandate still waits for approval |
+| A proposed page budget        | repeating the preference | paid spend still needs authorization |
 
 With this section present, the run still presents the Mandate and **waits** for the user's
 reply, every task, bounded or architectural: the lines pre-answer preferences, never the
@@ -159,7 +161,8 @@ Mandate. List every preference the lines settled under "Decisions made without a
 
 **Stops no standing mandate removes**, so the user knows which ones to expect:
 
-- the Mandate itself, every run;
+- the Mandate itself, every run, and a corrected Mandate;
+- the merge, approved separately for the completed head; a changed head lapses that approval;
 
 - the stop-list (section 3): scope beyond the task, invariants, data deletion, production,
   real services, force-push, gate bypass, foreign pull requests, budget overrun;
@@ -183,5 +186,6 @@ this skill or a delegated one.
 
 Save the message as sent and the reply as received (verbatim, with timestamp) to
 `MANDATE.md` in the run folder, and record the path and the reply token in the stage table. For
-a run under a standing mandate, the "reply" section quotes the section it relied on. Every later
-authorization in the run - a fix brief for a gap, the merge - cites this file.
+a run with standing preferences, record those separately from the owner's actual reply.
+At merge, record the summary's full head SHA and the owner's reply verbatim here and in
+`RUN.md`. Check both on resume; a moved head needs a new summary and reply.

@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { parseFlags, refuseUnknownFlags, checkFlagValues, writeFailure, spellCommand, tolerateClosedStdout } from '../lib/core.mjs';
 import { deploy } from '../lib/installer.mjs';
-import { machineRole, KIT_HOME } from '../lib/machine.mjs';
+import { machineRole, configPath, KIT_HOME } from '../lib/machine.mjs';
 import { KIT_ROOT } from '../lib/scaffold.mjs';
 import { heading } from '../lib/render.mjs';
 
@@ -77,15 +77,24 @@ const role = machineRole();
 process.stdout.write(`${heading(`next steps (role=${role})`)}\n`);
 if (role === 'builder') {
   process.stdout.write(`  1. ${installed('handoff.mjs')}     did the corpus arrive whole?
-  2. read research/BRIEF.md               phase 2 starts there
-  3. ${installed('preflight.mjs')}  confirm the gate still passes here
+  2. ${installed('preflight.mjs')}  confirm the gate still passes here
+  3. ${installed('brief.mjs', '--state')}  authored, both judged sections answered
+
+Read the brief and check the classified MAP, rewritten Findings and current stamped
+inputs before building. Authored unstamped briefs keep the existing compatibility
+path with currency unknown (ADR-0138). A file's presence or PASS alone is not review.
 
 This machine does not collect. If a fact is missing, name it and let it be collected on
 the collector machine.
 `);
-} else {
+} else if (role === 'collector') {
   process.stdout.write(`  1. ${installed('install-hooks.mjs')}   install the two gates
-  2. firecrawl login                          or run with --transport http-keyless
+  2. firecrawl login; or set "transport": "http-keyless" in ${configPath()}
   3. ${installed('doctor.mjs')}          stop at READY
+
+A per-run research --transport flag does not configure doctor's chosen route.
+`);
+} else {
+  process.stdout.write(`  1. ${installed('doctor.mjs')}  resolve the reported machine-role/config blockers before choosing collector or builder steps
 `);
 }

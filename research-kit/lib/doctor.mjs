@@ -354,6 +354,7 @@ export function scanForSecrets(root, { maxFiles = 2000 } = {}) {
   let scanned = 0;
   let skippedLarge = 0;
   let skippedBinary = 0;
+  let capped = false;
   // The machine's scratch folder is not the project, and it is skipped by ABSOLUTE path
   // rather than by name. It usually sits outside the tree being scanned, so this costs
   // nothing - but a RELATIVE TMPDIR is legal, and then the scratch folder resolves INSIDE
@@ -364,7 +365,7 @@ export function scanForSecrets(root, { maxFiles = 2000 } = {}) {
 
   const seen = new Set();
   const walk = (dir, rel) => {
-    if (scanned >= maxFiles) return;
+    if (scanned >= maxFiles) { capped = true; return; }
     let real;
     try { real = fs.realpathSync(dir); } catch { return; }
     if (seen.has(real)) return;
@@ -382,7 +383,7 @@ export function scanForSecrets(root, { maxFiles = 2000 } = {}) {
         walk(abs, childRel);
         continue;
       }
-      if (scanned >= maxFiles) return;
+      if (scanned >= maxFiles) { capped = true; return; }
       let size = 0;
       try { size = fs.statSync(abs).size; } catch { continue; }
       if (size > SECRET_MAX_BYTES) { skippedLarge += 1; continue; }
@@ -405,7 +406,12 @@ export function scanForSecrets(root, { maxFiles = 2000 } = {}) {
     scanned,
     skippedLarge,
     skippedBinary,
-    coverage: `${SECRET_PATTERNS.length} credential patterns over ${scanned} text file(s) under ${maxFiles / 1000}k, dotfiles included, ${skippedBinary} binary file(s) skipped, excluding ${[...SECRET_SKIP_DIRS].join(', ')} (at any depth)`,
+    // Count alone does not establish an omitted path: the final file may reach the cap.
+    // Record only a return that actually prevented further traversal, and do not guess
+    // how many files remain in paths the bounded scan never inspected.
+    capped,
+    coverage: `${SECRET_PATTERNS.length} credential patterns over ${scanned} text file(s) with a ${maxFiles}-file cap, dotfiles included, ${skippedBinary} binary file(s) skipped, excluding ${[...SECRET_SKIP_DIRS].join(', ')} (at any depth)`
+      + (capped ? `; incomplete coverage: traversal stopped at the ${maxFiles}-file cap, leaving paths uninspected` : ''),
   };
 }
 
@@ -473,7 +479,10 @@ export function runDoctor(root, { env = process.env, gitPaths = {}, probe = prob
         `${hit.file}:${hit.line} matches ${hit.pattern} - the key never belongs in this repository (Rule 6)`,
         'move it to the CLI config or the environment, then rotate it: a committed key is a leaked key'));
     }
-  } else {
+  }
+  if (secrets.capped) {
+    findings.push(f('warn', 'secret-scan', secrets.coverage));
+  } else if (!secrets.hits.length) {
     findings.push(f('pass', 'secret-scan', `no match: ${secrets.coverage}`));
   }
 

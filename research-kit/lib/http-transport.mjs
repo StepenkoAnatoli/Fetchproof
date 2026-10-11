@@ -708,6 +708,21 @@ async function child() {
     // the operator asked for is theirs, and so are the redirects that stay inside it.
     const allowInternal = job.allowInternalRedirects === true
       || (job.allowInternalRedirects !== false && await internalTarget(new URL(job.url).hostname) !== null);
+    // A caller that said `false` refused this machine's network for the whole fetch, and a NAME
+    // asked for is judged by what it resolves to before anything is fetched (ADR-0155): a
+    // literal address the caller spelled out is the caller's, as it is at the guard. The name
+    // is judged again at connection time, where its addresses are the ones used (ADR-0114);
+    // this earlier judgment names the refusal plainly and opens no connection.
+    if (job.allowInternalRedirects === false) {
+      const asked = new URL(job.url);
+      const why = net.isIP(asked.hostname.replace(/^\[|\]$/g, '')) ? null : await internalTarget(asked.hostname);
+      if (why) {
+        process.stdout.write(JSON.stringify({ ok: false, url: job.url, error: `refused to fetch ${asked.host} - ${why}. `
+          + 'This fetch was asked to stay out of this machine\'s network; if you meant that address, fetch it as your own '
+          + '(the default policy), or set RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1.' }));
+        return;
+      }
+    }
     // Every connection fetch makes is judged where it is made: a second resolution of a name
     // cannot answer differently from the one judged (ADR-0114).
     dns.lookup = guardedLookup(dns.lookup, { allowInternal: () => allowInternal, exempt: proxyHosts(process.env) });

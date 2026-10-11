@@ -31,10 +31,14 @@ auto-build, brainstorming, break-test, careful-coding, four-dimension-audit, gap
 improve-codebase-architecture, lead-orchestrator, subproject-discovery) come from
 StepenkoAnatoli/SkillsMDs at commit 3f2d2fc6627d63ea93ff97d4d33845a753db16cc and are
 licensed under the Apache License 2.0 (LICENSES/Apache-2.0.txt). They are shipped as
-received, apart from the file renames the skill format forces and five auto-build files
+received, apart from the file renames the skill format forces and six auto-build files
 changed so they agree with the kit's rules (SKILL.md, references/mandate.md,
 references/merge-protocol.md, assets/claude-md-auto-build-mandate.md,
-scripts/pr-readiness.sh). Each changed file says so at its top; all the changes are
-listed in docs/adr/0146-the-kit-ships-a-skill-set-and-a-role-aware-router.md. The other skills
+scripts/pr-readiness.sh, references/stage-handoffs.md). The first five were adapted on
+2026-10-06; the approval-summary corrections and stage-handoffs adaptation are dated
+2026-10-08. Each changed file says so at its top; the changes are listed in
+docs/adr/0146-the-kit-ships-a-skill-set-and-a-role-aware-router.md and the complete-review
+clarification in docs/adr/0150-complete-review-and-git-corpus-ownership-in-builder-handoffs.md. Receipt hashes remain
+historical evidence, not digests of the subsequently adapted files. The other skills
 under research-kit/skills/, and the two references/research-kit.md files beside
 lead-orchestrator and auto-build, are the kit's own work, under its LICENSE.

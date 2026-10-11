@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { test, describe, assert, assertEqual, tempDir, fs, path, makeProject, requireGit, requireSymlink, fixtureInitArgs, KIT_ROOT } from './harness.mjs';
 import { writeText, readText } from '../lib/core.mjs';
 import { createPanel, PANEL_COMMANDS, PANEL_HOST, keyProblem, projectTopic, builderInstructions } from '../lib/panel.mjs';
+import { writeResult, recordTrustedResult, setPaused } from '../lib/requests.mjs';
 
 describe('panel');
 
@@ -87,6 +88,29 @@ test('the state names the topic from plan.json, the role and the project, and no
     assertEqual(res.json.keys.search.set, true);
     assertEqual(res.json.keys.search.source, 'environment');
     assert(!res.text.includes(KEY), 'the state echoed the key');
+  } finally { await ctx.panel.close(); }
+});
+
+test('diagnostic redaction protects inherited result details and pause text in the panel request payload', async () => {
+  const m = machine({ SERPAPI_API_KEY: KEY });
+  const project = fs.realpathSync.native(makeProject(undefined, { topic: 'Inherited diagnostics', content: true }));
+  writeText(path.join(project, 'research', 'requests', 'legacy.json'), JSON.stringify({
+    fact: 'What is the limit?', blocks: 'retry design', urls: ['https://docs.example.com/limits'],
+  }));
+  const resultFile = writeResult(project, 'legacy', { status: 'failed', pages: 2, detail: `provider failed: ${KEY}` });
+  recordTrustedResult(project, 'legacy', m.env);
+  setPaused(`inspect failed provider ${KEY}`, m.env);
+  const original = readText(resultFile);
+  const ctx = await started({ machine: m, project });
+  try {
+    const res = await api(ctx, '/api/requests');
+    assertEqual(res.status, 200);
+    assertEqual(res.json.requests[0].status, 'failed', 'redaction invalidated collector-local result trust');
+    assertEqual(res.json.requests[0].pages, 2);
+    assert(!res.text.includes(KEY), 'the panel exposed an inherited diagnostic secret');
+    assert(res.json.requests[0].detail.includes('***REDACTED***'), 'the inherited diagnosis was discarded');
+    assert(res.json.paused.includes('***REDACTED***'), 'the pause diagnosis was discarded');
+    assertEqual(readText(resultFile), original, 'reading status rewrote an inherited trusted result');
   } finally { await ctx.panel.close(); }
 });
 
@@ -377,7 +401,14 @@ test('connecting a builder hands it the phase-2 steps of the kit: handoff, prefl
   assert(/Do not collect/.test(text), 'the builder is not told it never collects');
   assert(!/research\.mjs|decompose\.mjs/.test(text), 'a collecting command reached the builder');
   assert(text.includes('$HOME/.agents/research-kit/bin/'), 'the text names a path that does not travel');
-  assert(/does not exist yet/.test(builderInstructions({ brief: false })), 'a missing brief is not said');
+  const missing = builderInstructions({ brief: false });
+  assert(/does not exist yet/.test(missing), 'a missing brief is not said');
+  assert.doesNotMatch(missing, /the collector has finished phase 1/i,
+    'missing-brief instructions claim that research is finished');
+  assert.doesNotMatch(text, /what you verified: verified preflight PASS and handoff checks/,
+    'the panel supplied a verification claim without observing those checks');
+  assert(/brief\.mjs[\s\S]*authored/.test(text), 'file presence must not substitute for brief review');
+  assert(/current|stale/.test(text), 'the builder is not told to check the brief against current inputs');
 
   const project = makeProject(undefined, { topic: 'Hand-off topic', content: true });
   const ctx = await started({ project });

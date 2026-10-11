@@ -5,6 +5,34 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Under an explicit refusal of this machine's network (`allowInternalRedirects: false`,
+  or `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
+  resolves to - at the browser guard even when it is the page's own host, and before any
+  fetch or browser launch - so a resolver cannot turn the page asked for into this
+  machine's network (ADR-0155). A literal address the caller spelled out, and the default
+  policy for a URL the operator typed, are unchanged (ADR-0110).
+
+- QUICKSTART names the applicable trusted-PEM `NODE_EXTRA_CA_CERTS` remedy before
+  starting Node on a network with TLS inspection, with missing/malformed-file warnings,
+  setuid/Linux-capability and explicit TLS/HTTPS `ca` limits (break-test evidence
+  E-03/E-06). A client setting does not configure a remote collector; no environment
+  or trust store is changed by the documentation.
+
+- Builder handoff guidance states the existing complete/current review rather than
+  treating PASS, BRIEF presence or a Git request's `collected` result as permission
+  (ADR-0150). The builder reads/judges returned evidence; the collector records Git
+  Findings, closures, map and brief. Local received-package review/re-packaging and
+  authored unstamped compatibility remain available. Keyless role tables and installer
+  next steps now match doctor's existing chosen-transport behavior; no config is changed.
+
+- Maintenance corrects the shipped auto-build summaries to match ADR-0146: current
+  design approval and completed-head merge approval are separate; changed artifacts
+  need their applicable reply, standing preferences never supply it, and gate/hook
+  checks do not verify every prose duty or owner consent. The six adapted upstream
+  files have dated notices, with receipt hashes preserved. Scoped freeze exceptions
+  and cwd-scoped gate/corpus commands are described without removing the panel's
+  accepted project flag.
+
 - The collector serves builder requests (ADR-0148, lifting the freeze for that one item).
   A builder pushes `research/requests/<id>.json`: one fact, why it blocks, and the owner
   pages or search queries. The desktop panel's auto-collect runs on a collector only. It
@@ -18,7 +46,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   Check now and Resume. A failed commit or push is retried without collecting the request again.
 - The desktop panel (ADR-0147, lifting the freeze for that one item): `bin/panel.mjs` opens a
   page served from 127.0.0.1 for keys, doctor, update, the topic and the builder hand-off.
-  It runs doctor, handoff, preflight and install with fixed arguments and never collects.
+  It runs doctor, handoff, preflight and install with fixed arguments; ADR-0148 adds
+  capped collection of validated builder requests, not a general collection command.
   It saves the SerpAPI key to the machine config, refuses to save it inside a repository,
   and never shows it again. Its builder section gives the collector's push, ledger included,
   and the builder's own steps. Host, Origin, JSON-only POSTs and a per-launch token in the
@@ -26,7 +55,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   named only in the registry.
 - The kit ships a skill set and a role-aware router (ADR-0146, lifting the freeze for that
   one item): `research-kit/skills/<name>/`, deployed by `install.mjs` to every skill root
-  beside research-first and `--into` a project. Ten skills are vendored as received from
+  beside research-first and `--into` a project. Ten skill directories are vendored from
   StepenkoAnatoli/SkillsMDs (Apache-2.0); thirteen are the kit's own (build-from-brief,
   fact-request, cite-in-code, day-one-tasks, contract-tests, commit-report, map-classifier,
   finding-rewriter, source-grader, brief-writer, freshness-recheck, adr-writer,
@@ -34,9 +63,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   builder to a skill that collects. Doctor's deploy check measures the set like the skill.
   A skill of the same name that is not the kit's is left as it is and named, never
   overwritten. Each set skill the kit owns is mirrored, so a file a later kit no longer
-  ships is removed and, until then, reported as drift. Five vendored auto-build files are
-  changed to agree with the kit's rules (ADR-0146 decision 3): the Mandate always waits,
-  and the merge command pins the approved head.
+  ships is removed and, until then, reported as drift. Five vendored auto-build files
+  were adapted on 2026-10-06; the 2026-10-08 maintenance also adapts stage-handoffs
+  and corrects the remaining summaries (ADR-0146 decision 3). Each modification is
+  marked; the Mandate waits, and merge requires the owner's completed-head reply.
   Researched in `docs/decisions/2026-10-06-builder-skills/`.
 - Auto-build runs the kit's way (ADR-0146): `skills/auto-build/references/research-kit.md`
   starts every run from the router, replaces the research stage on a builder with
@@ -121,7 +151,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## 0.9.5 — 2026-10-04
 
-Forty-one entries under the freeze (ADR-0117), nothing new added: bug fixes from the fourth
+Forty-one entries under the freeze (ADR-0117), with scoped exceptions recorded by their
+ADRs: bug fixes from the fourth
 and fifth break-tests, from the architecture pass, the output-reliability audit, the gap audit
 and the outside audit's rounds of 2026-10-03, and from three external reviews of the handoff
 remedies, with the decisions they produced recorded as ADR-0133 to ADR-0140; one vendor update

@@ -21,7 +21,9 @@ needs no judgement at all: whether a quoted passage actually occurs in the cited
 - **The marker:** an EVIDENCE Finding may carry `[quote: ...]`, the same shape as
   `[render-reviewed: ...]`. A row may carry several. An ellipsis (`...` or `…`) separates
   fragments, and every fragment must occur in the row's capture, in order.
-- **Matching:** exact after normalization, for comparison only.
+- **Matching:** exact after normalization, for comparison only. At least one normalized
+  fragment must be nonempty and match; formatting-only fragments alongside real text are
+  ignored, while an anchor with no remaining text cannot be reported as found.
   - **Normalization:** NFKC, curly quotes and long dashes to plain ones, Markdown link
     syntax to its text, emphasis, backticks and escapes removed, whitespace collapsed, case
     folded.

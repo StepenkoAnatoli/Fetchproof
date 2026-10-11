@@ -13,6 +13,9 @@ permits, whether a platform can do the thing the design depends on. Plain Node, 
 dependencies, no `package.json`. Everything except the collection itself runs offline.
 
 **What PASS means.** The configured checks passed for the declared research contract.
+The agent also writes the contract and unknowns list: an omitted blocking question is
+not checked, and a contract with a trivially easy unknown can pass. PASS does not prove
+that the unknowns cover the intended build or that the claims are true.
 A pass can retain disclosed known unknowns and warnings. Generated briefs, audits and
 package reading guides preserve those warnings and their reasons. The gate checks
 provenance and research structure; an agent still has to check whether a source supports
@@ -78,6 +81,16 @@ Two ideas carry the whole design:
 The work splits into **two phases**, usually done by different agents. Phase 1 is research:
 it ends with a passing gate and a brief, and never writes product code. Phase 2 is the
 build: a builder reads the brief and implements, and should never need to re-research.
+
+**The gate stops forgetful agents, not adversarial ones.** It is a workflow check, not a
+security boundary. The edit hook matches `Edit|Write|MultiEdit|NotebookEdit`; shell writes
+such as `>`, `sed -i` and `tee` do not reach it. For those writes, the commit hook is the
+backstop when it runs. Its default `failOpen: true` permits a commit when the gate cannot
+run or fails internally; an ordinary failing research verdict still blocks the commit.
+The active edit hook denies creating `research/GATE_OFF`, like edits into `research/raw/`,
+but an agent with shell or configuration access can still create an override or bypass a
+hook. The existing `editGate.mode=off` and present `GATE_OFF` overrides remain deliberate
+operator controls.
 
 **What the gate does not stop, so you know where to look.** Three overrides exist. `git commit
 --no-verify` skips the hook, and a hook git did not run cannot record anything, so that one
@@ -408,9 +421,9 @@ machine config, default `collector`).
 
 | | **collector** (your PC) | **builder** (a sandbox, a CI box, another agent's machine) |
 |---|---|---|
-| holds | the Firecrawl key | no key |
+| holds | the Firecrawl key when using that route; none for a chosen keyless route | no collection key required |
 | runs | `decompose.mjs`, `research.mjs` | `handoff.mjs`, `preflight.mjs`, then the build |
-| `doctor` says | a missing key is a FAIL | a missing key is informational |
+| `doctor` says | absent Firecrawl CLI/auth fails for an unchosen or Firecrawl route; a chosen keyless route passes those findings (ADR-0095) | absent Firecrawl CLI/auth is expected |
 | must | push `research/` including the ledger | not collect; `research.mjs` and `decompose.mjs` refuse there |
 
 The corpus travels through git. The builder's first command, inside the project:
@@ -428,6 +441,17 @@ builder with `.gitattributes`: `research/raw/* text eol=lf`). The scaffold ships
 
 A builder who finds a fact missing reports which one and lets the collector fetch it. A
 page fetched by hand is not evidence in this kit.
+
+An intact handoff and PASS are necessary, but do not by themselves finish review. Check
+the classified MAP, rewritten Findings, and an authored brief with both judged sections
+answered and current stamped inputs; authored unstamped briefs retain ADR-0138's
+compatibility path with currency unknown. Approval is derived from that work on either
+machine, never from a builder-role predicate.
+
+A Git request result marked `collected` means captures were delivered. The builder
+reads and judges them; the collector records their Findings, unknown closures, map and
+brief. Send review-only gaps back in prose instead of paying for another fetch. Local
+review and re-packaging of a received package still follows ADR-0052 (ADR-0150).
 
 ## Keys and cost
 

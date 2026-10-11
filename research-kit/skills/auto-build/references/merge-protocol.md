@@ -1,6 +1,6 @@
 # Merge Protocol
 
-<!-- Modified by Research-Kit (ADR-0146): the merge command in section 6 pins the approved head SHA. The rest is as received from StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Research-Kit: ADR-0146 head-pinned command and 2026-10-08 corrections to entry conditions, consent, resumed/moved heads and follow-up merges. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 
 Stage 8 of auto-build. The pull request is the run's delivery; the merge is the one irreversible
 action in the run, so it has the strictest entry conditions and the most explicit record. The
@@ -27,7 +27,8 @@ All of these are true, recorded in `RUN.md`, before anything in this file runs:
 - Stages 5, 6 and 7 are DONE or SKIPPED with reasons; every S1 and every break-test Critical is
   FIXED and RE-REVIEWED, or accepted by the user in writing with the acceptance quoted in
   `RUN.md`; every other finding has a disposition.
-- `MANDATE.md` exists with reply `GO` or `GO MERGE`, or quotes a standing mandate.
+- `MANDATE.md` records the owner's approval of the current design; a standing preference
+  is not that reply. The separate completed-head approval is required before merge.
 - Every research project the run created is committed with its ledger (`git add -f
   <project>/research/raw/.fetches.jsonl`) and `preflight` still exits 0 from inside it.
 - The run folder is committed on the working branch (or kept in an ignored folder because the
@@ -63,7 +64,7 @@ gh pr create --base <base> --head <working-branch> --title "<type>(<scope>): <su
 ```
 
 Record the pull request number and URL in `RUN.md` and the stage table. Under `GO`, the stage
-ends here: Next action "merge when ready; conditions in references/merge-protocol.md section 5",
+holds the merge: Next action "awaiting owner: merge <completed-head-sha>",
 and the report says the merge was held by the Mandate.
 
 If the host, the branch protection or the CI appends further checks only after a pull request
@@ -108,9 +109,15 @@ The lead then confirms what the host cannot know, and writes each as a line in `
 - the gate's failing set on that SHA equals the baseline;
 - the pull request was opened by this run (number matches `RUN.md`);
 - no break-test Critical or High-Likely risk remains without a written acceptance;
-- the Mandate reply is `GO MERGE` (or the standing mandate's default for a bounded task).
+- the completed-head summary and the owner's reply approving its full SHA are recorded
+  verbatim in `MANDATE.md` and `RUN.md`, including acknowledgment of any listed stale
+  unused evidence as `research-kit.md` requires.
 
-Only when the script exits 0 and every line above is written does the merge run.
+Only when the script exits 0, the governing Research-Kit conditions hold and that
+completed head has the owner's approval does the merge run. An early `GO MERGE`
+records intent, not approval of code that did not yet exist. On resume, check the head
+and re-run its required checks. Any push, fix, rebase or merged base update changes the
+head and lapses approval; present the new summary and stop for its reply.
 
 ## 6. Merge
 
@@ -125,8 +132,8 @@ gh pr merge <number> --merge --match-head-commit <approved-sha>   # or --squash 
 ```
 
 `<approved-sha>` is the head SHA the readiness check printed and the approval named. Pinning it
-makes the merge refuse if the head moved after the check, so only the approved commit can be
-merged.
+makes the merge refuse if the head moved after the check. Pinning protects against
+movement; it does not prove that the owner gave consent.
 
 Add `--delete-branch` only when the Mandate says to delete the branch. Never pass `--admin`,
 never pass `--auto` to leave the merge to a bot, and never use a review approval from the user's
@@ -142,7 +149,8 @@ stage table before doing anything else.
 2. If the Mandate says to wait for base CI: `gh run list --branch <base> --limit 1` and watch
    the run that includes the merge commit; a red base after the merge is the run's defect to fix
    with the unit discipline (red-first, the mutation shown, the fix through the gate), in a new
-   pull request opened and merged under the same Mandate, and recorded as a review miss.
+   pull request within the unchanged Mandate's scope, with a separate completed-head
+   approval before its merge, and recorded as a review miss.
 3. Where the gate can run locally, run it once on `origin/<base>` at the merge commit and
    compare with the baseline; record the result.
 4. Remove the run's branches and worktrees: builder worktrees, the break-test worktree and

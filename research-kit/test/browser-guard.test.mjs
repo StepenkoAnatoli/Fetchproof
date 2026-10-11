@@ -10,8 +10,11 @@
 
 import http from 'node:http';
 import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
-import { test, describe, assert, tempDir, fs, path, requireCapability } from './harness.mjs';
+import childProcess, { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { syncBuiltinESMExports } from 'node:module';
+import { test, describe, assert, tempDir, fs, path, requireCapability, KIT_ROOT } from './harness.mjs';
 import { startGuard, judge, parseUpstream, renderThroughGuard, REFUSAL_MARKER, DROP_MARKER, isBrowserService } from '../lib/browser-guard.mjs';
 import browser, { findBrowser, renderGuarded, browserArgs } from '../lib/browser-transport.mjs';
 
@@ -266,49 +269,202 @@ test('the transport\'s half passes the child\'s net log and its own internal-add
   assert.equal(old.allowInternal, undefined, 'an absent decision is left for the transport to make');
 });
 
-// Found 2026-10-01 on CI: Chromium's process startup on the runners takes anything from 4 s
-// to 43 s before the browser makes its first request - the Windows legs, and once an Ubuntu
-// one - and that time came out of the render timeout, so the page was killed before it
-// could be asked for. The render timeout now starts at the browser's first request through
-// the guard; the launch is allowed as long again, and no more (ADR-0119).
+// The previous fixture measured `node -e 0`, then relied on a different ESM child's boot
+// fitting around an artificial sleep. A 434 ms sample gave a 2170 ms allowance, but that
+// child made no request before it expired (2026-10-09). Its mute case also bounded setup
+// and cleanup rather than the browser's clock. Control this clock and the child here;
+// real HTTP still drives the guard's first-request callback. The neighbouring tests keep
+// native child-process coverage, including stderr, net logs and guarded navigation.
 test('the render timeout starts at the browser\'s first request, and the launch is allowed as long again', async () => {
-  const pages = await site({ '/slow': () => '<html><body>slow but whole</body></html>' });
-  // The browser takes 60% of the budget to start and the page 50% of it to answer: together
-  // past the timeout, apart inside it. The budget itself scales with this host's Node boot,
-  // measured once, so Node gets at least 40% of it - twice its measure. A fixed 2 s budget left
-  // Node 800 ms to boot, and on the operator's PC that failed 2 runs in 10 (2026-10-04, GPT's
-  // review); a Node made to boot 900 ms slower reproduced it here (break-test pass 6).
-  const bootStart = Date.now();
-  spawnSync(process.execPath, ['-e', '0'], { windowsHide: true });
-  const boot = Date.now() - bootStart;
-  const budget = Math.max(2_000, 5 * boot);
-  const slowSite = http.createServer((req, res) => setTimeout(() => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<html><body>slow but whole</body></html>'); }, Math.round(budget * 0.5)));
-  await new Promise((resolve) => slowSite.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${slowSite.address().port}/slow`;
-  const sleepy = path.join(tempDir('rk-sleepy-browser-'), 'browser.mjs');
-  fs.writeFileSync(sleepy, `
-import http from 'node:http';
-const args = process.argv.slice(2);
-const proxy = Number(args.find((a) => a.startsWith('--proxy-server=')).split(':').pop());
-await new Promise((r) => setTimeout(r, ${Math.round(budget * 0.6)}));
-const url = args.at(-1);
-http.request({ host: '127.0.0.1', port: proxy, path: url, headers: { host: new URL(url).host } }, (res) => { let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => { process.stdout.write(b); }); }).end();
-`);
+  const held = new Map();
+  const responses = new Set();
+  const pages = http.createServer((req, res) => {
+    responses.add(res);
+    const receipt = held.get(req.url);
+    if (!receipt) { res.writeHead(404); res.end('no such page'); return; }
+    receipt.resolve(res);
+  });
+  // The harness arms its real watchdog when this first await returns the callback's
+  // promise. Install the scoped doubles only after listening has completed.
+  await new Promise((resolve, reject) => { pages.once('error', reject); pages.listen(0, '127.0.0.1', resolve); });
+  const original = { spawn: childProcess.spawn, kill: process.kill, now: Date.now,
+    setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const timeout = 1000;
+  let now = 0;
+  let nextPid = 2_000_000_000;
+  let nextSpawn = null;
+  const timers = new Map();
+  const ownedTimers = new Set();
+  const children = new Map();
+  const renders = [];
+  const requests = new Set();
+  const answers = [];
+  const signals = [];
+  const signal = () => {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    const receipt = { promise, settled: false, resolve(value) {
+      if (!receipt.settled) { receipt.settled = true; resolve(value); }
+    } };
+    signals.push(receipt);
+    return receipt;
+  };
+  const closeChild = (child, status = 0, exitSignal = null) => {
+    if (child.closed) return;
+    child.closed = true;
+    child.stdout.end(); child.stderr.end();
+    // Model the close after both pipes drain. The native-child cases cover the separate
+    // exit event and its grace; emitting only close keeps this test about the deadlines.
+    child.emit('close', status, exitSignal);
+  };
+  const killChild = (child, exitSignal = 'SIGTERM') => {
+    child.kills += 1;
+    child.killTimes.push(now);
+    closeChild(child, null, exitSignal);
+    return true;
+  };
+  const advance = (ms) => {
+    const until = now + ms;
+    for (;;) {
+      const next = [...timers].filter(([, timer]) => timer.at <= until)
+        .sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      const [handle, timer] = next;
+      timers.delete(handle); now = timer.at; timer.fn(...timer.args);
+    }
+    now = until;
+  };
+  const start = async (route) => {
+    assert.equal(timers.size, 0, 'the previous render left its deadline armed');
+    now = 0;
+    const ready = signal();
+    const run = { ready, url: `http://127.0.0.1:${pages.address().port}${route}`, child: null, port: null };
+    nextSpawn = run;
+    run.promise = renderThroughGuard({ binary: process.execPath,
+      args: ['controlled-browser', '--dump-dom', run.url], url: run.url, allowInternal: true, timeout });
+    renders.push(run.promise);
+    run.promise.catch(() => {});
+    await Promise.race([ready.promise, run.promise.then(() => {
+      throw new Error('the render ended before it spawned the controlled browser');
+    })]);
+    assert.ok(run.child, 'the controlled browser was not spawned');
+    return run;
+  };
+  const request = async (run) => {
+    const receipt = signal();
+    held.set(new URL(run.url).pathname, receipt);
+    const answer = new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: run.port, path: run.url,
+        headers: { host: new URL(run.url).host } }, (res) => {
+        responses.add(res);
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+        res.on('error', reject);
+        res.on('aborted', () => reject(new Error('the guarded response was aborted')));
+      });
+      requests.add(req);
+      req.on('error', reject);
+      req.once('close', () => requests.delete(req));
+      req.end();
+    });
+    answers.push(answer); answer.catch(() => {});
+    const res = await Promise.race([receipt.promise,
+      answer.then(() => { throw new Error('the proxy answered before the page received its request'); }),
+      run.promise.then(() => { throw new Error('the browser ended before the page received its request'); })]);
+    assert.ok(res, 'the page did not receive its request');
+    return { res, answer };
+  };
   try {
-    const r = await renderThroughGuard({ binary: process.execPath, args: [sleepy, '--dump-dom', url], url, allowInternal: true, timeout: budget });
-    assert.equal(r.errorCode, null, `the launch ate the render budget: ${r.errorMessage} (startupMs ${r.startupMs}, elapsedMs ${r.elapsedMs}, node boot ${boot} ms, budget ${budget} ms)`);
-    assert.match(r.stdout, /slow but whole/);
-    assert.ok(r.startupMs >= budget * 0.55 && r.startupMs < budget, `startupMs ${r.startupMs} against a ${budget} ms budget (node boot ${boot} ms)`);
-    assert.ok(r.elapsedMs > budget, `elapsed ${r.elapsedMs}: the page cannot have arrived inside ${budget} ms`);
-    // A browser that never makes a request has only its launch allowance - one timeout - then the kill.
-    const mute = path.join(tempDir('rk-mute-browser-'), 'browser.mjs');
-    fs.writeFileSync(mute, 'await new Promise((r) => setTimeout(r, 60_000));');
-    const t0 = Date.now();
-    const m = await renderThroughGuard({ binary: process.execPath, args: [mute, '--dump-dom', url], url, allowInternal: true, timeout: 700 });
-    assert.equal(m.errorCode, 'ETIMEDOUT');
-    assert.ok(Date.now() - t0 >= 650 && Date.now() - t0 < 3000, `a mute browser is killed at one timeout, took ${Date.now() - t0} ms`);
-    assert.equal(m.startupMs, null, 'no first request, no startup time');
-  } finally { await pages.close(); await new Promise((r) => { slowSite.closeAllConnections?.(); slowSite.close(r); }); }
+    childProcess.spawn = (binary, args) => {
+      assert.equal(binary, process.execPath);
+      assert.ok(nextSpawn, 'unexpected child spawn');
+      const run = nextSpawn; nextSpawn = null;
+      const proxy = args.map((arg) => /^--proxy-server=127\.0\.0\.1:(\d+)$/.exec(arg)).find(Boolean);
+      assert.ok(proxy, 'the browser was not given the real guard');
+      const child = Object.assign(new EventEmitter(), { pid: nextPid++, stdout: new PassThrough(),
+        stderr: new PassThrough(), closed: false, kills: 0, killTimes: [] });
+      child.kill = () => killChild(child);
+      children.set(child.pid, child);
+      run.child = child; run.port = Number(proxy[1]); run.ready.resolve(run);
+      return child;
+    };
+    process.kill = (pid, exitSignal) => {
+      const child = children.get(-pid);
+      assert.ok(child, `unexpected process-group kill: ${pid}`);
+      return killChild(child, exitSignal);
+    };
+    Date.now = () => now;
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      // The guard's deadline is the only duration controlled here. Other timers,
+      // including the harness's default 60000 ms watchdog, remain real.
+      if (ms !== timeout) return original.setTimeout(fn, ms, ...args);
+      const handle = { unref() { return this; } };
+      ownedTimers.add(handle); timers.set(handle, { at: now + ms, fn, args });
+      return handle;
+    };
+    globalThis.clearTimeout = (handle) => {
+      if (ownedTimers.has(handle)) timers.delete(handle);
+      else original.clearTimeout(handle);
+    };
+    syncBuiltinESMExports();
+
+    const whole = await start('/whole');
+    advance(600);
+    const page = await request(whole);
+    advance(500);
+    assert.equal(whole.child.kills, 0, 'the launch deadline was not reset by the first request');
+    page.res.writeHead(200, { 'content-type': 'text/html' }); page.res.end('<html><body>slow but whole</body></html>');
+    const answered = await page.answer;
+    assert.equal(answered.status, 200);
+    whole.child.stdout.write(answered.body); closeChild(whole.child);
+    const complete = await whole.promise;
+    assert.equal(complete.errorCode, null);
+    assert.match(complete.stdout, /slow but whole/);
+    assert.equal(complete.startupMs, 600);
+    assert.equal(complete.elapsedMs, 1100, 'the page finished beyond the original launch deadline');
+
+    const stalled = await start('/stalled');
+    advance(600);
+    await request(stalled);
+    advance(999);
+    assert.equal(stalled.child.kills, 0, 'the render was killed before its own allowance expired');
+    advance(1);
+    assert.equal(stalled.child.kills, 1, 'a first request granted an unbounded render');
+    assert.deepEqual(stalled.child.killTimes, [1600]);
+    const late = await stalled.promise;
+    assert.equal(late.errorCode, 'ETIMEDOUT');
+    assert.equal(late.startupMs, 600);
+    assert.equal(late.elapsedMs, 1600);
+
+    const mute = await start('/mute');
+    advance(999);
+    assert.equal(mute.child.kills, 0, 'a browser without a request lost part of its launch allowance');
+    advance(1);
+    assert.equal(mute.child.kills, 1, 'a browser without a request received a second allowance');
+    assert.deepEqual(mute.child.killTimes, [1000]);
+    const silent = await mute.promise;
+    assert.equal(silent.errorCode, 'ETIMEDOUT');
+    assert.equal(silent.startupMs, null);
+    assert.equal(silent.elapsedMs, 1000);
+    assert.equal(timers.size, 0, 'a finished render left its deadline armed');
+  } finally {
+    try {
+      for (const child of children.values()) closeChild(child);
+      for (const req of requests) req.destroy();
+      for (const res of responses) res.destroy();
+      for (const receipt of signals) receipt.resolve(null);
+      await Promise.allSettled(renders);
+      await Promise.allSettled(answers);
+    } finally {
+      childProcess.spawn = original.spawn; process.kill = original.kill; Date.now = original.now;
+      globalThis.setTimeout = original.setTimeout; globalThis.clearTimeout = original.clearTimeout;
+      syncBuiltinESMExports(); timers.clear(); ownedTimers.clear();
+      for (const child of children.values()) { child.stdout.destroy(); child.stderr.destroy(); }
+      pages.closeAllConnections?.();
+      await new Promise((resolve) => pages.close(resolve));
+    }
+  }
 });
 
 /**
@@ -448,6 +604,49 @@ test('LIVE: a real Chromium cannot be led into this machine\'s network by a scri
 // clock, the default search engine, accounts.google.com, the Cloud Messaging check-in and
 // its push channel - nine connections no page asked for, carried as external. Flags and
 // profile preferences were measured and left most of them (break-test, 2026-10-02).
+test('a name asked for is judged by what it resolves to, exempt or not; under an explicit refusal the child refuses it before any launch', async () => {
+  // ADR-0155, at the guard: the exemption for the host and port asked for is for the address
+  // the operator spelled out. A NAME among them is still judged by its resolution, so a
+  // resolver pointing the page's own name inward is refused instead of admitted as "the page".
+  const rebound = await judge('rebind.example', 80, { allowInternal: false, exempt: new Set(['rebind.example:80']), lookup: fakeLookup({ 'rebind.example': '127.0.0.1' }) });
+  assert.deepEqual(rebound, { refused: 'rebind.example resolves to 127.0.0.1, an internal address' });
+  assert.deepEqual(await judge('localhost', 80, { allowInternal: false, exempt: new Set(['localhost:80']) }), { refused: 'localhost is this machine' });
+  // The operator's own decision still admits it, and a literal address asked for is theirs.
+  assert.deepEqual(await judge('rebind.example', 80, { allowInternal: true, exempt: new Set(), lookup: fakeLookup({ 'rebind.example': '127.0.0.1' }) }), { address: '127.0.0.1' });
+  assert.deepEqual(await judge('127.0.0.1', 80, { allowInternal: false, exempt: new Set(['127.0.0.1:80']) }), { address: '127.0.0.1' });
+  assert.deepEqual(await judge('public.example', 80, { allowInternal: false, exempt: new Set(['public.example:80']), lookup: fakeLookup({ 'public.example': '93.184.216.34' }) }), { address: '93.184.216.34' });
+
+  // ADR-0155, before any launch: under `false` the child judges a name asked for and never
+  // starts the browser. The stand-in browser here would write a marker if it ran.
+  const pages = await pagesProcess();
+  try {
+    const marker = path.join(tempDir('rk-guard-launch-'), 'launched');
+    const writer = path.join(tempDir('rk-guard-writer-'), 'browser.mjs');
+    fs.writeFileSync(writer, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'launched'); process.stdout.write('<html></html>');`);
+    const run = (job) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(KIT_ROOT, 'lib', 'browser-guard.mjs')], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH ?? '', SystemRoot: process.env.SystemRoot ?? '' } });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('close', () => resolve(JSON.parse(out)));
+      child.stdin.end(JSON.stringify(job));
+    });
+    const byName = `http://localhost:${new URL(pages.outer).port}/plain`;
+    const early = await run({ binary: process.execPath, args: [writer, '--dump-dom', byName], url: byName, allowInternalRedirects: false, timeout: 20_000 });
+    assert.equal(early.errorCode, 'EINTERNAL', JSON.stringify(early));
+    assert.match(early.errorMessage, /^refused to render localhost:\d+ - localhost is this machine/);
+    assert.equal(early.allowInternal, false);
+    assert.equal(fs.existsSync(marker), false, 'the browser was launched for a name refused before launch');
+    // A literal address asked for under the same refusal is the caller's, and the browser is
+    // launched for it; so is the operator's own URL under the default policy (ADR-0110).
+    const literal = await run({ binary: process.execPath, args: [writer, '--dump-dom', `${pages.outer}/plain`], url: `${pages.outer}/plain`, allowInternalRedirects: false, timeout: 20_000 });
+    assert.ok(!literal.errorCode, JSON.stringify(literal));
+    assert.equal(fs.existsSync(marker), true, 'the browser was not launched for a literal address the caller spelled out');
+    const theirs = await run({ binary: process.execPath, args: [writer, '--dump-dom', byName], url: byName, timeout: 20_000 });
+    assert.ok(!theirs.errorCode, JSON.stringify(theirs));
+    assert.equal(theirs.allowInternal, true);
+  } finally { pages.close(); }
+});
+
 test('the browser\'s own service hosts are known by name, and a page\'s hosts are not among them', () => {
   for (const host of ['clients2.google.com', 'clients.google.com', 'android.clients.google.com', 'mtalk.google.com', 'alt3-mtalk.google.com',
     'accounts.google.com', 'www.google.com', 'update.googleapis.com', 'safebrowsing.googleapis.com', 'redirector.gvt1.com', 'dl.google.com', 'WWW.GOOGLE.COM.']) {

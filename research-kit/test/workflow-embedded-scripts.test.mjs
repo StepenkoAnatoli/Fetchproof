@@ -191,10 +191,13 @@ export function runBlocks(text, file) {
   return out;
 }
 
-const BASH = ['bash'].find((b) => spawnSync(b, ['-c', 'echo ok'], { encoding: 'utf8' }).stdout?.trim() === 'ok') ?? null;
+const BASH = ['bash', 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files\\Git\\usr\\bin\\bash.exe']
+  .find((candidate) => spawnSync(candidate, ['-c', 'echo ok'], {
+    encoding: 'utf8', timeout: 10_000, windowsHide: true,
+  }).stdout?.trim() === 'ok') ?? null;
 
 function bashSyntax(body) {
-  const r = spawnSync(BASH, ['-n'], { input: body, encoding: 'utf8', timeout: 20_000 });
+  const r = spawnSync(BASH, ['-n'], { input: body, encoding: 'utf8', timeout: 20_000, windowsHide: true });
   return r.status === 0 ? null : (r.stderr || `bash -n exited ${r.status}`).trim();
 }
 
@@ -203,6 +206,13 @@ const runs = fs.readdirSync(WORKFLOWS)
   .flatMap((n) => runBlocks(fs.readFileSync(path.join(WORKFLOWS, n), 'utf8'), n));
 
 test('every run block in every workflow is valid bash', () => {
+  // A real installed Git Bash must not be reported as unavailable just because its
+  // executable is absent from PATH. Exercise the workflows with it below.
+  const installed = ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files\\Git\\usr\\bin\\bash.exe']
+    .find((candidate) => spawnSync(candidate, ['-c', 'echo ok'], {
+      encoding: 'utf8', timeout: 10_000, windowsHide: true,
+    }).stdout?.trim() === 'ok');
+  if (installed) assert.ok(BASH, 'working installed Git Bash was lost by interpreter detection');
   requireCapability(BASH, 'BASH-NOT-FOUND', 'no bash on this host to parse the workflow run blocks with');
   assert.ok(runs.length >= 40, `expected the workflows' run blocks, found ${runs.length}`);
   const broken = runs.map((r) => ({ ...r, error: bashSyntax(r.body) })).filter((r) => r.error)

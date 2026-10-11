@@ -1,0 +1,46 @@
+{
+  "topic": "what the runtime does: Node's certificate store, and the mode a copied file gets",
+  "notes": "Correction of the committed break-test pass-7 corpus. Preserve the original v22.22.0 GitHub-viewer captures and append to their ledger. Owner-authorized scope: six raw primary files through http-keyless, no searches or paid fallback. The first three were collected on 2026-10-07: complete fs.md at probe v22.22.3; fs.md at correction-host v24.20.0; and cli.md at v24.20.0. The fourth, child_process.md at v24.20.0, supplies private IPC lifecycle facts. The two added process.md files at v22.22.3 and v24.20.0 close the required child process.send callback/API detail and supported-version scope. Reuse the four existing correction captures; only these two URLs are new. The existing classified map is retained. Documentation establishes API scope, while product behavior still requires direct tests.",
+  "depth": "quick",
+  "refreshDays": 30,
+  "limit": 8,
+  "perQuery": 3,
+  "maxScrapes": 6,
+  "prefer": [
+    "raw.githubusercontent.com/nodejs/node",
+    "nodejs.org"
+  ],
+  "queries": [],
+  "urls": [
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v22.22.3/doc/api/fs.md",
+      "type": "P",
+      "why": "U-01, U-02, U-04: complete copyFileSync and chmod documentation at the original probe runtime, including Windows write-permission semantics"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.20.0/doc/api/fs.md",
+      "type": "P",
+      "why": "U-01, U-02, U-04: complete copyFileSync and Windows chmod documentation at the correction host runtime"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.20.0/doc/api/cli.md",
+      "type": "P",
+      "why": "U-03: complete NODE_EXTRA_CA_CERTS documentation at the correction host runtime, including ignored and explicit-ca conditions"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.20.0/doc/api/child_process.md",
+      "type": "P",
+      "why": "U-05: private spawn IPC channel, process.send/message, completion/disconnect and delivery caveats for authoritative child accounting"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v22.22.3/doc/api/process.md",
+      "type": "P",
+      "why": "U-05: process.send signature and ChildProcess.send relationship, connected/disconnect and failure/callback behavior at the supported Node 22 runtime"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/nodejs/node/v24.20.0/doc/api/process.md",
+      "type": "P",
+      "why": "U-05: child process.send callback relationship and connected/disconnect behavior at the correction host runtime"
+    }
+  ]
+}

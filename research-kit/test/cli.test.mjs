@@ -21,6 +21,73 @@ import { renderTable } from '../lib/render.mjs';
 
 describe('cli');
 
+function preflightScopeEnv(evidencePolicy = 'pluralist') {
+  const home = tempDir('rk-preflight-scope-home-');
+  const config = path.join(home, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ evidencePolicy }));
+  return { HOME: home, USERPROFILE: home, APPDATA: home, RESEARCH_KIT_CONFIG: config };
+}
+
+function assertUngatedPreflight(result, evidencePolicy) {
+  assert.equal(result.status, 0, result.all);
+  assert.equal(result.err, '', result.all);
+  const verdict = JSON.parse(result.out);
+  assert.deepEqual(Object.keys(verdict), ['pass', 'counts', 'evidencePolicy', 'findings']);
+  assert.equal(verdict.pass, false, 'an ungated directory has no passing research verdict');
+  assert.deepEqual(verdict.counts, { pass: 0, warn: 1, fail: 0 });
+  assert.equal(verdict.evidencePolicy, evidencePolicy);
+  assert.equal(verdict.findings.length, 1);
+  assert.deepEqual(Object.keys(verdict.findings[0]), ['severity', 'check', 'rule', 'detail']);
+  assert.deepEqual(Object.values(verdict.findings[0]).slice(0, 3), ['warn', 'gate', 'not-gated']);
+  assert.match(verdict.findings[0].detail, /no research verdict or permission to build was established/);
+}
+
+test('ungated preflight JSON and text report scope without creating a research project', () => {
+  const root = tempDir('rk-preflight-ungated-');
+  const env = preflightScopeEnv();
+  const text = run('preflight.mjs', [], { root, env });
+  assert.equal(text.status, 0, text.all);
+  assert.equal(text.out, 'not gated - this project holds none of the four gate markers, so there is nothing to judge.\n');
+  assert.doesNotMatch(text.out, /PASS|permission to build/);
+  assertUngatedPreflight(run('preflight.mjs', ['--json'], { root, env }), 'pluralist');
+  assert.deepEqual(fs.readdirSync(root), [], 'an inspection must not scaffold or approve an ungated directory');
+});
+
+test('ungated preflight scope stays unjudged with a selected check and strict policy', () => {
+  const root = tempDir('rk-preflight-scope-strict-');
+  fs.mkdirSync(path.join(root, 'research'));
+  const result = run('preflight.mjs', ['--json', '--quiet', '--strict', '--check', 'citations'], {
+    root, env: preflightScopeEnv('strict'),
+  });
+  assertUngatedPreflight(result, 'strict');
+  assert.deepEqual(fs.readdirSync(path.join(root, 'research')), [], 'a research folder alone is not a gate marker');
+});
+
+test('preflight scope handling retains unknown-check refusal and gated verdicts', () => {
+  const root = tempDir('rk-preflight-scope-usage-');
+  const env = preflightScopeEnv();
+  for (const format of [[], ['--json']]) {
+    const unknown = run('preflight.mjs', [...format, '--check', 'not-a-check'], { root, env });
+    assert.equal(unknown.status, 2, unknown.all);
+    assert.match(unknown.err, /unknown check "not-a-check".*Known checks:/);
+    assert.equal(unknown.out, '', 'scope handling must not hide usage errors');
+  }
+  const gated = makePassingProject();
+  const passing = run('preflight.mjs', ['--json'], { root: gated, env });
+  assert.equal(passing.status, 0, passing.all);
+  const pass = JSON.parse(passing.out);
+  assert.equal(pass.pass, true);
+  assert.equal(pass.counts.fail, 0);
+  assert.ok(!pass.findings.some((finding) => finding.rule === 'not-gated'));
+  fs.unlinkSync(path.join(gated, 'research', 'DISCOVERY.md'));
+  const failing = run('preflight.mjs', ['--json'], { root: gated, env });
+  assert.equal(failing.status, 1, failing.all);
+  const fail = JSON.parse(failing.out);
+  assert.equal(fail.pass, false);
+  assert.ok(fail.counts.fail > 0, 'remaining markers must retain the gated missing-contract failure');
+  assert.ok(!fail.findings.some((finding) => finding.rule === 'not-gated'));
+});
+
 const FAKE_KEY = ['4', '7', 'c', 'e'].join('') + 'd'.repeat(60);
 
 function project(topic = 'cli probe') {

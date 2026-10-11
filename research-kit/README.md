@@ -5,12 +5,31 @@ gate that checks the declared research contract. With the commit hook operating 
 override in effect, a gated project's commit is blocked while preflight fails if it stages
 paths outside `research/` and the permitted project scaffolding.
 
-PASS means the configured checks passed for the declared contract. Disclosed known unknowns
-and nonblocking warnings can remain. Generated briefs, audits and package reading guides
+PASS means the configured checks passed for the declared contract. The agent also writes
+the contract and unknowns list: omitted blocking questions are not checked, and a trivially
+easy unknown can pass. PASS does not establish completeness for the intended build or
+the truth of the claims. Disclosed known unknowns and nonblocking warnings can remain.
+Generated briefs, audits and package reading guides
 carry the warning reasons from their evaluation; an unevaluated warning list says so.
 These checks establish provenance and research structure. Source support, factual wording
 and implemented behavior still need review and appropriate verification. The kit has no
 controlled measurement of how much it reduces errors in research, code or writing.
+
+When the current directory holds none of the four gate markers, preflight reports that
+it is not gated and exits 0 in either output mode. With `--json`, this unjudged scope has
+`pass:false`, counts `{ "pass": 0, "warn": 1, "fail": 0 }`, and one `warn/gate/not-gated`
+notice; no research verdict or permission to build was established. Strict settings do
+not promote this scope notice. This is the ungated CLI exception to the judged verdict's
+`pass === (counts.fail === 0)` relationship (ADR-0153); gated verdicts retain it.
+
+**The gate stops forgetful agents, not adversarial ones.** The edit hook matches
+`Edit|Write|MultiEdit|NotebookEdit`, so shell redirection, `sed -i` and `tee` bypass it.
+The commit hook is their backstop when it runs. `failOpen: true` is the default for a
+missing or internally failing gate; an ordinary failing research verdict still blocks.
+The active edit hook denies creation of `research/GATE_OFF`, with the same deliberate
+off-switches as the `research/raw/` guard. Shell access, configuration access and hook
+bypasses remain outside that protection. The ledger is self-attested and can be
+recomputed by someone with write access; neither hook nor ledger is an adversarial sandbox.
 
 Plain Node, no dependencies, no `package.json`. It installs with one command and runs
 offline for everything except collection itself.
@@ -162,7 +181,24 @@ panel then:
 5. commits the corpus with its ledger, plus `<id>.result.json` beside the request, and pushes.
 
 The builder pulls and reads the result. A refused request gets its reasons in the result.
-The panel shows every request, the pages spent today and the daily cap.
+The panel shows every request, the pages used or reserved today and the daily cap.
+Accounting comes from a private message from the research child, separate from its bounded
+diagnostic output. If its measurement is missing or invalid, collection pauses and reserves
+that attempt's remaining page allowance against today's cap. The failed result and output
+label those pages as reserved: actual spend is unknown. Resume allows other requests within
+the remaining daily cap; it does not automatically retry that failed request or remove the
+reservation. A valid received measurement remains counted even if the child exits unsuccessfully.
+
+Before the research child starts, its entire newly admitted allowance and an in-flight
+pause are saved atomically in the existing meter. A killed collector therefore leaves
+that charge and pause for inspection on restart, including after switching projects.
+A valid report refunds only unused allowance once. Continuation charges only its newly
+admitted remaining pages. A failed meter write prevents the child from starting.
+A run that completes across midnight never refunds yesterday against today: its
+measured total, or full allowance when unmeasured, is conservatively charged to the
+completion day. A single final total cannot date individual attempts, so a cross-day
+run can be charged on two days; an over-cap completion remains paused for inspection
+(ADR-0152). These are page-attempt allowances, not a provider billing balance.
 
 It runs only on a collector. It never passes `--fallback`: when the credits run out, it
 commits what it collected, pauses, and waits for you to top up and press **Resume**. While
@@ -188,7 +224,7 @@ person with an unzip tool all read the same way. See
 ```
 node research-kit/bin/artifact.mjs create --root . \
   --repository OWNER/REPO --ref main --commit <sha40> \
-  --workflow start-research.yml --run-id <workflow_run_id>
+  --workflow collect.yml --run-id <workflow_run_id>
 
 node research-kit/bin/artifact.mjs validate --file research-kit-corpus-v1-<ref>.zip --json
 ```
@@ -525,7 +561,7 @@ node research-kit/bin/selftest.mjs            # all of it
 node research-kit/bin/selftest.mjs gate hook  # just these files
 ```
 
-1701 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
+1780 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
 the assertions settled (ADR-0021), and each test is raced against a watchdog
 (`RESEARCH_KIT_TEST_TIMEOUT`, default 60s).
 

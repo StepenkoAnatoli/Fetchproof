@@ -1,10 +1,12 @@
 # Research-Kit, as auto-build runs inside it
 
-This file is added by the kit (ADR-0146). The auto-build SKILL.md beside it ships as its
-author wrote it; this file says how each stage runs on a machine with Research-Kit
-installed. **Where the two differ, this file wins inside a Research-Kit project**, because
-the kit's gate enforces it anyway: a run that ignores it is stopped by the gate, not by
-this text. Which skill to use at each point is the `skill-router` skill's table.
+This file is added by the kit (ADR-0146). The auto-build files were received from the
+upstream baseline recorded in NOTICE and carry marked kit adaptations. This file says
+how each stage runs with Research-Kit. **Where the two differ, this file wins inside a
+Research-Kit project.** The commands and hooks enforce their documented checks; they
+do not verify owner replies or every prose obligation. Following these owner stops and
+review duties remains the run's responsibility. Which skill to use is the `skill-router`
+skill's table.
 
 Commands below assume the kit at `$HOME/.agents/research-kit` (`KIT` for short):
 
@@ -29,7 +31,7 @@ mandate - when any of these holds:
 
 | Stop | Why it is the owner's |
 |---|---|
-| the Mandate is ready (every run, bounded or architectural) | it authorizes everything after it |
+| the Mandate is ready (every run, bounded or architectural) | it approves the current design and in-scope build |
 | a decision is hard to reverse, changes the task's goal, or picks between approaches with different consequences | the design is the owner's |
 | anything would spend money: paid pages, a paid service, a dependency with a licence cost, a budget raise | the account is the owner's |
 | a secret, credential, token or personal data would be read, written, sent or logged | security and privacy |
@@ -45,6 +47,11 @@ At a stop the run writes `RUN.md` (state, what it found, the question, Next acti
 take "no answer" as consent. A decision it takes alone - reversible, cheap, inside the
 approved Mandate and the evidence - is recorded under "Decisions and assumptions" so the
 owner can overrule it.
+
+Use authorization already recorded in the session for the same unchanged action and
+artifact; do not repeatedly ask for it. A changed Mandate and an unapproved completed
+head still require their own replies. At an unanswered required stop, end the turn;
+silence and elapsed time never supply that reply.
 
 The standing mandate may still pre-answer *preferences* (branch names, merge method, audit
 depth, page budget for free transports). It never pre-approves a stop in the table above.
@@ -64,26 +71,37 @@ Mandate message ready to read, `RUN.md` Next action "awaiting owner", every ques
 
 ## Stage 0: Orient - start from the router, not from the task
 
-Before anything else, read the state from disk and record it in `RUN.md`:
+Confirm the intended project before running diagnostics; if the cwd is wrong, ask
+which project and wait (AGENTS.md). Then read the state and record actual results in
+`RUN.md`:
 
 ```
 node "$KIT/bin/doctor.mjs"       # verdict and machine role (collector | builder)
 node "$KIT/bin/preflight.mjs"    # the gate: PASS, or what is unproven
 node "$KIT/bin/handoff.mjs"      # did the corpus arrive whole (exit 0)
-test -f research/BRIEF.md        # is there a brief
+node "$KIT/bin/brief.mjs" --state # authored, with both judged sections answered
 ```
 
 Also record the **kit version** (`doctor` prints it) and the **skill set that ran** (the
 names under the skill root), so the run can be compared under ADR-0145.
+
+An unresolved role or doctor blocker needs resolution. A chosen keyless collector
+does not need Firecrawl (ADR-0095); key presence alone is not a readiness verdict.
+Readiness also needs a classified MAP, rewritten extractor Findings and an authored
+brief with both judged sections present and answered. A stamped brief's inputs must
+match the current corpus; `brief.mjs --state` reports state/sections, not currency.
+Authored unstamped briefs retain approval with currency unknown (ADR-0138). These
+are the existing role-agnostic approval conditions; role controls collection.
 
 Then take one path, from the router's "Step 2: route by state":
 
 | Role | State | Path |
 |---|---|---|
 | collector | gate failing, or no corpus | Stage 1 as below (collector) |
-| collector | gate PASS and a brief | Stage 1 is SKIPPED ("the brief answers it"); start at Stage 2 |
-| builder | gate PASS, `handoff` exit 0, a brief | Stage 1 as below (builder): no collecting at all; then Stage 2 |
-| builder | no brief, or `handoff` fails, or gate failing | **stop.** `RUN.md` Next action: "awaiting collector", with the `handoff` output and any fact requests |
+| collector | handoff and gate pass, review complete/current under ADR-0138 | Stage 1 is SKIPPED ("the reviewed brief answers it"); start at Stage 2 |
+| collector | gate PASS, but review incomplete or stamped brief stale | finish Stage 1 review from existing captures; fetch only a missing external fact |
+| builder | handoff and gate pass, review complete/current under ADR-0138 | Stage 1 as below (builder): no collecting at all; then Stage 2 |
+| builder | incomplete review, or `handoff` fails, or gate failing | **stop.** `RUN.md` records the review/delivery diagnosis; fact requests are only for missing external facts |
 
 ## Stage 1: Research
 
@@ -91,14 +109,22 @@ Then take one path, from the router's "Step 2: route by state":
 and the review steps use the kit's skills: `map-classifier` (the map's rows),
 `finding-rewriter` (the Findings, with `[quote: ...]`), `source-grader` (P/S/L and
 contradictions), `brief-writer` (the brief, `Reviewed by: agent`). The sufficiency gate is
-`preflight` exit 0 plus a brief - the gate's verdict, not the lead's impression.
+an intact handoff, `preflight` exit 0 and the completed/current review above. PASS and
+file presence alone do not authorize building (ADR-0150).
 
 **On a builder**, Stage 1 is three steps and never fetches a page:
 
 1. `node "$KIT/bin/handoff.mjs"` exits 0. If not, stop (see Stage 0).
 2. `build-from-brief` reads `research/BRIEF.md` and `research/EVIDENCE.md`.
-3. Every fact the design needs and the brief does not hold becomes a request written with
-   `fact-request`, saved in the run folder as `FACT-REQUESTS.md`.
+3. Read and judge the claims against the design. A missing external fact becomes a
+   `fact-request`, saved in the run folder as `FACT-REQUESTS.md` or the accepted Git
+   request file. Review-only gaps return to the collector in prose, without another
+   fetch. For Git requests the collector records Findings, unknown closures, map and
+   the current authored brief; `collected` means delivery, not review completion.
+
+ADR-0052's local review and re-packaging of a received package remains available
+without collection. It does not permit editing the collector's Git corpus; neither
+workflow adds a machine-role predicate to derived authorization (ADR-0150).
 
 If any request is blocking, the run goes on to the Mandate only to present it, and stops
 there with Next action "awaiting collector" (and the owner). `research.mjs` and `decompose.mjs` refuse on a

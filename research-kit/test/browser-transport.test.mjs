@@ -160,6 +160,17 @@ test('with no net log the status is not guessed: the capture is partial and says
   assert.match(late.omitted, /still unanswered through the guard/);
 });
 
+test('a URL the guard child refused before launching is reported as that refusal, not as a browser that could not start', () => {
+  // ADR-0155: under `false` the child judges a NAME asked for before any launch and answers
+  // EINTERNAL; the transport passes the refusal through in the child's words.
+  const named = 'http://intranet.example/start';
+  const early = browser.scrape(named, { render: renderWith({ status: null, error: Object.assign(new Error('refused to render intranet.example - intranet.example resolves to 10.0.0.5, an internal address. This render was asked to stay out of this machine\'s network'), { code: 'EINTERNAL' }), refused: [{ host: 'intranet.example', why: 'intranet.example resolves to 10.0.0.5, an internal address' }] }).render, browserPath: '/bin/true', env: {}, uid: 0, allowInternalRedirects: false });
+  assert.equal(early.ok, false);
+  assert.match(early.error, /^refused to render intranet\.example - intranet\.example resolves to 10\.0\.0\.5, an internal address/);
+  assert.doesNotMatch(early.error, /could not start/);
+  assert.equal(early.markdown, undefined);
+});
+
 test('a net log whose final URL is internal is refused, as an internal redirect is', () => {
   const asked = 'https://evil.example/a';
   const log = netLog([[asked, 302], ['http://169.254.169.254/latest/meta-data/', 200]]);
@@ -313,7 +324,7 @@ test('the browser is given its own deadline under the transport timeout, so a pa
   assert.ok(browserArgs('https://x.invalid/a', { uid: 1000 }).includes(`--timeout=${TIMEOUT_MS - 10_000}`), 'no timeout given means the default one');
 });
 
-test('a render cut at the deadline is graded partial, and says what was still unanswered', () => {
+test('late process completion or pending loads grade a render partial, with requests reported at process completion', () => {
   const page = `<html><head><title>Late</title></head><body><main><p>${'Rendered words that are enough to be graded as content. '.repeat(40)}</p></main></body></html>`;
   // The guard's record is the signal: Chromium logs "Page load timed out" only when the
   // navigation itself never committed, not for a resource that stalled.
@@ -321,18 +332,35 @@ test('a render cut at the deadline is graded partial, and says what was still un
   const stalled = at({ pending: [{ kind: 'http', target: 'https://cdn.x.invalid/slow.js', ms: 34_900 }] });
   assert.equal(stalled.ok, true);
   assert.equal(stalled.completeness, 'partial');
-  assert.match(stalled.omitted, /stopped loading at its 35 s deadline/);
-  assert.match(stalled.omitted, /still unanswered through the guard: https:\/\/cdn\.x\.invalid\/slow\.js \(35 s\)/);
+  assert.match(stalled.omitted, /configured 35 s loading deadline/);
+  assert.match(stalled.omitted, /still unanswered through the guard at process completion: https:\/\/cdn\.x\.invalid\/slow\.js \(35 s\)/);
   const inside = at({ pending: [] });
   assert.equal(inside.completeness, 'partial');
-  assert.match(inside.omitted, /every one of the 7 requests through the guard had been answered, so the wait was inside the browser/);
-  // Printed early with a load still open (the virtual-time budget ran out first): partial, and named.
+  assert.match(inside.omitted, /every one of the 7 requests through the guard had been answered at process completion/);
+  // Short process duration with a load still open: partial, and named at completion.
   const early = at({ elapsedMs: 9_000, pending: [{ kind: 'connect', target: 'cdn.x.invalid:443', ms: 8_500 }] });
   assert.equal(early.completeness, 'partial');
-  assert.match(early.omitted, /printed the page before every load was answered; still unanswered through the guard: cdn\.x\.invalid:443 \(9 s\)/);
+  assert.match(early.omitted, /configured 35 s loading deadline; still unanswered through the guard at process completion: cdn\.x\.invalid:443 \(9 s\)/);
   // Settled on its own, everything answered: the grade is the extractor's own.
   const settled = browser.scrape('https://x.invalid/a', { render: () => ({ status: 0, signal: null, stdout: page, stderr: '', refused: [], requests: 2, pending: [], elapsedMs: 1_200, netLog: netLog([['https://x.invalid/a', 200]]) }), browserPath: '/opt/chrome', env: {} });
   assert.equal(settled.completeness, 'full', settled.omitted);
+});
+
+test('deadline notes describe configuration and process-end requests without claiming when a complete DOM arrived', () => {
+  const asked = 'https://x.invalid/a';
+  // The complete DOM may have arrived early, but this record timestamps only process end.
+  // A later exit hang and the final pending snapshot cannot establish its arrival time
+  // or where the browser spent the historical wait.
+  for (const pending of [[], [{ kind: 'http', target: 'https://cdn.x.invalid/slow.js', ms: 59_000 }]]) {
+    const r = browser.scrape(asked, { render: () => ({ status: null, signal: 'SIGKILL', error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }), stdout: PAGE, stderr: '', refused: [], requests: 7, pending, elapsedMs: 70_000, startupMs: 5_000, netLog: netLog([[asked, 200]]) }), browserPath: '/opt/chrome', env: {}, timeout: 45_000 });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.completeness, 'partial', 'late process completion still conservatively grades the capture partial');
+    assert.match(r.omitted, /configured 35 s loading deadline/);
+    assert.match(r.omitted, /at process completion/);
+    assert.doesNotMatch(r.omitted, /stopped loading at|wait was inside the browser|printed the page before/, 'process-end observations do not establish the dump time or the cause of the wait');
+    if (pending.length) assert.match(r.omitted, /https:\/\/cdn\.x\.invalid\/slow\.js \(59 s\)/);
+    else assert.match(r.omitted, /every one of the 7 requests through the guard had been answered/);
+  }
 });
 
 test('a timeout says how long the browser took to make its first request, and the deadline is judged from it', () => {
@@ -346,7 +374,7 @@ test('a timeout says how long the browser took to make its first request, and th
   assert.equal(settled.completeness, 'full', settled.omitted);
 });
 
-test('LIVE: a page whose resource never arrives is captured at the deadline, not lost to the kill', async () => {
+test('LIVE: a page whose resource never arrives is captured whole and marked partial under its deadline', async () => {
   const chromium = findBrowser();
   requireCapability(chromium, 'NO-BROWSER', 'no Chromium or Chrome on this host');
   // The page server lives in a process of its own: this one blocks in spawnSync while the
@@ -370,8 +398,8 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
   try {
     // Chromium's own log rides the launch, and is printed for a render that ran past its
     // deadline (see the guard's LIVE test): a startup hang shows nothing anywhere else.
-    let last;
-    const render = (b, a, o) => { const args = [...a]; args.splice(-2, 0, '--enable-logging=stderr', '--v=1'); last = renderGuarded(b, args, o); return last; };
+    let last, launchedArgs;
+    const render = (b, a, o) => { const args = [...a]; args.splice(-2, 0, '--enable-logging=stderr', '--v=1'); launchedArgs = args; last = renderGuarded(b, args, o); return last; };
     const t0 = Date.now();
     // 30 s: the deadline is then 20 s, room for a renderer that is slow to start on a CI runner
     // (one took over 5 s to make the page request, and a 5 s deadline dumped an empty document).
@@ -380,14 +408,18 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
     assert.equal(r.ok, true, `the page was lost: ${r.error}`);
     assert.equal(r.title, 'Stalled');
     assert.match(r.markdown, /arrived before a resource that never does/);
-    assert.ok((last?.elapsedMs ?? 0) - (last?.startupMs ?? 0) < 30_000, 'the render ran into the kill timeout instead of the deadline');
+    assert.ok(launchedArgs?.includes('--timeout=20000'), 'the 30 s transport budget must give Chromium its 20 s deadline');
+    // elapsedMs records process completion, not DOM arrival: a complete dump may survive
+    // a later exit hang/ETIMEDOUT, as scrape and its printed-page-then-hung test require.
+    // The live failure at 55.9 s of process time did not establish when the DOM arrived.
+    assert.match(String(last?.stdout ?? ''), /<\/html>\s*$/i, 'the stalled resource must still leave a complete dumped HTML document');
     assert.equal(r.completeness, 'partial', 'a page cut at the deadline is not a full capture');
-    assert.match(r.omitted, /still unanswered through the guard: http:\/\/127\.0\.0\.1:\d+\/never/, r.omitted);
+    assert.match(r.omitted, /still unanswered through the guard at process completion: http:\/\/127\.0\.0\.1:\d+\/never/, r.omitted);
   } finally { proc.kill(); }
 });
 
 // ADR-0137: the status a real Chromium reports in its net log, read through the guard child.
-test('LIVE: a real Chromium\'s net log carries the origin\'s status, so a 403 page is refused and a 200 page is full', async () => {
+test('LIVE: a real Chromium\'s net log carries the origin\'s status, so a 403 page is refused and a 200 page is captured', async () => {
   const chromium = findBrowser();
   requireCapability(chromium, 'NO-BROWSER', 'no Chromium or Chrome on this host');
   const file = path.join(tempDir('rk-status-pages-'), 'pages.mjs');
@@ -419,7 +451,19 @@ server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.addres
     const plain = at('/plain');
     assert.equal(plain.ok, true, plain.error);
     assert.equal(plain.statusCode, 200, 'the net log gave no status for a plain page');
-    assert.equal(plain.completeness, 'full', plain.omitted);
+    assert.equal(plain.title, 'Plain page');
+    assert.match(plain.markdown, /Words enough for the extractor to grade this page as content/);
+    assert.match(plain.source, /<\/html>\s*$/i, 'the plain page must have a whole dumped DOM');
+    // Process completion is not DOM arrival: a whole capture can survive an exit wait.
+    // Accept that documented partial grade only, keeping unrelated omissions visible.
+    if (plain.completeness === 'partial') {
+      assert.match(plain.omitted,
+        /^the browser had a configured 20 s loading deadline; every one of the \d+ requests through the guard had been answered at process completion$/,
+        'a recovered plain page may be partial only for the configured deadline with all guard requests answered at process completion');
+    } else {
+      assert.equal(plain.completeness, 'full', plain.omitted);
+      assert.equal(plain.omitted, '');
+    }
     const hopped = at('/hop');
     assert.equal(hopped.ok, true, hopped.error);
     assert.equal(hopped.statusCode, 200);

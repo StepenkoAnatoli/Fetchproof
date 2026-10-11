@@ -15,7 +15,10 @@ a human - takes `research/BRIEF.md` plus `research/` and implements. They should
 to re-research anything: if they do, phase 1 was incomplete, and the fix is to collect the
 missing fact rather than to let the builder guess it.
 
-The gate is the handoff point. Before it passes, phase 2 does not start.
+The handoff needs PASS, an intact corpus, classified MAP, rewritten Findings, and an
+authored brief with its judged sections answered and current stamped inputs. PASS or
+file presence alone does not complete phase 1. An authored unstamped brief keeps the
+existing approval path with currency unknown; role controls collection, not approval.
 
 ## Two machines, two roles
 
@@ -25,9 +28,9 @@ The role is machine config - `role: "collector" | "builder"` in
 
 | | **collector** (the operator's PC) | **builder** (a sandbox, a CI box, a laptop) |
 |---|---|---|
-| holds | the Firecrawl key | no key, no Firecrawl egress |
+| holds | the Firecrawl key when using that route; none for a chosen keyless route | no collection key required, no Firecrawl egress |
 | runs | `decompose.mjs`, `research.mjs` | `handoff.mjs`, `preflight.mjs`, the build |
-| a missing key is | a **FAIL** | **informational** |
+| absent Firecrawl CLI/auth is | a **FAIL** for an unchosen or Firecrawl route; passes those findings for an explicitly chosen keyless route | expected: this machine does not collect |
 | must | push `research/raw/` including its dotfiles | **not collect** - the collection CLIs refuse (exit 2) |
 
 **If you are on a builder machine and there is no brief: you do not collect.** A page
@@ -46,10 +49,18 @@ the ledger by name - `-f` on the whole folder also commits the machine-local log
 a corpus that travelled whole and was rewritten on checkout here is fixed **here**, with
 `.gitattributes`, and costs no credits.
 
+A Git builder-request result marked `collected` delivers captures, not completed
+review. The builder reads and judges; the collector records Findings, unknown closures,
+the map and current authored brief. Send review-only gaps in prose; request a fetch
+only for a missing external fact. Local review/re-packaging of a received package
+remains available; it does not permit collection or edits to the collector's Git corpus.
+
 ## Starting in the wrong place: ask which project, do not hunt for it
 
-The project is the **current working directory**. The kit takes no project argument and
-never will. If the cwd is not the project the operator means - the kit's own repo, a
+For gate and corpus commands, the project is the **current working directory**; those
+commands take no project argument. The desktop panel has its own `--project` selector:
+confirm that effective project before running its diagnostics. If the cwd is not the
+project the operator means - the kit's own repo, a
 parent folder, an unrelated checkout - **ask which project**, and wait. Do not search the
 filesystem, do not infer it from a name, do not look it up on a remote. Searching a
 person's disk to guess his intent reads directories nobody authorised, and the question
@@ -115,7 +126,8 @@ hint, never proof. Never invent a citation. Flag contradictions instead of avera
 
 ## Rule 5 - cost discipline
 
-Every scrape spends credits. Plan the queries in `research/plan.json` first, reuse the
+Firecrawl collection spends credits; chosen keyless pages still use the planned page
+allowance and carry policy warnings. Plan queries in `research/plan.json` first, reuse the
 cache (`--refresh-days`), and check the budget with `node "{{KIT}}/bin/research.mjs" --status`.
 
 When the account runs out mid-run, the run stops and exits 2 with what is left (ADR-0129).

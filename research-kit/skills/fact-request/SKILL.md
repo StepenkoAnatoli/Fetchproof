@@ -12,7 +12,8 @@ a page fetched by hand, by a browser tool, or from memory is not evidence in thi
 ## The request file (the collector collects it automatically)
 
 When the collector runs auto-collect (ADR-0148), write one file per fact, then commit and push it. This
-is the only place under `research/` a builder writes; the rest is the collector's:
+is the only place under the collector's Git `research/` corpus a builder writes;
+ADR-0052's local review of a received package is a separate workflow:
 
 ```
 research/requests/<id>.json        id: lower-case letters, digits and dashes
@@ -31,8 +32,11 @@ research/requests/<id>.json        id: lower-case letters, digits and dashes
 The collector pulls it, checks it, adds the contract row and the plan entry, collects with
 the same `research.mjs`, and pushes the corpus with its ledger, plus `<id>.result.json`
 beside your request. Pull, and read the result:
-- `collected`: review the new evidence rows (rewrite each Finding into a claim), then close
-  the unknown and run preflight.
+- `collected`: captures were delivered. Read and judge them, then report review-only
+  gaps in prose. The collector records the Findings, unknown closure, classified map
+  and current authored brief in the Git corpus. Run handoff, preflight and
+  `brief.mjs --state`; stop dependent building until the complete review is present
+  (ADR-0150). The result alone does not authorize building.
 - `partial`: credits ran out after some pages were collected. The collector pauses without
   switching transports; the result records the target, unknown, pages spent, and remaining
   allowance. The operator can top up and press Resume, after which the collector continues
@@ -44,6 +48,12 @@ beside your request. Pull, and read the result:
   the credits, or for the collector to retry delivery of a previous result.
 
 Never fetch the page yourself while you wait.
+
+When the capture already answers the fact, ask the collector to finish its review;
+do not submit another paid fetch request for classification, wording or brief currency.
+ADR-0052 still permits reviewing and re-packaging a received local package without
+collection; that is separate from editing the collector-owned Git corpus. In either
+workflow approval remains derived from the existing corpus/review checks on any role.
 
 ## The request in prose (no auto-collect)
 

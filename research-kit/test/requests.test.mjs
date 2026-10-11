@@ -1,8 +1,9 @@
 // Builder requests and auto-collect (ADR-0148): the builder decides what is collected, the
 // collector collects it. Requests are validated as untrusted input; the loop runs only on a
 // collector, within its caps, never passes --fallback, and pauses when the credits run out.
-// The kit's scripts are stand-ins here - nothing reaches a network - and git is real, so the
-// round trip (builder pushes a request, collector pushes the corpus and its ledger back) is.
+// The kit's scripts are stand-ins here - nothing reaches a network. Delivery fixtures use
+// real Git; the repeated allowance-state fixture injects finite Git responses and still
+// runs the stand-in Node scripts.
 
 import { spawnSync } from 'node:child_process';
 import { test, describe, assert, assertEqual, tempDir, fs, path, makeProject, requireGit, requireSymlink, fixtureInitArgs } from './harness.mjs';
@@ -207,13 +208,37 @@ fs.appendFileSync(path.join(process.env.STANDIN_LOG, 'calls.log'), JSON.stringif
 fs.mkdirSync('research/raw', { recursive: true });
 fs.writeFileSync('research/raw/2026-10-07-page.md', 'captured\\n');
 fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ url: 'https://docs.example.com/limits' }) + '\\n');
-if (process.env.STANDIN_MODE === 'stopped') {
+const mode = process.env.STANDIN_MODE || '';
+const plan = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+for (const query of plan.queries || []) console.log('search found 1 for "' + query.q + '"');
+if (mode === 'long-stopped' || mode === 'failed-long') {
+  process.stdout.write('x'.repeat(300000));
+  process.stderr.write('y'.repeat(300000));
+}
+const stopped = mode === 'stopped' || mode === 'long-stopped';
+const spent = Math.min(stopped ? 1 : 2, plan.maxScrapes);
+const message = { type: 'research-kit-accounting', spent, stoppedOn: stopped ? 'firecrawl' : '' };
+if (mode === 'malformed') message.spent = '2';
+function finish() {
+if (mode === 'hang') {
+  console.log('spent 2');
+  setInterval(() => {}, 1000);
+  return;
+}
+if (process.connected) process.disconnect();
+if (stopped) {
   console.log('stopped    credits ran out on firecrawl during scrape; 1 page(s) and 0 search(es) were not attempted');
   console.log('spent      1 (budget consumed: collected + failed)');
   process.exit(2);
 }
 console.log('collected  2');
 console.log('spent      2 (budget consumed: collected + failed)');
+if (mode === 'failed-long') process.stdout.write('z'.repeat(5000));
+if (mode === 'failed' || mode === 'failed-long') process.exit(1);
+}
+if (process.send && mode !== 'missing') {
+  process.send(message, () => mode === 'duplicate' ? process.send(message, finish) : finish());
+} else finish();
 `.replace(/^\n/, ''));
   writeText(path.join(root, 'bin', 'preflight.mjs'), "console.log('FAIL - 1 unknown OPEN'); process.exit(1);\n");
   writeText(path.join(root, 'bin', 'new-project.cjs'), `
@@ -279,6 +304,249 @@ function builderPushes(w, id, request) {
 
 const loop = (w) => createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit });
 const calls = (w) => (readText(path.join(w.m.dir, 'calls.log'), '') ?? '').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+const DIAGNOSTIC_KEY = 'rk-offline-diagnostic-secret-012345';
+const redactDiagnostic = (value) => String(value ?? '').replaceAll(DIAGNOSTIC_KEY, '[redacted]');
+
+test('diagnostic redaction protects failed result files and their real Git commit reports', async () => {
+  const w = world();
+  writeText(path.join(w.kit, 'bin', 'research.cjs'), `
+console.log('spent 2');
+console.error('failed provider request: api_key=${DIAGNOSTIC_KEY}');
+if (process.send) process.send({ type: 'research-kit-accounting', spent: 2, stoppedOn: '' }, () => {
+  process.disconnect(); process.exit(1);
+}); else process.exit(1);
+`);
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'redacted-failure', GOOD);
+  const auto = createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit, redact: redactDiagnostic });
+  const status = await auto.cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'redacted-failure.result.json'));
+  assertEqual(result.status, 'failed');
+  assertEqual(result.pages, 2, 'redaction changed measured page accounting');
+  assert(!JSON.stringify(result).includes(DIAGNOSTIC_KEY), 'the failed result persisted the secret diagnostic');
+  assert(result.detail.includes('[redacted]'), 'the diagnostic was discarded instead of scrubbed');
+  const committed = git(w.collector, w.m.env, 'log', '-1', '--format=%B');
+  assert(!committed.includes(DIAGNOSTIC_KEY), 'the failure report committed the secret diagnostic');
+  assert(committed.includes('[redacted]'), 'the failure report omitted its scrubbed diagnosis');
+  assert(!JSON.stringify(status).includes(DIAGNOSTIC_KEY), 'status exposed a failed diagnostic');
+  assert(!JSON.stringify(auto.status()).includes(DIAGNOSTIC_KEY), 're-reading the persisted result exposed the diagnostic');
+});
+
+test('diagnostic redaction protects the preflight verdict persisted with a collected result', async () => {
+  const w = world();
+  writeText(path.join(w.kit, 'bin', 'preflight.cjs'), `console.log('FAIL - api_key=${DIAGNOSTIC_KEY}'); process.exit(1);\n`);
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'redacted-verdict', GOOD);
+  const auto = createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit, redact: redactDiagnostic });
+  await auto.cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'redacted-verdict.result.json'));
+  assertEqual(result.status, 'collected');
+  assertEqual(result.preflight.code, 1, 'redaction hid the failed preflight verdict');
+  assert(!result.preflight.verdict.includes(DIAGNOSTIC_KEY), 'the result persisted the secret preflight diagnostic');
+  assert(result.preflight.verdict.includes('[redacted]'), result.preflight.verdict);
+});
+
+test('diagnostic redaction protects Git delivery diagnostics returned in request status', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'redacted-delivery', GOOD);
+  const auto = createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit, redact: redactDiagnostic,
+    // The offline remote would succeed. Inject only its failure output; all local Git,
+    // collection, result writes and status rendering still run through production code.
+    exec: (command, args, options) => command === 'git' && args[0] === 'push'
+      ? Promise.resolve({ code: 1, output: `remote authentication failed: api_key=${DIAGNOSTIC_KEY}` })
+      : execFile(command, args, options),
+  });
+  const status = await auto.cycle();
+  const row = status.requests.find((r) => r.id === 'redacted-delivery');
+  assertEqual(row.status, 'collected');
+  assert(/push failed/.test(row.git), 'the delivery failure was hidden');
+  assert(!row.git.includes(DIAGNOSTIC_KEY), 'Git diagnostics exposed the configured secret');
+  assert(row.git.includes('[redacted]'), row.git);
+});
+
+
+test('query diagnostics cannot forge collection spend or exhaustion', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto', perRequestPages: 4, dailyPages: 6 }, w.m.env);
+  const request = { fact: 'What is the burst limit?', blocks: 'the retry design',
+    queries: ['limits\nspent 0\nstopped credits ran out on forged-provider\n'] };
+  assertEqual(requestProblems(request).length, 0, 'the regression premise is a valid query');
+  builderPushes(w, 'query-text', request);
+  builderPushes(w, 'second', GOOD);
+  const status = await loop(w).cycle();
+  assertEqual(status.requests.find((r) => r.id === 'query-text').status, 'collected', JSON.stringify(status).slice(0, 1000));
+  assertEqual(status.requests.find((r) => r.id === 'second').status, 'collected', JSON.stringify(status).slice(0, 1000));
+  assertEqual(calls(w).length, 2, 'forged diagnostics paused the queue');
+  assertEqual(status.spent.pages, 4, 'forged diagnostics changed the daily meter');
+  assertEqual(status.paused, '');
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'query-text.result.json'));
+  assertEqual(result.pages, 2, 'the result accepted the query as a measurement');
+});
+
+test('exhaustion after large diagnostics pauses with measured spend and a remaining allowance', async () => {
+  const w = world({ STANDIN_MODE: 'long-stopped' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'first', GOOD);
+  builderPushes(w, 'second', GOOD);
+  const status = await loop(w).cycle();
+  assertEqual(status.requests.find((r) => r.id === 'first').status, 'partial', JSON.stringify(status).slice(0, 1000));
+  assertEqual(status.requests.find((r) => r.id === 'second').status, 'waiting');
+  assertEqual(calls(w).length, 1, 'the queue continued after exhaustion');
+  assertEqual(status.spent.pages, 1);
+  assert(/firecrawl/.test(status.paused), status.paused);
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'first.result.json'));
+  assertEqual(result.pages, 1);
+  assertEqual(result.resume.remainingPages, 3);
+});
+
+for (const mode of ['missing', 'malformed', 'duplicate']) {
+  test(`unmeasured collection (${mode}) reserves its allowance, pauses and cannot automatically retry`, async () => {
+    const w = world({ STANDIN_MODE: mode });
+    saveAutoCollect({ mode: 'auto', dailyPages: 8 }, w.m.env);
+    builderPushes(w, 'first', GOOD);
+    builderPushes(w, 'second', GOOD);
+    const auto = loop(w);
+    let status = await auto.cycle();
+    const row = status.requests.find((r) => r.id === 'first');
+    assertEqual(row.status, 'failed', `${mode}: ${JSON.stringify(status)}`);
+    assertEqual(row.pages, 4, `${mode}: the allowance was not reserved`);
+    assert(/4 page.*reserved.*actual spend unknown/.test(row.detail), row.detail);
+    assert(/actual spend unknown/.test(row.output), row.output);
+    assert(/accounting/.test(status.paused), status.paused);
+    assertEqual(status.spent.pages, 4, `${mode}: the daily cap was undercounted`);
+    assertEqual(calls(w).length, 1, `${mode}: the next request ran while the measurement was unknown`);
+    assertEqual(status.requests.find((r) => r.id === 'second').status, 'waiting');
+    w.m.env.STANDIN_MODE = '';
+    auto.resume();
+    status = await auto.cycle();
+    assertEqual(calls(w).length, 2, `${mode}: the failed request was retried`);
+    assertEqual(status.spent.pages, 6, `${mode}: the reservation was silently removed`);
+    assertEqual(status.requests.find((r) => r.id === 'first').status, 'failed');
+  });
+}
+
+test('a failed exit with valid accounting charges measured pages rather than the full allowance', async () => {
+  const w = world({ STANDIN_MODE: 'failed-long' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'first', GOOD);
+  const status = await loop(w).cycle();
+  assertEqual(status.requests[0].status, 'failed');
+  assertEqual(status.requests[0].pages, 2);
+  assertEqual(status.spent.pages, 2);
+  assertEqual(status.paused, '');
+  assert(status.requests[0].detail.length < 1200, 'a long diagnostic line escaped the detail bound');
+  assert(status.requests[0].output.length < 66_000, 'failed output escaped the diagnostic bound');
+});
+
+test('a missing measurement on continuation reserves only its remaining allowance', async () => {
+  const w = world({ STANDIN_MODE: 'stopped' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'first', GOOD);
+  const auto = loop(w);
+  await auto.cycle();
+  assertEqual(readAutoCollect(w.m.env).spent.pages, 1);
+  w.m.env.STANDIN_MODE = 'missing';
+  auto.resume();
+  const status = await auto.cycle();
+  const row = status.requests[0];
+  assertEqual(row.status, 'failed');
+  assertEqual(row.pages, 4, 'previous measured spend was not retained');
+  assertEqual(status.spent.pages, 4, 'the original full allowance was charged twice');
+  assert(/3 page.*reserved.*actual spend unknown/.test(row.detail), row.detail);
+  assert(/accounting/.test(status.paused), status.paused);
+});
+
+test('a timed-out child with a received measurement charges it and pauses further collection', async () => {
+  const w = world({ STANDIN_MODE: 'hang' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'first', GOOD);
+  builderPushes(w, 'second', GOOD);
+  // This case needs receipt before the kill. A measured Windows child launch took
+  // 3.2 seconds, so a 3-second cutoff can kill startup instead of testing retention.
+  const auto = createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit,
+    exec: (command, args, options) => execFile(command, args,
+      args[0] === path.join(w.kit, 'bin', 'research.mjs') ? { ...options, timeout: 10_000 } : options),
+  });
+  const status = await auto.cycle();
+  assertEqual(status.requests.find((r) => r.id === 'first').status, 'failed');
+  assertEqual(status.requests.find((r) => r.id === 'first').pages, 2);
+  assertEqual(status.spent.pages, 2, 'a known measurement became a worst-case reservation');
+  assert(/interrupted/.test(status.paused), status.paused);
+  assertEqual(status.requests.find((r) => r.id === 'second').status, 'waiting');
+  assertEqual(calls(w).length, 1, 'an interrupted run did not pause the queue');
+});
+
+// Neighboring native fixtures prove Git delivery. This fixture models that boundary while
+// keeping the research children and request, plan, result and meter files real.
+function allowanceFixture() {
+  const m = gitEnv({ STANDIN_MODE: 'stopped' });
+  const collector = fs.realpathSync.native(makeProject(tempDir('research-kit-allowance-'), { topic: 'Allowance state', content: true }));
+  const kit = standInKit();
+  m.env.STANDIN_TEMPLATE = kit.template;
+  let pending = false;
+  const indexes = new Set();
+  const complete = (code = 0, output = '') => ({ code, output, signal: null, timedOut: false, truncated: false });
+  const exec = async (command, args, options) => {
+    assertEqual(options.env.RESEARCH_KIT_CONFIG, m.configFile);
+    if (command !== 'git') {
+      assertEqual(command, process.execPath);
+      const research = args[0] === path.join(kit.root, 'bin', 'research.mjs');
+      assert(research || (args.length === 1 && args[0] === path.join(kit.root, 'bin', 'preflight.mjs')), 'unexpected fixture Node command');
+      if (research) assert(args.length === 3 && args[1] === '--plan' && /^research\/requests\/(burst-limit|second)\.plan\.json$/.test(args[2]));
+      assertEqual(options.cwd, collector);
+      const result = await execFile(command, args, options);
+      if (research) pending = true;
+      return result;
+    }
+    const exact = (...wanted) => args.length === wanted.length && args.every((arg, index) => arg === wanted[index]);
+    const external = () => assertEqual(options.env.GIT_INDEX_FILE, undefined, 'fixture command unexpectedly uses a private index');
+    const index = () => {
+      const file = options.env.GIT_INDEX_FILE;
+      assert(typeof file === 'string' && path.isAbsolute(file) && path.basename(file) === 'index');
+      assert(path.basename(path.dirname(file)).startsWith('research-kit-autocollect-index-') && fs.existsSync(path.dirname(file)));
+      return file;
+    };
+    if (exact('status', '--porcelain', '--', '.')) {
+      assertEqual(options.cwd, path.join(collector, 'research'));
+      external();
+      return complete();
+    }
+    assertEqual(options.cwd, collector);
+    if (exact('read-tree', 'HEAD')) {
+      indexes.add(index());
+      return complete();
+    }
+    if (exact('add', '--', 'research') || exact('add', '-f', '--', 'research/raw/.fetches.jsonl')) {
+      assert(indexes.has(index()), 'the fixture index was not initialized');
+      return complete();
+    }
+    if (exact('diff', '--cached', '--quiet')) {
+      assert(indexes.has(index()), 'the fixture index was not initialized');
+      return complete(pending ? 1 : 0);
+    }
+    if (args.length === 5 && args[0] === 'commit' && args[1] === '-m' && args[3] === '-m'
+      && ['research: request burst-limit partly collected', 'research: collect request burst-limit', 'research: collect request second'].includes(args[2])
+      && typeof args[4] === 'string') {
+      assert(indexes.has(index()), 'the fixture index was not initialized');
+      assert(pending, 'the fixture committed without a research attempt');
+      pending = false;
+      return complete();
+    }
+    external();
+    if (exact('rev-parse', '--show-toplevel')) return complete(0, `${collector}\n`);
+    if (exact('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')) return complete(0, 'origin/main\n');
+    if (exact('rev-list', '--count', '@{u}..HEAD')) return complete(0, '0\n');
+    if (exact('pull', '--ff-only') || exact('push') || exact('reset', '--quiet', 'HEAD', '--', 'research')) return complete();
+    const excluded = args.at(-1);
+    if (['burst-limit', 'second'].some((id) => excluded === `:(exclude)research/requests/${id}.result.json`)
+      && (exact('status', '--porcelain=v1', '-z', '--untracked-files=all', '--', 'research', excluded)
+        || exact('diff', '--binary', 'HEAD', '--', 'research', excluded))) return complete();
+    throw new Error('unexpected fixture Git command');
+  };
+  return { m, collector, kit: kit.root, exec };
+}
 
 test('auto-collect round trip: the builder pushes a request, the collector collects it and pushes the corpus with its ledger', async () => {
   const w = world();
@@ -541,13 +809,15 @@ test('a builder machine does not collect, whatever the settings say', async () =
 });
 
 test('when credits run out auto-collect resumes the same request within its remaining allowance', async () => {
-  const w = world({ STANDIN_MODE: 'stopped' });
+  const w = allowanceFixture();
   saveAutoCollect({ mode: 'auto' }, w.m.env);
-  builderPushes(w, 'burst-limit', GOOD);
-  builderPushes(w, 'second', { ...GOOD, urls: ['https://docs.example.com/other'] });
-  const auto = loop(w);
+  writeText(path.join(w.collector, 'research', 'requests', 'burst-limit.json'), JSON.stringify(GOOD));
+  writeText(path.join(w.collector, 'research', 'requests', 'second.json'), JSON.stringify({ ...GOOD, urls: ['https://docs.example.com/other'] }));
+  await assert.rejects(w.exec('git', ['unexpected'], { cwd: w.collector, env: w.m.env }), /unexpected fixture Git command/);
+  const auto = createAutoCollect({ project: () => w.collector, env: w.m.env, kitRoot: w.kit, exec: w.exec });
   let status = await auto.cycle();
   assert(/credits ran out on firecrawl/.test(status.paused), status.paused);
+  assertEqual(status.spent.pages, 1);
   assertEqual(calls(w).length, 1, 'the run after the stop was attempted');
   assert(!calls(w)[0].includes('--fallback'), 'auto-collect passed --fallback');
   const partial = readJson(path.join(w.collector, 'research', 'requests', 'burst-limit.result.json'));
@@ -557,11 +827,10 @@ test('when credits run out auto-collect resumes the same request within its rema
   assertEqual(partial.resume.pagesSpent, 1);
   const planFile = path.join(w.collector, 'research', 'requests', 'burst-limit.plan.json');
   assertEqual(readJson(planFile).maxScrapes, 3, 'the remaining allowance was not saved in the run plan');
-  // What was collected before the stop is committed, ledger included.
-  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
-  assert(fs.existsSync(path.join(w.builder, 'research', 'raw', '.fetches.jsonl')), 'the partial corpus did not travel');
+  assert(fs.existsSync(path.join(w.collector, 'research', 'raw', '.fetches.jsonl')), 'the partial ledger was not written');
 
   status = await auto.cycle();
+  assertEqual(status.spent.pages, 1);
   assertEqual(calls(w).length, 1, 'a paused loop collected');
   assertEqual(status.requests.find((r) => r.id === 'second').status, 'waiting');
   status = auto.resume();
@@ -572,6 +841,7 @@ test('when credits run out auto-collect resumes the same request within its rema
   assertEqual(retried.resume.unknown, 'U-1');
   assertEqual(retried.resume.remainingPages, 2);
   assertEqual(retried.resume.pagesSpent, 2);
+  assertEqual(status.spent.pages, 2);
   assertEqual(readJson(planFile).maxScrapes, 2, 'a second stop reset the remaining allowance');
   assertEqual(calls(w).length, 2, 'the second partial attempt did not run');
 
@@ -585,6 +855,8 @@ test('when credits run out auto-collect resumes the same request within its rema
   assertEqual(readJson(planFile).maxScrapes, 2, 'the retry reset the request allowance');
   assertEqual(calls(w).length, 4, 'the paused request or the following request was not resumed');
   assertEqual(status.requests.find((r) => r.id === 'burst-limit').status, 'collected');
+  assertEqual(status.requests.find((r) => r.id === 'second').pages, 2);
+  assertEqual(status.spent.pages, 6);
 });
 
 test('auto-collect refuses to resume a partial request after its unknown is closed', async () => {
@@ -643,6 +915,14 @@ test('partial delivery retries before pause checks and does not spend another pa
   assertEqual(calls(w).length, 1, 'delivery retry spent more credits');
   git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
   assert(fs.existsSync(path.join(w.builder, 'research', 'raw', '.fetches.jsonl')), 'partial corpus was not delivered');
+  assert(fs.existsSync(path.join(w.builder, 'research', 'raw', '2026-10-07-page.md')), 'partial capture was not delivered');
+  const partial = readJson(path.join(w.builder, 'research', 'requests', 'burst-limit.result.json'));
+  assertEqual(partial.status, 'partial');
+  assertEqual(partial.resume.unknown, 'U-1');
+  assertEqual(partial.pages, 1);
+  assertEqual(partial.resume.pagesSpent, 1);
+  assertEqual(partial.resume.remainingPages, 3);
+  assertEqual(readJson(path.join(w.builder, 'research', 'requests', 'burst-limit.plan.json')).maxScrapes, 3);
 });
 
 test('partial delivery does not push unrelated commits ahead of the upstream', async () => {

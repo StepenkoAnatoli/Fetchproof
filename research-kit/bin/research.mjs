@@ -243,6 +243,45 @@ try {
   throw err;
 }
 
+// Only auto-collect opens this private Node IPC channel (ADR-0149). A query or URL may
+// appear in diagnostics, so neither its text nor the human summary is an accounting API.
+// Wait for the callback and channel closure before an explicit exit. The parent still
+// requires actual receipt and validation; this callback is not its acknowledgment.
+if (typeof process.send === 'function') {
+  const sendError = await new Promise((resolve) => {
+    if (!process.connected) { resolve(new Error('IPC channel is closed')); return; }
+    let callbackRan = false;
+    let error = null;
+    const disconnected = () => resolve(error ?? (callbackRan ? null : new Error('IPC channel closed before the accounting send callback')));
+    process.once('disconnect', disconnected);
+    const closeChannel = () => {
+      if (!process.connected) {
+        process.removeListener('disconnect', disconnected);
+        disconnected();
+        return;
+      }
+      try { process.disconnect(); } catch (err) {
+        process.removeListener('disconnect', disconnected);
+        resolve(error ?? err);
+      }
+    };
+    try {
+      process.send({ type: 'research-kit-accounting', spent: run.spent, stoppedOn: run.stopped?.provider ?? '' }, (err) => {
+        callbackRan = true;
+        error = err ?? null;
+        closeChannel();
+      });
+    } catch (err) {
+      error = err;
+      closeChannel();
+    }
+  });
+  if (sendError) {
+    process.stderr.write(`research: could not send collection accounting: ${sendError.message}\n`);
+    process.exit(2);
+  }
+}
+
 // Which cap bound the run, and what lifts it (found 2026-09-28): a scaffolded plan says depth
 // quick and maxScrapes 10, and a run that stopped at 4 did not say the 10 needs a deeper --depth.
 function budgetCap({ depth, budget, maxScrapes }) {

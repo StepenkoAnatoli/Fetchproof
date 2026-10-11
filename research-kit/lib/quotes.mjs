@@ -98,14 +98,16 @@ export function normalizeForMatch(text) {
 export function anchorFound(fragments, body) {
   const haystack = normalizeForMatch(body);
   let from = 0;
+  let matched = false;
   for (const fragment of fragments) {
     const needle = normalizeForMatch(fragment);
     if (!needle) continue;
     const at = haystack.indexOf(needle, from);
     if (at < 0) return false;
     from = at + needle.length;
+    matched = true;
   }
-  return true;
+  return matched;
 }
 
 /** Words in a quote, across its fragments: what MIN_QUOTE_WORDS is measured against. */

@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { parseFlags, flagList, refuseUnknownFlags, checkFlagValues } from '../lib/core.mjs';
-import { evaluate, splitPathList, stdinIsReadable, isGated, SUITE_RULE } from '../lib/gate.mjs';
+import { evaluate, readStagedPaths, splitPathList, stdinIsReadable, isGated, SUITE_RULE } from '../lib/gate.mjs';
 import { posture } from '../lib/machine.mjs';
 import { recordDiagnostic } from '../lib/timeline.mjs';
 
@@ -27,6 +27,7 @@ if (flags.help) {
   --json               machine-readable verdict
   --quiet              say nothing when the answer is allow
 
+Without a staged option, a commit invocation reads the actual Git staged list once.
 Exit codes: 0 allow, 1 block, 2 internal error.
 --posture exits 0 allow / 1 a config that parses says fail-closed / 2 unreadable and
 resolved to blocking - so no shell has to parse JSON.
@@ -74,10 +75,19 @@ if (flags['staged-stdin']) {
 }
 
 let verdict;
+// Acquisition happens inside evaluate after ungated/GATE_OFF checks. It does not
+// replace an explicitly supplied stdin/list, and an edit has no staged set to read.
+const listStaged = gate === 'commit' && !flags['staged-stdin'] && flags.staged === undefined
+  ? () => {
+    stagedPaths = readStagedPaths(root);
+    if (stagedPaths === null) process.stderr.write(
+      'research gate: git could not list the staged paths - staged scope is unknown, so the gate cannot assume an empty commit. Check git diff --cached --name-only --no-renames, or override: git commit --no-verify\n');
+    return stagedPaths;
+  } : null;
 try {
   // Minutes of silence from a commit hook read as git being broken (the hook says the same of
   // its watchdog), so the suite rule says the suite is running, as it starts it (ADR-0120).
-  verdict = evaluate(root, { gate, stagedPaths, announceSuite: () => process.stderr.write(
+  verdict = evaluate(root, { gate, ...(listStaged ? { listStaged } : { stagedPaths }), announceSuite: () => process.stderr.write(
     'research gate: the rest of the gate passes; this is the kit\'s own checkout and the commit touches research-kit/, so the suite runs before the commit is allowed (ADR-0120) ...\n') });
 } catch (err) {
   process.stderr.write(`gate: internal error - ${err.message}\n`);
@@ -119,7 +129,7 @@ for (const finding of verdict.findings.slice(0, 10)) {
 const why = verdict.breach?.rule === SUITE_RULE
   ? 'The research gate passes. This is the suite rule: in the kit\'s own checkout, a commit\ntouching research-kit/ needs a green suite (ADR-0120). Overrides:'
   : verdict.breach
-    ? 'The research gate passes. This is the architecture-map rule: a commit touching a declared\ncode path (research/kit.json) stages docs/ARCHITECTURE.md with it. Overrides:'
+    ? 'The research gate passes. This is the architecture-map rule: the gate needs a known\nstaged path list to check that declared code changes stage docs/ARCHITECTURE.md with them. Overrides:'
     : 'Phase 1 is not done until preflight prints PASS. Overrides:';
 process.stderr.write(`
 Fix: ${verdict.fix}

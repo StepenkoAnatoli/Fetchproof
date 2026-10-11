@@ -50,3 +50,13 @@ test('the CLI prints the report, --json prints it for machines, and a non-projec
   assert.equal(outside.status, 2);
   assert.match(outside.stderr, /not a research project/);
 });
+
+test('formatting-only anchors are counted but never reported as found', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (t) => t.replace('includes 1,000 credits. |',
+    `includes 1,000 credits. [quote: ${'*'.repeat(40)}] [quote: The free plan allows 10 requests per minute] |`));
+  const measured = measureCorpus(dir);
+  assert.deepEqual(measured.anchoredRows, { count: 1, percent: 100 });
+  assert.deepEqual(measured.quotesFound, { count: 1, of: 2, percent: 50 },
+    'the raw anchor counts, but only the actual passage was found');
+});

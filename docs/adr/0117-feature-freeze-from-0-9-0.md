@@ -30,6 +30,10 @@ transport, provider, configuration key, file format or check.
 
 The owner decides on 1.0, or lifts the freeze in an ADR for a named feature.
 
+Clarified 2026-10-08: a named exception lifts the freeze for that item only; unrelated
+work remains frozen. The owner's decision on 1.0 is a separate way to end the freeze.
+Classification is carried by review; a passing suite does not establish compliance.
+
 ## Rejected alternatives
 
 - **No freeze, with features judged case by case.** That is how the kit reached its size. Each

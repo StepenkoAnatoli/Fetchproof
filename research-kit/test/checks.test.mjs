@@ -1139,3 +1139,100 @@ test('a check that yields more findings than an engine takes as arguments still 
   assert.doesNotThrow(() => { findings = runChecks(corpus, { only: ['citations'] }); }, 'the verdict died with a RangeError');
   assert.ok(findings.length >= 130_000, `only ${findings.length} findings: below the largest engine limit measured, so a spread might not have thrown`);
 });
+
+test('supersededRows: adopted URL aliases share date and ledger ordering without superseding the same ID', () => {
+  const alias = 'http://www.example.invalid/docs/limits/#reading';
+  const p = abaProject({ dateOfA: '2020-01-01', dateOfB: today() });
+  const aliasRow = (entry) => p.row('E-02', entry).replace(p.url, alias);
+  let corpus = p.rows(p.row('E-01', p.a), aliasRow(p.b));
+  assert.equal(corpus.chain.ok, true, 'the actual capture ledger must verify before its ordering is tested');
+  assert.equal(supersededRows(corpus).get('E-01')?.id, 'E-02', 'an adopted URL alias hid the later capture');
+  assert.ok(runCheck('evidence-supersession', corpus).some((f) => f.rule === 'cites-superseded-row' && f.superseded === 'E-01' && f.by === 'E-02'));
+
+  corpus = p.rows(p.row('E-01', { ...p.a, retrieved: today() }), aliasRow({ ...p.b, retrieved: '2020-01-01' }));
+  assert.equal(corpus.chain.ok, true);
+  assert.equal(supersededRows(corpus).get('E-01')?.id, 'E-02', 'editable table dates overruled the named captures');
+  assert.ok(runCheck('hygiene', corpus).some((f) => f.rule === 'date-mismatch' && f.row === 'E-01'));
+
+  const q = abaProject();
+  const a = q.row('E-01', q.a);
+  const b = q.row('E-02', q.b).replace(q.url, alias);
+  for (const order of [[a, b], [b, a]]) {
+    corpus = q.rows(...order);
+    assert.equal(corpus.chain.ok, true);
+    assert.equal(supersededRows(corpus).get('E-02')?.id, 'E-01', 'the A, B, A ledger lost to URL spelling or table order');
+    assert.equal(supersededRows(corpus).has('E-01'), false);
+  }
+  corpus = q.rows(a, q.row('E-01', q.b).replace(q.url, alias));
+  assert.equal(corpus.chain.ok, true);
+  assert.equal(supersededRows(corpus).size, 0, 'two spellings under one ID must not supersede themselves');
+  const hygiene = runCheck('hygiene', corpus);
+  assert.ok(hygiene.some((f) => f.rule === 'duplicate-id' && f.row === 'E-01'));
+  assert.equal(hygiene.some((f) => f.rule === 'duplicate-url'), false, 'duplicate-id owns the same-ID ambiguity');
+});
+
+test('unknown-closure: a fresher capture under an adopted URL alias is named while the cited row keeps its own date', () => {
+  const { url, a, b, rows, row } = abaProject({ dateOfA: '2020-01-01', dateOfB: today() });
+  const fresh = row('E-02', b).replace(url, 'http://www.example.invalid/docs/limits/#reading');
+  for (const old of [{ ...a, retrieved: today() }, { ...a, file: '' }]) {
+    const corpus = rows(row('E-01', old), fresh);
+    assert.equal(corpus.chain.ok, true, 'the fresh alternative must have an actual verified fetch');
+    const stale = runCheck('unknown-closure', corpus, { maxAgeDays: 180 }).find((f) => f.rule === 'stale-evidence');
+    assert.ok(stale, 'the old cited reading borrowed the newer capture\'s date');
+    assert.match(stale.detail, /E-02 is already a fresher capture/, stale.detail);
+    assert.doesNotMatch(stale.detail, /re-collect with --refresh-days/, 'the fresher reading is already present');
+    const mismatches = runCheck('hygiene', corpus).filter((f) => f.rule === 'date-mismatch' && f.row === 'E-01');
+    assert.equal(mismatches.length, old.file ? 1 : 0, 'only a named capture can disagree with a table date');
+  }
+});
+
+test('hygiene: an adopted URL alias pasted as another row differs from a recorded refresh and distinct query or path case', () => {
+  const dir = makePassingProject(tempDir('rk-checks-url-hygiene-'));
+  const original = readText(resolve(dir, PATHS.evidence));
+  const initial = readCorpus(dir).captures.entries[0];
+  const alias = 'http://www.example.invalid/docs/limits/#reading';
+  const pasted = original.split('\n').find((line) => line.startsWith('| E-01 |')).replace(initial.url, alias);
+  writeText(resolve(dir, PATHS.evidence), `${original}${pasted.replace('| E-01 |', '| E-02 |')}\n`);
+  let corpus = snapshot(dir);
+  assert.equal(corpus.chain.ok, true, 'pasting the row must leave the one real fetch intact');
+  assert.equal(corpus.ledger.entries.length, 1);
+  assert.ok(runCheck('hygiene', corpus).some((f) => f.rule === 'duplicate-url' && f.row === 'E-02'), 'a pasted alias row was mistaken for a separate page');
+
+  writeText(resolve(dir, PATHS.evidence), `${original}${pasted}\n`);
+  corpus = snapshot(dir);
+  assert.equal(supersededRows(corpus).size, 0);
+  const duplicateId = runCheck('hygiene', corpus);
+  assert.ok(duplicateId.some((f) => f.rule === 'duplicate-id' && f.row === 'E-01'));
+  assert.equal(duplicateId.some((f) => f.rule === 'duplicate-url'), false);
+
+  writeText(resolve(dir, PATHS.evidence), original);
+  const fetched = [];
+  const scrape = (url) => {
+    fetched.push(url);
+    return { ok: true, url, title: 'Limits', statusCode: 200,
+      markdown: `# Limits\n\n${'The free plan now allows 20 requests per minute and includes 500 credits. '.repeat(30)}`,
+      transport: 'stub-transport', completeness: 'full', omitted: '', cmd: `stub scrape ${url}` };
+  };
+  const refreshed = collectOne(dir, alias, { force: true, type: 'P', date: today(), corpus: readCorpus(dir),
+    runScrape: scrape, transportName: 'stub-transport' });
+  assert.equal(refreshed.status, 'collected');
+  corpus = snapshot(dir);
+  assert.equal(corpus.chain.ok, true, 'the forced alias refresh must have a second verified fetch');
+  assert.equal(corpus.ledger.entries.length, 2);
+  assert.equal(supersededRows(corpus).get('E-01')?.id, 'E-02');
+  assert.equal(runCheck('hygiene', corpus).some((f) => f.rule === 'duplicate-url'), false, 'two actual fetches are a same-day refresh');
+
+  const distinct = [`${initial.url}?version=2`, 'https://example.invalid/docs/Limits'];
+  for (const url of distinct) {
+    const result = collectOne(dir, url, { type: 'P', date: today(), corpus: readCorpus(dir), runScrape: scrape,
+      transportName: 'stub-transport' });
+    assert.equal(result.status, 'collected', `${url} was merged under a new identity rule`);
+  }
+  corpus = snapshot(dir);
+  assert.equal(corpus.chain.ok, true);
+  assert.equal(corpus.ledger.entries.length, 4);
+  assert.deepEqual(fetched, [alias, ...distinct]);
+  assert.deepEqual([...supersededRows(corpus)].map(([id, current]) => [id, current.id]), [['E-01', 'E-02']]);
+  assert.equal(runCheck('hygiene', corpus).some((f) => f.rule === 'duplicate-url'), false);
+  assert.deepEqual(corpus.evidence.slice(1).map((row) => row.url), [alias, ...distinct], 'the captured URL spellings must remain visible');
+});

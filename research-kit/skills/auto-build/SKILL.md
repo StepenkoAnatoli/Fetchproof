@@ -1,12 +1,12 @@
 ---
 name: "auto-build"
-description: Take a task from idea to merged code with one human decision point. Researches every external fact through Research-Kit (github.com/StepenkoAnatoli/Research-Kit), turns the brief into traceable requirements, gets one design approval (the Mandate), builds and reviews through lead-orchestrator, hardens with break-test, audits outputs with gap-audit, opens the pull request, merges it once every check is green and the gate matches the baseline, and reports with research-to-code traceability. Use it whenever the user wants something built autonomously - "auto-build", "Auto-Build Mode", "build this end to end", "research and build", "research, design and ship", "just build it and merge", "implement this and open the PR", "take this to production", a feature or rewrite described in a sentence, or "continue the auto-build". Composes lead-orchestrator, brainstorming, break-test, gap-audit and four-dimension-audit; never replaces them. Skip it for one-step edits, questions, and anything with no code to deliver.
+description: Take a task from idea to a reviewed pull request and an owner-approved merge. Researches external facts through Research-Kit, writes traceable requirements, presents the Mandate for design approval, builds with lead-orchestrator, hardens with break-test and audits with gap-audit. Inside a Research-Kit project, references/research-kit.md governs owner stops and a separate approval of the completed head; an early GO MERGE or standing preference cannot approve a future commit. Use for "auto-build", "build this end to end", "research and build", "implement this and open the PR", or "continue the auto-build". Composes the installed skills and reports research-to-code traceability. Skip one-step edits, questions, and work with no code to deliver.
 compatibility: Any coding agent with shell, file and git access. GitHub merging uses the gh CLI; without it the run stops at an open pull request and says so. Research-Kit must be deployed at ~/.agents/research-kit (or RESEARCH_KIT_HOME) for any task that depends on facts outside the repository. Sub-agents are used when the environment offers them; otherwise the stages run sequentially with the roles kept distinct.
 metadata:
   version: "1.0"
   origin: Auto-Build Mode (research-to-production autonomous builder), 2026-10-04
 ---
-<!-- Modified by Research-Kit (ADR-0146): the standing-mandate paragraph in Stage 4 and the ledger reference in the references list. The rest is as received from StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Research-Kit: ADR-0146 adaptations and 2026-10-08 approval-summary corrections (description, purpose, stage table, research/design handoffs, Mandate, merge and stop summaries), plus ADR-0150 complete-review guidance. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; the ledger reference also differs from that baseline. -->
 
 Inside a Research-Kit project, `references/research-kit.md` governs this run; where it and this
 file differ, it wins.
@@ -17,13 +17,14 @@ file differ, it wins.
 
 Move a task through **research → requirements → design → build → test → harden → audit →
 pull request → merge → report** without the user doing ordinary engineering work, and without
-the agent ever building on a guess. The user makes one decision, the **Mandate**, after the
-research and the design are on disk; everything after it runs on evidence until the merge
-commit exists or a stop condition is hit.
+the agent ever building on a guess. The user approves the **Mandate** after the research
+and design are on disk. Inside a Research-Kit project, the run also stops for the owner's
+decisions listed in `references/research-kit.md`, including approval of the completed
+head before merge.
 
 This skill is a conductor. Each stage is performed by a skill that already owns that discipline,
 and auto-build adds only what none of them has: the stage order, the handoffs between them, the
-single approval point, the merge protocol, and the traceability from every requirement back to
+design approval point, the separate merge stop, and the traceability from every requirement back to
 a cited claim and forward to a test. When a named skill is installed, invoke it and follow it;
 when it is not, use the fallback in `references/stage-handoffs.md` and say in the report that
 the fallback was used. Never re-implement a stage inline when its skill is available: the skills
@@ -46,11 +47,11 @@ Three directives govern every stage, in this order of precedence:
 | 1     | Research               | Research-Kit researchers (lead-orchestrator 1a/1b)| one research project per topic: `preflight` PASS, `BRIEF.md` | Only for page budget |
 | 2     | Requirements           | Lead                                              | `REQUIREMENTS.md`, every row traced                         | No                |
 | 3     | Design                 | brainstorming, Design mode                        | design in chat (Bounded) or spec file (Architectural); decision records | No      |
-| 4     | Mandate                | Lead presents; user decides                       | `MANDATE.md` with the reply                                 | **Yes, once**     |
+| 4     | Mandate                | Lead presents; user decides                       | `MANDATE.md` with the reply for the current design           | **Yes**           |
 | 5     | Build                  | lead-orchestrator Phases 2–5                      | units integrated, reviewed, documented; findings dispositioned | No             |
 | 6     | Harden                 | break-test on the integrated branch               | break-test report; fixes cherry-picked as their own commits | No                |
 | 7     | Audit                  | gap-audit, scoped to the task's outputs           | audit report; in-scope gaps fixed through fix briefs        | No                |
-| 8     | Deliver and merge      | Lead; `references/merge-protocol.md`              | PR; merge commit on the base branch; branches cleaned up    | Only if a check needs a human |
+| 8     | Deliver and merge      | Lead; `references/merge-protocol.md`              | PR; approved head and owner reply; merge record             | **Yes: completed head** |
 | 9     | Validate and report    | Lead; four-dimension-audit as the last reviewer   | `TRACEABILITY.md`; `REPORT.md`; `RUN.md` COMPLETE           | No                |
 
 A stage starts only when the previous stage's deliverable exists on disk and is recorded in
@@ -72,8 +73,9 @@ the project's convention) and adds one table directly after the header, before "
 
 The stage table is written at every stage transition and whenever the Mandate is received. On
 resume, Phase R of lead-orchestrator applies unchanged, then the first stage not DONE is where
-the run continues. A run interrupted after the Mandate resumes without asking again; a run
-interrupted before it still needs it.
+the run continues. Reuse the recorded reply for the unchanged design and action;
+changed designs and unapproved completed heads still need their applicable approval.
+A run interrupted before the Mandate reply still needs it.
 
 ## Stages
 
@@ -105,8 +107,9 @@ Discovery of the repository itself (Phase 1a) runs in parallel.
 
 - Trigger met: one Research-Kit project per independent question, following
   lead-orchestrator's `references/research-kit.md` exactly. Reuse any existing project whose
-  gate passes. Agree the page budget with the user before collecting anything metered; when
-  nobody can answer, use the standing mandate's budget or stay inside the free transports.
+  gate passes. Agree the page budget with the user before collecting anything metered.
+  Reuse recorded authorization for that unchanged collection; a standing budget preference
+  alone does not authorize paid pages. Without it, stay inside the free transports.
 - Trigger not met: mark the stage SKIPPED with the sentence that says why the repository answers
   every question the design needs. This is a legitimate result, not a shortcut.
 - Kit not `READY`: apply `doctor`'s fix. If it cannot be fixed here, record a kit finding and
@@ -115,10 +118,18 @@ Discovery of the repository itself (Phase 1a) runs in parallel.
 
 **Sufficiency gate.** Research is sufficient when, for every topic: `preflight` exits 0;
 every blocking unknown is CLOSED with an evidence row or KNOWN-UNKNOWN with a day-one
-verification step; `BRIEF.md` exists; and the lead, reading the briefs against the task, can
+verification step; the MAP is classified, extractor Findings rewritten, and the brief
+is authored with both judged sections present and answered. A stamped brief must match
+the current corpus; authored unstamped briefs retain ADR-0138's compatibility path
+with currency unknown. Handoff must also pass. The lead, reading the briefs against the task, can
 answer "can the platform do what the design will assume?" and "what will this cost at the
 intended volume?" from cited claims. A plausible answer is not a sufficient one. A brief that
 rests on an unproven unknown goes back to its researcher.
+
+Inside Research-Kit, use `references/research-kit.md` Stage 0/1 for these checks on
+either role. A Git request's `collected` result alone does not complete review;
+the collector records the Findings, closures, map and current authored brief. Local
+review and re-packaging of a received package remains available under ADR-0052.
 
 ### Stage 2: Requirements
 
@@ -136,8 +147,8 @@ audit and the final report all point at the same numbered rows.
 
 Invoke `brainstorming` in Design mode on the task and the requirements. Keep its classification
 (spike, bounded, architectural) and its ratchet; keep its rule that the design is presented and
-nothing is built before approval. Two adaptations, both because the user asked for one decision
-point:
+nothing is built before approval. Design questions are batched into the Mandate; this
+does not remove the later owner stops or completed-head merge approval:
 
 - The per-section "does this look right so far?" questions and the spec-review question are
   collected into the Mandate message rather than asked one at a time. The design is still shown
@@ -159,11 +170,12 @@ the requirements, the design with its assumptions and decision records, the work
 the merge policy, the budgets, the stop-list, and every blocking question collected from Stages
 1–3. Then stop and wait.
 
-The user replies `GO` (build, open the pull request, hold the merge) or `GO MERGE` (build and
-merge when the merge protocol's conditions hold), optionally with corrections, or
+The user replies `GO` (build and open the pull request) or `GO MERGE` (the same, with merge
+intended after its conditions and the separate completed-head approval), or
 `STOP AFTER DESIGN` when the research and the design were the point and no code is wanted. Any
 other reply is a correction to incorporate and present again, not an approval. Save the message and the
-reply as `MANDATE.md` in the run folder; it is the authorization every later stage cites.
+reply as `MANDATE.md` in the run folder. A corrected Mandate needs fresh approval before
+dependent work; record the applicable reply rather than carrying approval to a changed design.
 
 **Standing mandate.** A project may carry an "Auto-build mandate" section in its agent
 instructions (format in `references/mandate.md`). It pre-answers preferences only (branch
@@ -216,8 +228,11 @@ present. A gap outside the task statement is reported, never fixed on the way th
 Follow `references/merge-protocol.md` exactly. In outline: commit the research projects (with
 their ledgers, `git add -f`), the run folder and the work on the working branch; write the pull
 request from lead-orchestrator's template; open it against the Mandate's base branch; then, under
-`GO MERGE` only, wait for every required check, run `scripts/pr-readiness.sh`, confirm the final
-gate equals the baseline on the exact head being merged, and merge with the repository's method.
+the governing Research-Kit note, wait for every required check, run `scripts/pr-readiness.sh`,
+and present the completed head, verification results and cautions for the owner's reply.
+Record that reply and its full SHA in `MANDATE.md` and `RUN.md`. Any head change lapses
+the approval. Recheck the exact approved head and merge with the repository's method and
+`--match-head-commit`; the command protects against movement but does not establish consent.
 After the merge, fetch the base, confirm the merge commit is there, confirm the base is green,
 remove the run's branches and worktrees, and record the merge commit in `RUN.md`.
 
@@ -276,7 +291,7 @@ and the report says what was not verified. Anything less is a checkpoint, report
 
 Stop and report rather than continue when: the kit cannot reach `READY` and the task needs
 external facts; the Mandate is not approved; a research project is INCOMPLETE or BLOCKED; a unit
-has used both retries; the base branch moved and the rebase touched reviewed units (re-review
+has used both retries; completed-head merge approval is absent or has lapsed; the base branch moved and the rebase touched reviewed units (re-review
 first); a required check cannot be satisfied from here; or the stop-list is hit. A stop is
 written to `RUN.md` with an accurate Next action; a partial run reported as complete is a defect.
 

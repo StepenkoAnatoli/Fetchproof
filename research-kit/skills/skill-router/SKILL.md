@@ -12,7 +12,11 @@ This skill guides; it enforces nothing. The gates - preflight, the commit gate a
 edit-time gate - stay the enforcement. No route here is a reason to bypass one: never
 `--no-verify`, never a `research/GATE_OFF` file, never a hand-fetched page.
 
-## Step 1: read the state (four facts)
+## Step 1: confirm the project, then read the state
+
+Confirm the intended project before running diagnostics (AGENTS.md). If the working
+directory is not that project, stop and ask which one; a verdict for another directory
+is not this project's readiness.
 
 ```
 node "$HOME/.agents/research-kit/bin/doctor.mjs"          # role=collector|builder, in its last line
@@ -21,28 +25,43 @@ node "$HOME/.agents/research-kit/bin/preflight.mjs"       # PASS or FAIL
 node "$HOME/.agents/research-kit/bin/brief.mjs" --state   # template | legacy | draft | authored
 ```
 
-If the working directory is not the project the operator means, stop and ask which one
-(AGENTS.md); no route starts from the wrong directory.
+Record the actual doctor verdict and role. An unresolved role or blocking diagnostic
+is not readiness. A chosen keyless collector does not need Firecrawl (ADR-0095).
+
+Building also needs the review that `lib/artifact.mjs` derives: classified MAP,
+rewritten extractor Findings, and an authored brief with both judged sections present
+and answered. For a stamped brief, its inputs must match the current corpus;
+`brief.mjs --state` does not prove that match. An authored unstamped brief keeps the
+existing approval path with currency unknown (ADR-0138). Handoff and PASS are also
+required. These approval conditions are the same on either machine; the role controls
+collection. A `collected` request result or BRIEF file presence alone proves none of
+this review (ADR-0150).
 
 ## Step 2: route by state
 
 | Role | State | Use |
 |---|---|---|
+| either | role unresolved or doctor reports a blocker | `resume-from-disk`; record the diagnosis and stop |
 | collector | gate failing, or no map yet | `research-first`, then `map-classifier`, `finding-rewriter`, `source-grader` |
-| collector | gate PASS, brief not authored | `brief-writer` |
-| collector | gate PASS, brief authored | build: the task table below; before a release, `freshness-recheck` |
+| collector | gate PASS, review incomplete or stamped brief stale | finish `map-classifier`, `finding-rewriter`, `brief-writer` as needed |
+| collector | handoff and gate pass, review complete and brief current under ADR-0138 | build: the task table below; before a release, `freshness-recheck` |
 | collector | the task is an audit, or "what to build next" | `gap-audit`, `subproject-discovery` |
-| builder | handoff fails | `resume-from-disk`; name what did not arrive with `fact-request`, and stop |
-| builder | no brief, or the brief is not authored | `fact-request`, and stop - phase 1 is not done |
-| builder | gate failing | `resume-from-disk`; name the failing unknown with `fact-request`, and stop |
-| builder | gate PASS, brief authored | `build-from-brief` first, then the task table below |
+| builder | handoff fails | `resume-from-disk`; quote the delivery or checkout diagnosis and stop |
+| builder | no brief, incomplete review or stamped brief stale | report the review gap to the collector and stop; use `fact-request` only for a missing external fact |
+| builder | gate failing | `resume-from-disk`; report the failing check; use `fact-request` only for a missing external fact, and stop |
+| builder | handoff and gate pass, review complete and brief current under ADR-0138 | `build-from-brief` first, then the task table below |
 | either | interrupted session, unclear state | `resume-from-disk` |
 
 A builder never runs a collecting skill: `research.mjs` and `decompose.mjs` refuse there
 (exit 2), and a page fetched another way is not evidence (ADR-0010). A missing fact is a
 `fact-request`, never a fetch. When the collector runs auto-collect, the request is a file,
 `research/requests/<id>.json`, and the collector collects it and pushes the result
-(ADR-0148). The builder decides what is collected; only the collector fetches it.
+(ADR-0148). The builder requests a fact; the collector validates the request, fetches,
+and records Findings, closures, map classification and the current authored brief.
+The builder reads and judges the returned captures and reports review-only gaps in
+prose; those gaps do not need another fetch. ADR-0052 still permits local review and
+re-packaging of a received package, without collection or edits to the collector's Git
+corpus. On a collector too, use existing captures when they answer the gap.
 
 ## Step 3: route by task (once building is allowed)
 
@@ -75,10 +94,10 @@ replaced by `fact-request`.
 | freshness-recheck | yes | before a build or a release | never |
 | gap-audit | yes | an audit of a project's outputs | never |
 | subproject-discovery | yes | choosing what to build next | never |
-| map-classifier | no | after decompose | never - phase-1 review |
-| finding-rewriter | no | after collect | never - phase-1 review |
-| source-grader | no | after collect | never - phase-1 review |
-| brief-writer | no | after the gate passes | never - phase-1 review |
+| map-classifier | no | after decompose | received-package local review only (ADR-0052); Git corpus records stay with the collector |
+| finding-rewriter | no | after collect | received-package local review only (ADR-0052); Git corpus records stay with the collector |
+| source-grader | no | after collect | received-package local review only (ADR-0052); Git corpus records stay with the collector |
+| brief-writer | no | after the gate passes | received-package local review only (ADR-0052); Git corpus records stay with the collector |
 | lead-orchestrator | stage | multi-unit work | multi-unit work, Phase 1b replaced by fact-request |
 | auto-build | stage | idea to merged PR, per its references/research-kit.md | idea to merged PR, per its references/research-kit.md: research stage replaced by fact-request |
 | break-test | stage | hardening a build | hardening a build, Research-Kit step replaced by fact-request |

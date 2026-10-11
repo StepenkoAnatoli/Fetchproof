@@ -1455,3 +1455,84 @@ test('ADR-0140: writeSource never writes at the capture\'s own path', () => {
   assert.equal(writeSource(dir, 'research/raw/2026-01-01-x.txt', '<html>src</html>', 'md body'), null);
   assert.equal(fs.existsSync(resolve(dir, 'research/raw/2026-01-01-x.txt')), false);
 });
+
+function searchCacheFixture({ seedDate = '2026-08-01', fresherAlias = false, force = false,
+  searchAlias = false, extraPage = false, duplicateQueries = false, explicitExtra = false } = {}) {
+  const dir = makeProject();
+  const known = 'https://x.invalid/rate-limits';
+  const alias = 'http://www.x.invalid/rate-limits/';
+  const extra = 'https://y.invalid/rate-limits';
+  const now = new Date('2026-10-08T12:00:00Z');
+  const seed = (url, date) => collectOne(dir, url, {
+    corpus: readCorpus(dir), runScrape: stubAdapter().runScrape, transportName: 'stub-transport',
+    date, now: new Date(`${date}T12:00:00Z`), force: true,
+  });
+  assert.equal(seed(known, seedDate).status, 'collected');
+  if (fresherAlias) assert.equal(seed(alias, '2026-10-08').status, 'collected');
+  const corpus = readCorpus(dir);
+  const searchUrl = searchAlias ? alias : known;
+  const before = cacheDecision(corpus.captures, searchUrl, { refreshDays: 30, force, now });
+  if (fresherAlias) assert.equal(cacheDecision(corpus.captures, alias, { refreshDays: 30, now }).hit, true,
+    'the newer alias is fresh while the candidate exact spelling is stale');
+  const searches = [];
+  const scrapes = [];
+  const adapter = {
+    name: 'stub-transport',
+    search: (query) => {
+      searches.push(query);
+      return { ok: true, query, cmd: `stub search ${query}`, results: [
+        { url: searchUrl, title: 'Rate limits', description: 'Rate limits fixture' },
+        ...(extraPage ? [
+          { url: extra, title: 'Rate limits', description: 'Rate limits fixture' },
+          { url: 'http://www.y.invalid/rate-limits/', title: 'Rate limits', description: 'Rate limits fixture' },
+        ] : []),
+      ] };
+    },
+    runScrape: (url) => { scrapes.push(url); return stubAdapter().runScrape(url); },
+  };
+  const plan = {
+    topic: 'Fixture', depth: 'quick', refreshDays: 30, limit: 8, perQuery: 1, maxScrapes: 1,
+    prefer: ['x.invalid'], urls: explicitExtra ? [extra] : [],
+    queries: duplicateQueries ? ['rate limits', 'limits rate'] : ['rate limits'],
+  };
+  const run = runResearch(dir, { adapter, plan, force, now, date: '2026-10-08', maxRateLimitRetries: 0 });
+  assert.equal(verifyLedger(dir).ok, true, 'the synthetic collection must remain ledgered');
+  return { run, before, searches, scrapes, searchUrl, extra };
+}
+
+test('a stale search-found capture reaches the existing freshness decision under each spelling', () => {
+  for (const options of [{}, { searchAlias: true }, { fresherAlias: true }]) {
+    const fixture = searchCacheFixture(options);
+    assert.equal(fixture.before.reason, 'stale');
+    assert.equal(fixture.searches.length, 1);
+    assert.deepEqual(fixture.scrapes, [fixture.searchUrl], 'an existing stale capture was removed before cache judgment');
+    assert.equal(fixture.run.attempts, 1);
+    assert.equal(fixture.run.collected, 1);
+  }
+});
+
+test('force recollects a search-found fresh capture without changing URL identity', () => {
+  for (const searchAlias of [false, true]) {
+    const fixture = searchCacheFixture({ seedDate: '2026-10-08', force: true, searchAlias });
+    assert.equal(fixture.before.reason, 'forced');
+    assert.equal(fixture.searches.length, 1);
+    assert.deepEqual(fixture.scrapes, [fixture.searchUrl], 'force searched but silently excluded the page it found');
+    assert.equal(fixture.run.attempts, 1);
+    assert.equal(fixture.run.collected, 1);
+  }
+});
+
+test('fresh search hits leave selection room while same-run and plan aliases stay deduplicated', () => {
+  const fresh = searchCacheFixture({ seedDate: '2026-10-08' });
+  assert.equal(fresh.before.hit, true);
+  assert.deepEqual(fresh.scrapes, [], 'a fresh result remains free to reuse');
+  assert.equal(fresh.run.attempts, 0);
+  for (const explicitExtra of [false, true]) {
+    const fixture = searchCacheFixture({ seedDate: '2026-10-08', extraPage: true, duplicateQueries: true, explicitExtra });
+    assert.deepEqual(fixture.scrapes, [fixture.extra], 'fresh known results or aliases displaced the one eligible page');
+    assert.equal(fixture.searches.length, 2);
+    assert.equal(fixture.run.attempts, 1);
+    assert.equal(fixture.run.spent, 1);
+    assert.equal(fixture.run.overBudget, 0, 'a duplicate must not consume another budget slot');
+  }
+});

@@ -44,11 +44,12 @@ names the set exactly, is enough).
    builder only with that stage replaced by `fact-request`. A test parses the table and
    holds it to those rules. The router chooses skills, never a model: model choice stays
    in the operator's machine and runtime (ADR-0012).
-3. **The received skills are vendored as received** (`StepenkoAnatoli/SkillsMDs` at
+3. **The received baseline is vendored with recorded renames and adaptations** (`StepenkoAnatoli/SkillsMDs` at
    `3f2d2fc6627d63ea93ff97d4d33845a753db16cc`, Apache-2.0, annotated in `REUSE.toml` and
    `NOTICE`): architecture-pass, auto-build, brainstorming, break-test, careful-coding,
    four-dimension-audit, gap-audit, improve-codebase-architecture, lead-orchestrator,
-   subproject-discovery. The only changes are the renames the format forces:
+   subproject-discovery. The format requires these renames; the dated adaptations below
+   also apply, so the current copy is not byte-identical to that receipt:
    `leadorchastratorv2.md` -> `lead-orchestrator/SKILL.md` (its frontmatter name is
    `lead-orchestrator`), `agent-briefsv2.md` -> `references/agent-briefs.md`. The kit adds
    one file of its own beside them, `lead-orchestrator/references/research-kit.md`, which
@@ -81,6 +82,20 @@ names the set exactly, is enough).
    could build without an approval or merge a head nobody approved. Rejected: leaving the
    files as received and relying on the kit note alone - the reviewer showed `SKILL.md` did
    not say the note wins, so the contradiction was the agent's to resolve.
+
+   **Clarified on 2026-10-08:** the same approval policy still governs. The remaining
+   one-approval, standing-default and early-merge summaries in SKILL.md, mandate.md,
+   merge-protocol.md and the standing template are aligned with decision 6;
+   references/stage-handoffs.md is the sixth received file changed and carries its
+   modification notice. The governing kit note is kit-authored and now bounds gate
+   enforcement to actual checks. NOTICE and REUSE.toml describe the current adaptations.
+   The receipt hashes above are retained as historical evidence; they are not replaced
+   with current modified-file digests.
+
+   ADR-0150 (2026-10-08) separately clarifies complete review and Git corpus ownership
+   in the research handoffs, preserving local received-package review and authored
+   unstamped compatibility. Those marked maintenance adaptations do not replace the
+   receipt hashes or create another approval/role condition.
 4. **The kit writes thirteen skills of its own** around its main idea - evidence before
    building, and a clean handoff. Builder: build-from-brief, fact-request, cite-in-code,
    day-one-tasks, contract-tests, commit-report. Collector: map-classifier,
@@ -91,8 +106,13 @@ names the set exactly, is enough).
    a machine installed before the set existed reads as drift with the remedy
    (`install.mjs`), never repaired by doctor. A folder of the same name that is not the
    kit's - its SKILL.md neither the hash the kit last deployed there (`skillSetHashes`,
-   kept across deploys) nor the one it ships now - is never written:
+   the latest entrypoint hash at each target path, retaining entries across paths)
+   nor the one it ships now - is never written:
    the deploy leaves it, names it (the dry run too), and drift does not count it.
+   Recognition checks SKILL.md, not supporting-file customization: a recognized set
+   skill is mirrored in full, so its references/scripts can be replaced and eligible
+   extras pruned. This is neither complete-directory authentication nor a hash history
+   for each target. Research-first has its separate copy behavior.
 
 6. **Auto-build runs the kit's way, from a note beside it** (owner order, 2026-10-06):
    `auto-build/references/research-kit.md`, written by the kit, governs the run inside a
@@ -152,9 +172,10 @@ names the set exactly, is enough).
 - **A per-project `maxAgeDays` configuration key**: a new setting under the freeze;
   `refreshDays` and the volatile marking cover the need. Trigger: a project where they
   prove insufficient.
-- **Editing the received auto-build text** for the kit's rules: the note beside it carries
-  them, so the copy stays identical to its source; if the owner edits SkillsMDs instead,
-  the kit re-vendors.
+- **An unrestricted rewrite of received auto-build text** for the kit's vocabulary:
+  the note carries the kit's rules. The marked compatibility corrections in decision 3
+  qualify the original preference for an identical copy; they do not justify a general
+  fork of the upstream workflow.
 - **Restoring a `~/.agents/skills` mirror** because E-03 calls `.agents/skills/` a common
   convention: ADR-0006 removed it, and `skillRoots` in the machine config already adds
   any root a machine needs.

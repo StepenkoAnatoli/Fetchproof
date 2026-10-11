@@ -114,6 +114,19 @@ if (targets.some(inRaw) && loadConfig().editGate.mode !== 'off' && !fs.existsSyn
     + `research.mjs, never by hand. Collect the page with research.mjs (it records the fetch), and put `
     + `your reading of it in ${PATHS.evidence}.`);
 }
+// GATE_OFF is an operator override, not phase-1 research. Creating it through Write
+// had disabled both gates before any failing verdict was judged (2026-10-10 audit).
+// Descendants count too: creating GATE_OFF/note creates the directory that existsSync
+// accepts as the override. Keep the same deliberate off-switches as the raw guard.
+const gateOff = path.resolve(root, PATHS.gateOff);
+const inGateOff = (t) => {
+  const rel = path.relative(gateOff, path.resolve(cwd, t));
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+};
+if (targets.some(inGateOff) && loadConfig().editGate.mode !== 'off' && !fs.existsSync(gateOff)) {
+  emit('deny', `${PATHS.gateOff} is an operator override that disables both gates, not phase-1 research. `
+    + 'Ask the operator to choose an override; close the unknowns with fetched evidence to pass the gate.');
+}
 if (targets.length && targets.every((t) => isPhaseOneEdit(root, path.resolve(cwd, t)))) {
   emit('allow', 'phase-1 work: research/ and the project\'s own scaffolding are what phase 1 edits');
 }

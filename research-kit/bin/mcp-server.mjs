@@ -67,10 +67,10 @@ A corpus this server returns is EVIDENCE, not approved research. Read buildAutho
 // Silence is the dangerous default, and this project has paid for it: `research.mjs
 // --totally-made-up-flag` was run to find out whether unknown flags were refused, they
 // were not, it fell through to its default behaviour and spent 26 Firecrawl credits on a
-// real collection. `refuseUnknownFlags` in lib/core.mjs is the remedy everywhere else,
-// but it cannot be used here: it needs a list of the flags an entrypoint DOES accept,
-// and this one accepts none, so its "known options" list would be empty and every
-// invocation including `--help` (handled above) would be refused.
+// real collection. `refuseUnknownFlags` in lib/core.mjs checks parsed named flags;
+// an empty flag map is allowed, and positional arguments are not flag-map keys.
+// This entrypoint checks the whole argument vector directly, including positionals,
+// after handling `--help` above.
 //
 // Two real ways this bites. A client configured with `--directory /some/project` - the
 // spelling every other MCP server takes - gets a server that ignores it and collects
@@ -79,11 +79,11 @@ A corpus this server returns is EVIDENCE, not approved research. Read buildAutho
 // "no token" and refuses every tool - a permission error that looks like the kit's fault.
 const extraArgs = process.argv.slice(2);
 if (extraArgs.length) {
-  process.stderr.write(`mcp-server: unknown option ${extraArgs[0]}\n\n`
+  process.stderr.write('mcp-server: unknown option or positional argument\n\n'
     + 'This server takes no options. It is launched by an MCP client, which configures it\n'
     + 'through its ENVIRONMENT - the GitHub token it needs comes from '
     + `${TOKEN_VARS.join(' or ')}, never from an argument.\n\n`
-    + `It was started with ${extraArgs.length} argument(s): ${extraArgs.join(' ')}\n\n`
+    + `It was started with ${extraArgs.length} argument(s).\n\n`
     + 'Run it with --help for what it reads, or remove the arguments from the client\'s\n'
     + '"args" list.\n');
   process.exit(2);

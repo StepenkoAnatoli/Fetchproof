@@ -1,0 +1,90 @@
+# Brief - what the runtime does: Node's certificate store, and the mode a copied file gets
+
+_Auto-drafted 2026-10-08 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
+require the reviewing agent's judgement; everything else is assembled from evidence already
+in `research/`. While a **TODO** remains, this brief is **not reviewed** and the
+handoff is **not approved** - a structurally valid corpus, a reviewed one, and an
+approved handoff are three different states._
+
+Reviewed by: agent (2026-10-08 correction: verified the original history and appended full captures, rewrote the seven Findings, classified the map and answered the judged sections)
+
+**This is the phase-1 to phase-2 handoff.** **Gate: PASS.** The configured research checks passed. Disclosed known unknowns
+and gate warnings still apply; PASS does not establish that every claim is correct.
+
+**Gate warnings from the post-review evaluation on 2026-10-08: 9.**
+
+These findings apply to the whole corpus at the time of this evaluation. Re-run
+preflight after edits; this list is not a fresh evaluation of the resulting document.
+
+- **transport-provenance/transport-not-metered** (E-01): E-01 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-02): E-02 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-03): E-03 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-04): E-04 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-05): E-05 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-06): E-06 was collected by "http-keyless", not the metered Firecrawl CLI
+- **transport-provenance/transport-not-metered** (E-07): E-07 was collected by "http-keyless", not the metered Firecrawl CLI
+- **corroboration/one-voice** (U-04): U-04 cites 2 rows and all are githubusercontent.com - a second reading of one source, which catches a misreading and not a source that is wrong about itself
+- **corroboration/single-source** (U-05): U-05 rests on E-07 alone - one reading, so a correct source and a lucky one look the same
+
+Whoever you are - another agent, a different model, or a person - read this file
+first. You should not need to re-research anything to start work. If something
+here is not enough to build from, say which fact is missing rather than guessing
+it: that is a phase-1 gap to close, not a phase-2 judgment call.
+
+## Intent
+
+Support the break-test pass-7 report, correction of installer-owned read-only output, and the scoped private child-accounting remedy with primary runtime documentation. Distinguish documented overwrite/permission/IPC APIs from the original Linux Node v22.22.3 measurements and later implementation tests. Bound the certificate recommendation to the trusted-CA mechanism Node documents. Done means complete owner-hosted captures for the missing API sections, rewritten quoted Findings, a classified map, an answered and current brief, and this nested project's passing preflight and intact handoff. Product code and its regression outcomes remain outside this research project.
+
+## What we verified
+
+| Claim | Source | Type |
+|---|---|---|
+| Complete Node v22.22.3 filesystem document, matching the original probe runtime. The `fs.copyFileSync` section states overwrite by default, no atomicity guarantee, and attempted destination removal after an error following opening for writing; `mode` specifies copy modifiers, not destination permissions. This section does not promise source-mode propagation. The chmod section says Windows can change only write permission and does not distinguish group, owner, or others. The break-test's 0444 propagation remains a measured Linux outcome, separate from these documented contracts. [quote: Synchronously copies `src` to `dest`. By default, `dest` is overwritten if it already exists.] [quote: Caveats: on Windows only the write permission can be changed, and the distinction among the permissions of group, owner, or others is not implemented.] | E-04 `raw.githubusercontent.com` (U-01, U-02, U-04) | P |
+| Complete Node v24.20.0 filesystem document, matching the correction host. `fs.copyFileSync` retains the overwrite/default and non-atomic contract. Windows chmod changes only write permission; owner/group/others distinctions are not implemented, and the documented available Windows mode constants are `S_IRUSR` and `S_IWUSR` (`S_IWUSR` is 0o200, write by owner). These facts support explicitly restoring the write bit on an installer-owned destination before replacing it and on its copied output; the actual read-only replacement and preservation of other platforms' bits still require runtime tests. [quote: Synchronously copies `src` to `dest`. By default, `dest` is overwritten if it already exists.] [quote: Caveats: on Windows only the write permission can be changed, and the distinction among the permissions of group, owner, or others is not implemented.] [quote: On Windows, only `S_IRUSR` and `S_IWUSR` are available.] | E-05 `raw.githubusercontent.com` (U-01, U-02, U-04) | P |
+| Historical Node v22.22.0 GitHub-viewer excerpt: the captured `fsPromises.copyFile` section documents overwrite by default and the exclusive-copy modifier. The capture ends with "View remainder of file in raw view" before `fs.copyFileSync`; its omission metadata describes sibling sections but not that missing document remainder. This excerpt cannot prove what the full Node filesystem document promises about permissions. E-04 and E-05 provide complete direct captures for the synchronous-copy scope. [quote: Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it already exists.] [quote: The copy operation will fail if `dest` already exists.] _(partial capture)_ | E-01 `github.com` (U-01) | P |
+| The captured `uv_fs_copyfile` section in Node's v22.22.0 libuv documentation documents overwrite by default and `UV_FS_COPYFILE_EXCL` returning `UV_EEXIST`. Its copy section describes flags and partial-copy cleanup without specifying propagation of source permission bits. That is a limit of this documented API section; it does not prove every implementation or future runtime behaves identically. [quote: The default behavior is to overwrite the destination if it exists.] [quote: `UV_FS_COPYFILE_EXCL`: If present, `uv_fs_copyfile()` will fail with `UV_EEXIST` if the destination path already exists.] _(partial capture)_ | E-02 `github.com` (U-01, U-02) | P |
+| Historical Node v22.22.0 man-page section: `NODE_EXTRA_CA_CERTS` extends the well-known root CAs with trusted PEM certificates, warns once for a missing or malformed file, and is read only at process launch. It is ignored for setuid-root execution or Linux file capabilities. E-06 supplies the current correction-host CLI section and its additional explicit-`ca` limit. The mechanism is a bounded remedy when the required trusted CA is absent; it does not diagnose every certificate error or justify disabling verification. [quote: The file should consist of one or more trusted certificates in PEM format.] [quote: environment variable is only read when the Node.js process is first launched.] [quote: This environment variable is ignored when `node` runs as setuid root or has Linux file capabilities set.] _(partial capture)_ | E-03 `github.com` (U-03) | P |
+| Complete Node v24.20.0 CLI document: `NODE_EXTRA_CA_CERTS` extends the well-known roots with trusted PEM certificates, warns once for a missing/malformed file with other errors ignored, and is read at process launch. It is ignored for setuid root or Linux file capabilities. Neither default nor extra certificates are used when a TLS/HTTPS client's or server's `ca` option is explicitly specified. Set the applicable trusted-CA file before starting the collector; this is not an unconditional repair for every TLS failure and changing the variable inside a running process has no effect. [quote: Neither the well known nor extra certificates are used when the `ca` options property is explicitly specified for a TLS or HTTPS client or server.] [quote: This environment variable is ignored when `node` runs as setuid root or has Linux file capabilities set.] [quote: The `NODE_EXTRA_CA_CERTS` environment variable is only read when the Node.js process is first launched.] | E-06 `raw.githubusercontent.com` (U-03) | P |
+| Complete Node v24.20.0 child_process document: spawn stdio ipc creates at most one IPC descriptor and enables process.send/process.disconnect plus message/disconnect events for a Node child; direct IPC-fd access and non-Node use are unsupported. The parent message event receives child process.send messages after serialization/parsing, so validate the received accounting object. Exit can precede stdio closure; close follows process end and stdio closure. Disconnect is emitted when no messages are being received. The documented subprocess.send callback says sent, not acknowledged receipt, and send can return false for a closed channel or excessive backlog. The child IPC starts unreferenced until a message/disconnect handler is registered, so an open channel alone does not hold the child alive. These facts support a separate private accounting channel; receive/validate the actual report and handle missing/error/termination cases instead of treating logs, exit zero or a send callback as trustworthy accounting. [quote: Create an IPC channel for passing messages/file descriptors ... stdio file descriptor.] [quote: The optional `callback` is a function that is invoked after the message is sent but before the child process may have received it.] [quote: When the `'exit'` event is triggered, child process stdio streams might still be open.] [quote: The `'close'` event is emitted after a process has ended _and_ the stdio streams of a child process have been closed.] [quote: The `'disconnect'` event will be emitted when there are no messages in the process of being received.] | E-07 `raw.githubusercontent.com` (U-05) | P |
+
+## Contradictions and how they were resolved
+
+The overwrite default is documented. The report's prior summary that neither overwrite nor source-mode propagation was documented was incorrect: E-01/E-02 already stated overwrite, and complete E-04/E-05 now state it for fs.copyFileSync. The copy sections do not specify source permission propagation; the reported Linux mode propagation is a measurement, not a cross-platform promise.
+
+The original E-01 capture ended with GitHub's "View remainder" notice before the synchronous-copy section. Its unchanged capture and ledger omission metadata described sibling sections but did not describe that missing remainder. Full raw-file E-04/E-05 now supply the missing scope; reviewed prose discloses the original truncation rather than altering historical evidence.
+
+The previous brief was stale after the corpus corrections. Redrafting retained the original brief and the interim reviewed brief at research/BRIEF.md.bak-2026-10-08 and research/BRIEF.md.bak-2026-10-08-2. The current stamp matches the corrected five-unknown, seven-row corpus; the post-review preflight no longer reports brief-stale. Verify freshness after subsequent input changes.
+
+Version scope is explicit: the original probe runtime was v22.22.3, while E-01..E-03 were v22.22.0 documents. E-04 matches the probe runtime; E-05..E-07 match the v24.20.0 correction host. Node 26 documentation was not collected. The bounded source statements agree at these inspected tags, but no universal-version claim follows.
+
+Windows write-permission changes are documented by E-04/E-05. That supports restoring write access before overwriting installer-owned output, and then restoring it on the copied output; it does not certify that a particular implementation fixes the observed Windows case. Runtime regressions remain necessary.
+
+The certificate recommendation was missing limits present in E-03: setuid-root execution and Linux file capabilities ignore the variable. E-06 additionally documents explicit TLS/HTTPS ca options bypassing default and extra certificates. The launch-time trusted-PEM mechanism is retained with those conditions; a certificate error alone does not identify its cause.
+
+E-07 supports a private IPC channel between the fixed Node research child and its parent, but a documented subprocess.send callback only says the message was sent, before it may have been received. The parent must receive and validate the actual child accounting report. Exit may precede closed stdio; close follows process end and closed stdio, while disconnect waits until no messages are being received. A missing report, spawn error, send error, termination or disconnect must be handled explicitly. The page enables child process.send without independently specifying every detail of its callback; no child-side delivery guarantee is inferred from the parent-side callback sentence.
+
+Independent corroboration was not obtained: all seven pages belong to Node's repository, including its vendored libuv documentation. The gate's host/document heuristic reports some corroboration passes across github.com and githubusercontent.com; that is a structural observation, not independent source ownership. Its one-voice warning for U-04 and single-source warning for U-05 remain applicable.
+
+## Known unknowns
+
+No blocking external fact is declared KNOWN-UNKNOWN. Runtime-specific repair results, missing-accounting policy correctness and other Node-version documentation are not inferred from these sources; product tests and any later broader documentation claim require their own verification.
+
+## Decision
+
+The corpus and original POSIX fix are already committed (9939ce0 and 4619922). The owner's later instruction authorizes the PR266 corrections and bounded collection; the earlier report-only instruction is historical context, not the current publication state. This correction extends the original question narrowly to Windows write permission and private child accounting; the existing project topic remains unchanged.
+
+First installer step: reproduce the installer-owned read-only replacement on an actual Windows fixture, then restore the documented write bit before fs.copyFileSync opens an owned destination and on the copied output. Preserve the source's remaining POSIX bits and existing executable-hook handling; verify first deploy, repeat deploy and previously read-only output. Documentation supports the permission API, while the fixture and required checkout suite establish the implementation outcome.
+
+First accounting step: reproduce the accepted-query spoofing and truncated-log cases with a fake fixed research child, then move authoritative spent/exhaustion accounting onto its private Node IPC channel. Read and validate the received message in the parent and establish lifecycle handling for missing, malformed, failed or terminated reports. Human-readable child logs remain observational output; a log summary, exit zero or send callback is insufficient accounting evidence. The integration lead records the internal bug-fix design and any alternatives separately. This research authorizes no new public flag, configuration key or public result format.
+
+Respect the integration's reported failing-suite stop until its failure is explained or fixed. For reporting, cite E-04/E-05 for the synchronous-copy contract and Windows permission limits; keep the original Linux observation and Windows CI failures distinct. Cite E-03/E-06 for a trusted-PEM certificate recommendation and its limits, and E-07 for the private-channel API and delivery boundaries. This research handoff introduces no ownership redesign, role/config mutation, paid fallback or TLS-verification bypass.
+
+Doctor verified collector eligibility and the intact corpus with RESEARCH_KIT_HOME selecting this checkout, and reported that the registered edit hook was outside that selected kit. This is a comparison with the checkout reference, not proof that the operator's deployed configuration is broken. No READY claim or machine-wide settings/hook repair is made here. Nested PASS and reviewed state validate this corpus under the isolated default pluralist policy; they do not establish deployed configuration health or certify product code.
+
+## Next steps
+
+1. From this nested project, run `node ../../../research-kit/bin/preflight.mjs`, `node ../../../research-kit/bin/handoff.mjs`, and `node ../../../research-kit/bin/brief.mjs --state` with the intended machine policy. A root-corpus verdict is not a substitute.
+2. Review the Windows regressions and fake-child accounting cases separately before reporting the product repairs as verified. This brief provides facts and scope, not a successful product-test claim.
+3. Re-drafting an edited brief requires --force and retains a backup. Carry these judgments and current gate cautions forward after any corpus change.
+
+<!-- research-kit:brief-draft body=cb9ea1201f6d9241 inputs=3c8e6fcfc530d91c gate=pass -->
