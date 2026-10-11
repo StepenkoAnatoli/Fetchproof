@@ -81,6 +81,22 @@ test('under an explicit refusal a NAME asked for is judged before any fetch; a l
   });
 });
 
+test('under an explicit refusal the fetch child skips the early judgment only for a literal address, in every internal range', async () => {
+  // ADR-0155: the literal-address rule is not loopback-specific. The classification is judged
+  // in process for every range, and the child's skip is pinned at its source, so the suite
+  // sends nothing into a private range, the metadata endpoint or a ULA network.
+  for (const host of ['10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '[fd00::1]', '[fe80::1]']) {
+    assert.match(await httpKeyless.internalTarget(host) ?? '', /is an internal address$/, `${host} was not classified as a literal internal address`);
+  }
+  for (const host of ['localhost', 'app.localhost']) {
+    assert.match(await httpKeyless.internalTarget(host) ?? '', /is this machine$/, `${host} was not classified as this machine`);
+  }
+  const child = fs.readFileSync(path.join(KIT_ROOT, 'lib', 'http-transport.mjs'), 'utf8');
+  assert.match(child, /if \(job\.allowInternalRedirects === false\) \{[\s\S]{0,400}net\.isIP\(.*?\) \? null : await internalTarget\(asked\.hostname\)/,
+    'the child must judge a name before fetching under an explicit refusal, and leave a literal address to the caller');
+  assert.match(child, /dns\.lookup = guardedLookup\(/, 'the connection-time judgment must remain beside the early one');
+});
+
 test('an internal address the operator asked for is still fetched, redirects within it too', async () => {
   await withServer((base) => {
     const r = httpKeyless.scrape(`${base}/hop`, { env });
