@@ -23,6 +23,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   machine's network (ADR-0155). A literal address the caller spelled out, and the default
   policy for a URL the operator typed, are unchanged (ADR-0110).
 
+- Three decisions recorded, no code changed: direct internal access keeps ADR-0110's
+  default, with ADR-0155's trigger for reopening it (ADR-0156); the PR #266 queue's
+  conditional feature and ranking work stays held until the ADR-0145 comparison reports
+  (ADR-0157); the small-core extraction the 2026-10-10 audit sketched stays a proposal
+  until those results and a measured dependency review exist (ADR-0158). The suite covers
+  ADR-0155's literal-address rule across every internal range without sending a packet
+  into one (inventory 1786).
+
 - QUICKSTART names the applicable trusted-PEM `NODE_EXTRA_CA_CERTS` remedy before
   starting Node on a network with TLS inspection, with missing/malformed-file warnings,
   setuid/Linux-capability and explicit TLS/HTTPS `ca` limits (break-test evidence
