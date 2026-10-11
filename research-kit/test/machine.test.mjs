@@ -147,6 +147,17 @@ test('saveConfig drops the retired key, so the migration happens through normal 
   assert.equal(written.role, 'builder');
 });
 
+// Found 2026-10-11: the browser transport and its error messages tell the operator to set
+// browserPath (ADR-0088), but the config was read without it and rewritten without it, so
+// `install-hooks --role builder` erased a browserPath the operator had set by hand.
+test('browserPath is read from the machine config and survives a save', () => {
+  const { env, file } = envWith(JSON.stringify({ browserPath: '/opt/google/chrome/chrome' }));
+  assert.equal(loadConfig(env).browserPath, '/opt/google/chrome/chrome');
+  saveConfig({ role: 'builder' }, env);
+  assert.equal(JSON.parse(readText(file)).browserPath, '/opt/google/chrome/chrome', 'a save kept the key');
+  assert.equal(loadConfig(envWith(JSON.stringify({ browserPath: 42 })).env).browserPath, '', 'a path that is not a string is not one');
+});
+
 test('a retired ENVIRONMENT variable is reported and never honoured', () => {
   const { env } = envWith(null, { extra: { CLAUDE_SETTINGS_PATH: '/somewhere/settings.json' } });
   const notes = retiredEnvNotes(env);

@@ -5,12 +5,38 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `decompose --max-scrapes` and `--limit` given no value are refused (`--<name> needs a
+  value`) instead of becoming 1: the flag parser reads a bare flag as `true`, and the
+  CLI's own `Number()` check let it through, so `--dry-run --max-scrapes` reported "scrape
+  up to 1" and a real run paid for a page nobody asked for (#269). Both flags now go
+  through `checkFlagValues` with the other value flags; a non-number such as `--limit abc`
+  is still refused, now as "must be a whole number of at least 0".
+
+- The `browserPath` machine-config key is read. The browser transport's errors and ADR-0088
+  name it, but the config was loaded and saved without it: a fetch through the collector
+  never consulted it, and any save, `install-hooks --role` among them, erased a value set
+  by hand. `scrape` and `status` called without a config now read the machine's.
+
+- `researcher-release validate --genesis` and `--checkpoints` are verified. Both were
+  advertised and parsed, but `validateRelease` had no parameters for them, so they were
+  dropped before the ledger check and an operator who supplied a signed genesis believed it
+  was checked. Each must now exist below the record root, as `--ledger` and `--head` must,
+  and either one without `--ledger` is refused as INCOMPLETE instead of ignored.
+
 - Under an explicit refusal of this machine's network (`allowInternalRedirects: false`,
   or `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
   resolves to - at the browser guard even when it is the page's own host, and before any
   fetch or browser launch - so a resolver cannot turn the page asked for into this
   machine's network (ADR-0155). A literal address the caller spelled out, and the default
   policy for a URL the operator typed, are unchanged (ADR-0110).
+
+- Three decisions recorded, no code changed: direct internal access keeps ADR-0110's
+  default, with ADR-0155's trigger for reopening it (ADR-0156); the PR #266 queue's
+  conditional feature and ranking work stays held until the ADR-0145 comparison reports
+  (ADR-0157); the small-core extraction the 2026-10-10 audit sketched stays a proposal
+  until those results and a measured dependency review exist (ADR-0158). The suite covers
+  ADR-0155's literal-address rule across every internal range without sending a packet
+  into one (inventory 1786).
 
 - QUICKSTART names the applicable trusted-PEM `NODE_EXTRA_CA_CERTS` remedy before
   starting Node on a network with TLS inspection, with missing/malformed-file warnings,

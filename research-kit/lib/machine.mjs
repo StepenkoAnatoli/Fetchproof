@@ -83,6 +83,7 @@ export const DEFAULTS = Object.freeze({
   skillRoots: Object.freeze([]),
   projectSkillDir: '',
   maxAgeDays: 180,
+  browserPath: '',
 });
 
 export const ROLES = Object.freeze(['collector', 'builder']);
@@ -168,6 +169,10 @@ function shape(raw) {
     skillRoots: Array.isArray(raw.skillRoots) ? raw.skillRoots.filter((root) => typeof root === 'string' && root.trim() !== '') : [],
     projectSkillDir: typeof raw.projectSkillDir === 'string' ? raw.projectSkillDir : '',
     maxAgeDays: Number.isFinite(raw.maxAgeDays) ? raw.maxAgeDays : DEFAULTS.maxAgeDays,
+    // The browser transport's executable (ADR-0088), which its own errors tell the operator
+    // to set. It was missing here until 2026-10-11, so it was never read, and every save -
+    // `install-hooks --role` among them - rewrote the file without it.
+    browserPath: typeof raw.browserPath === 'string' ? raw.browserPath : DEFAULTS.browserPath,
   };
   // A retired key is READ before it is dropped: a rename that silently relaxes a gate is
   // the same defect as a rename that silently stops firing one.
