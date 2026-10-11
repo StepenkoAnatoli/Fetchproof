@@ -144,6 +144,9 @@ checkFlagValues(flags, {
   runner: { choices: ['ubuntu-latest', 'windows-latest'] },
   'search-transport': { choices: ['auto', 'serpapi', 'firecrawl-cli'] },
   timeout: { int: true, min: 1 },
+  out: {},
+  workflow: {},
+  ref: {},
 }, { exit: EXIT.CANNOT_START });
 
 // The caller's own typo is refused before anything else is asked of them - a missing

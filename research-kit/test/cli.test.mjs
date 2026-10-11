@@ -788,6 +788,16 @@ test('collect-remote refuses an --out it cannot write, before it asks for a toke
   assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the folder refusal must come first');
 });
 
+test('collect-remote refuses --out, --workflow or --ref without a value before asking for a token', () => {
+  const root = project();
+  for (const flag of ['--out', '--workflow', '--ref']) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', flag], { root });
+    assert.equal(r.status, 3, `${flag}: ${r.all}`);
+    assert.match(r.err, new RegExp(`${flag} needs a value`));
+  }
+  assert.equal(fs.existsSync(path.join(root, 'true')), false, 'folder named true must not be created');
+});
+
 // Found 2026-09-29 (Arena break test): `--max-pages 8o` was sent as it was, and the paid run it
 // dispatched failed on the runner's own check - the flag that bounds spend was the unchecked one.
 test('collect-remote refuses a bad --max-pages, --depth, --runner or --timeout before it asks for a token', () => {
