@@ -392,8 +392,11 @@ what has gone stale).
   `research-kit/README.md` and a missing `docs/ARCHITECTURE.md` beside a `lib/`, `bin/`,
   `hooks/` or `githooks/` change. CI runs the same suite on ubuntu, ubuntu-26.04 and windows,
   on Node 24 and 26, plus an archive-tree check: seven jobs, all required.
-- **Baseline.** `main` is green on all seven jobs and the suite has no known flaky test; an
-  UNSUP (an unsupported capability, ADR-0108) is not red.
+- **Baseline.** `main` is green on all seven jobs. One intermittent failure is on record: on
+  2026-10-11 the `node (24)` job's LIVE `browser-guard` meta-refresh test failed once on a
+  documents-only commit (Chromium never made a request in 45 s, with D-Bus errors) and passed
+  on re-run and in every sibling job; nothing else is known to flake. An UNSUP (an
+  unsupported capability, ADR-0108) is not red.
 - **Sources of truth.** `docs/ARCHITECTURE.md` (one row per module), `docs/adr/` (every
   decision with a rejected alternative), `CONTEXT.md` (the domain terms), `CHANGELOG.md`
   (Unreleased first), `docs/review-*.md` (audit findings and their outcomes).
