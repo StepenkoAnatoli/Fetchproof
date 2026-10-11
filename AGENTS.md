@@ -111,7 +111,7 @@ its job - the answer is not to write over it, and not to search past it, but to 
 
 ## Researching a decision ABOUT this repository: a nested project, never a scratch dir
 
-This repository's contract (`research/DISCOVERY.md`) enumerates U-1..U-8, all about
+This repository's contract (research/DISCOVERY.md) enumerates its unknowns (U-1 onward), all about
 transports and vendors. A decision about the repository itself - how it should be
 delivered, packaged, hosted - is a **different question**, and putting it in that contract
 would leave one corpus asserting two unrelated sets of claims with `unknown-closure` and
@@ -225,10 +225,7 @@ The sequence is decompose -> contract -> collect -> gate -> brief.
    `completeness: full | partial` (partial names what was omitted), and a CLOSED
    unknown resting solely on a partial capture is flagged. Severity for both
    follows the machine's `evidencePolicy` (pluralist warns, strict fails). This
-   repo's five entries are honest about it: transport `agent page fetch`, no
-   Firecrawl egress - collected on the collector machine, which is the only
-   machine allowed to write them (ADR-0010) - and the two closure captures are
-   graded partial.
+   repository's own ledger is honest about it: its first five entries were agent page fetch with no Firecrawl egress, collected in a sandbox on the collector machine, and the later entries are firecrawl-cli with completeness graded. A capture graded partial is flagged when a CLOSED unknown rests on it alone.
 
 6. Hand off. On PASS, write `research/BRIEF.md` - intent, verified claims with sources,
    contradictions and how they were resolved, known unknowns with their day-one
