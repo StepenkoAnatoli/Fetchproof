@@ -777,15 +777,44 @@ test('collect-remote refuses a --url that is not http(s), before it asks for a t
   assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the URL refusal must come first');
 });
 
-test('collect-remote refuses an --out it cannot write, before it asks for a token or dispatches', () => {
+test('collect-remote refuses an --out it cannot write, before it dispatches', () => {
   // Found only after the download, this cost a paid run and up to half an hour of waiting.
+  // The token is present, so the only thing standing between this run and a dispatch is the
+  // folder check; since #295 the (free, side-effect-free) token check comes first.
   const root = project();
   fs.writeFileSync(path.join(root, 'a-file'), 'x');
-  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', path.join(root, 'a-file', 'sub')], { root });
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', path.join(root, 'a-file', 'sub')],
+    { root, env: { RESEARCH_KIT_GITHUB_TOKEN: 'test-token-never-sent' } });
   assert.equal(r.status, 3, r.all);
   assert.match(r.all, /OUT_DIR/);
   assert.match(r.all, /writable folder/);
-  assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the folder refusal must come first');
+  assert.doesNotMatch(r.all, /^run \d+/m, 'nothing may be dispatched after an OUT_DIR refusal');
+});
+
+// Found 2026-10-11 (#295): usableOutDir CREATES --out, and it ran before the token was asked
+// for, so a run refused for want of a token left an empty folder behind - a side effect of a
+// command that did nothing.
+test('collect-remote without a token does not create --out', () => {
+  const root = project();
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', 'leftover'], { root });
+  assert.equal(r.status, 3, r.all);
+  assert.match(r.err.split('\n')[0] ?? '', /token/i, `the token refusal was not first:\n${r.all}`);
+  assert.ok(!fs.existsSync(path.join(root, 'leftover')), 'a refused run created the --out folder');
+});
+
+test('collect-remote removes an --out it created when the dispatch itself is refused', () => {
+  // A dead loopback proxy makes the dispatch fail fast and locally - no request leaves the machine.
+  const root = project();
+  fs.mkdirSync(path.join(root, 'kept'));
+  for (const [out, shouldExist] of [['leftover', false], ['kept', true]]) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', out], {
+      root,
+      env: { RESEARCH_KIT_GITHUB_TOKEN: 'test-token-never-sent', HTTPS_PROXY: 'http://127.0.0.1:9', https_proxy: 'http://127.0.0.1:9' },
+    });
+    assert.equal(r.status, 3, `${out}: ${r.all}`);
+    assert.equal(fs.existsSync(path.join(root, out)), shouldExist,
+      shouldExist ? `${out}: a folder that was already there was removed` : `${out}: the folder created for a run that never started was left behind`);
+  }
 });
 
 // Found 2026-09-29 (Arena break test): `--max-pages 8o` was sent as it was, and the paid run it
