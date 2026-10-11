@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `researcher-release validate --genesis` and `--checkpoints` are verified. Both were
+  advertised and parsed, but `validateRelease` had no parameters for them, so they were
+  dropped before the ledger check and an operator who supplied a signed genesis believed it
+  was checked. Each must now exist below the record root, as `--ledger` and `--head` must,
+  and either one without `--ledger` is refused as INCOMPLETE instead of ignored.
+
 - Under an explicit refusal of this machine's network (`allowInternalRedirects: false`,
   or `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
   resolves to - at the browser guard even when it is the page's own host, and before any
