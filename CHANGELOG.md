@@ -5,6 +5,13 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `decompose --max-scrapes` and `--limit` given no value are refused (`--<name> needs a
+  value`) instead of becoming 1: the flag parser reads a bare flag as `true`, and the
+  CLI's own `Number()` check let it through, so `--dry-run --max-scrapes` reported "scrape
+  up to 1" and a real run paid for a page nobody asked for (#269). Both flags now go
+  through `checkFlagValues` with the other value flags; a non-number such as `--limit abc`
+  is still refused, now as "must be a whole number of at least 0".
+
 - The `browserPath` machine-config key is read. The browser transport's errors and ADR-0088
   name it, but the config was loaded and saved without it: a fetch through the collector
   never consulted it, and any save, `install-hooks --role` among them, erased a value set
