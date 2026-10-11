@@ -13,6 +13,16 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   The hard floor every command refuses below stays at 22. Measured 2026-10-11: 22.12.0
   right, 22.13.0 to 22.22.0 wrong, 22.22.1 onward right.
 
+- `artifact create` and `artifact validate` refuse a value flag given no value (`--<name>
+  needs a value`, exit 3) before anything is read or written (#280). The flag parser reads
+  a bare flag as `true`, and `create` only asked whether a required flag was present: a
+  bare `--ref` went into the manifest as the string "true", a bare `--run-id` as 1, a bare
+  `--output` wrote a package literally named `true`, and the package re-validated PASS. A
+  bare `--file` on `validate` tried to open a file called `true`. Every value flag of both
+  commands now goes through `checkFlagValues`; `--run-id` and `--run-attempt` are also
+  refused by name when not a whole number of at least 1, where `writeArtifact` had refused
+  them later with its own wording.
+
 - `collect-remote --out`, `--workflow` and `--ref` given no value are refused (`--<name>
   needs a value`, exit 3) before anything is created or dispatched (#270). The flag parser
   reads a bare flag as `true`, and these three were not among the checked values: a bare
