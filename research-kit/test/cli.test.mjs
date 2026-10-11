@@ -965,7 +965,20 @@ test('every CLI refuses a flag it does not know, before it does anything', () =>
     ['evidence-context.mjs', ['--all']],
     ['audit.mjs', []], ['brief.mjs', []], ['doctor.mjs', []], ['gate.mjs', []], ['handoff.mjs', []],
     ['preflight.mjs', []], ['prior.mjs', []], ['research.mjs', ['--dry-run']], ['bundle.mjs', []],
+    // Added 2026-10-11 (#271). measure and export-warc refuse before they look for a project.
+    // artifact with no subcommand names the unknown flag and exits 2; with a subcommand the
+    // refusal is exit 3 (BLOCKED) and artifact-cli.test.mjs covers it. panel refuses before
+    // it listens on anything.
+    ['measure.mjs', []], ['export-warc.mjs', []], ['artifact.mjs', []], ['panel.mjs', []],
   ];
+  // Found 2026-10-11 (#271): four CLIs called refuseUnknownFlags and had no row here, so a new
+  // CLI could be forgotten again. Every file under bin/ that refuses unknown flags by that name
+  // must have a row; a CLI with its own refusal (collect-remote, disclosure, mcp-server,
+  // path-authority) is covered by its own tests.
+  const refusing = fs.readdirSync(path.join(KIT_ROOT, 'bin'))
+    .filter((name) => name.endsWith('.mjs') && /refuseUnknownFlags\(/.test(fs.readFileSync(path.join(KIT_ROOT, 'bin', name), 'utf8')));
+  const missing = refusing.filter((name) => !cases.some(([bin]) => bin === name));
+  assert.deepEqual(missing, [], `these CLIs refuse unknown flags but have no row in this table: ${missing.join(', ')}`);
   for (const [bin, args] of cases) {
     const root = planned('flags');
     const r = run(bin, [...args, '--no-such-flag'], { root, env: { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') } });

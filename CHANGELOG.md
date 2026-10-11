@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The suite's "every CLI refuses a flag it does not know" table now covers `measure`,
+  `export-warc`, `artifact` and `panel`, and fails by name when a file under `bin/` calls
+  `refuseUnknownFlags` without a row (#271). Tests only; no CLI changed.
+
 - `doctor` reports Node 22.13.0 through 22.22.0 as a failing Node line (#282, ADR-0159):
   those builds' `TextDecoder` reads `windows-1252` as Latin-1 (nodejs/node#60888), so a
   page's euro signs, curly quotes and dashes were captured as control characters with no
