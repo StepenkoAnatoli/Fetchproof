@@ -159,20 +159,35 @@ if (queriesValue.error) {
   process.exit(EXIT.CANNOT_START);
 }
 
+// The token is asked for before --out is touched (#295): usableOutDir CREATES the folder,
+// so a run refused for want of a token used to leave an empty --out behind. The token check
+// costs nothing and writes nothing; the folder check below still precedes the dispatch.
+const { token, from, detail } = tokenFromEnv();
+if (!token) die(EXIT.CANNOT_START, { error: detail, remedy: 'create a fine-grained token with Actions: read and write on this repository only' });
+
+// Before the first request: this process fetches, and Node's fetch ignores a proxy unless told.
+// Also before --out is created: on Node 22 this can start the command again as a child, and a
+// folder made by this process would look, to the child, like one that was already there.
+await honourEnvProxy();
+
 // So is an --out this process cannot write: found after the wait, it cost a paid run.
 // `--no-wait` downloads nothing, so it has no folder to check.
 const outDir = path.resolve(String(flags.out ?? '.'));
+// Whether the folder was here before this run: if usableOutDir creates it and the dispatch
+// is then refused, the empty folder is removed again, so a run that never started leaves
+// the working tree as it found it (#295).
+const outDirCreated = !flags['no-wait'] && !fs.existsSync(outDir);
 if (!flags['no-wait']) {
   try { usableOutDir(outDir); } catch (e) {
     die(EXIT.CANNOT_START, { error: `${e.code}: ${e.message}`, code: e.code, remedy: e.remedy });
   }
 }
 
-const { token, from, detail } = tokenFromEnv();
-if (!token) die(EXIT.CANNOT_START, { error: detail, remedy: 'create a fine-grained token with Actions: read and write on this repository only' });
-
-// Before the first request: this process fetches, and Node's fetch ignores a proxy unless told.
-await honourEnvProxy();
+/** Undo usableOutDir for a run that never started. rmdir refuses a non-empty folder, by design. */
+function removeUnusedOutDir() {
+  if (!outDirCreated) return;
+  try { fs.rmdirSync(outDir); } catch { /* not empty, or already gone: leave it */ }
+}
 
 const repository = String(flags.repository);
 const workflow = String(flags.workflow ?? 'collect.yml');
@@ -208,6 +223,7 @@ if (pickUp) {
     started = await dispatchCollection({ repository, workflow, ref, inputs, token });
   } catch (err) {
     const e = err instanceof DispatchError ? err : new DispatchError('UNKNOWN', err.message);
+    removeUnusedOutDir();
     die(EXIT.CANNOT_START, { error: `${e.code}: ${e.message}`, code: e.code, remedy: e.remedy });
   }
 }
