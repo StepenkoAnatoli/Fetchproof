@@ -84,4 +84,7 @@ test('property-replay CLI documents its read-only replay modes', () => {
   assertEqual(run.status, 0, run.stderr || run.stdout);
   assert(run.stdout.includes('--case <property-regression.json>'), run.stdout);
   assert(run.stdout.includes('--all [--directory <property-regressions>]'), run.stdout);
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  assert(readme.includes('--case <property-regression.json> [--json]'), 'README documents --case');
+  assert(readme.includes('--all [--directory <property-regressions>] [--json]'), 'README documents --all');
 });
