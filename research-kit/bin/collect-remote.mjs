@@ -138,12 +138,17 @@ if (missing.length) {
 // Every value the workflow checks is checked here first, against the same ranges and choices
 // (collect.yml): `--max-pages 8o` was dispatched as it was and the paid run failed on the
 // runner (found 2026-09-29, Arena break test) - on the one flag that bounds spend.
+// --out, --workflow and --ref take any string, but not NO string (found 2026-10-11, #270):
+// parseFlags reads a bare flag as `true`, so a bare --out became the folder "true" - created
+// below before the token was asked for - and a bare --workflow or --ref would have dispatched
+// against the literal file or branch "true".
 checkFlagValues(flags, {
   'max-pages': { int: true, min: 1, max: 25 },
   depth: { choices: ['probe', 'quick', 'normal'] },
   runner: { choices: ['ubuntu-latest', 'windows-latest'] },
   'search-transport': { choices: ['auto', 'serpapi', 'firecrawl-cli'] },
   timeout: { int: true, min: 1 },
+  out: {}, workflow: {}, ref: {},
 }, { exit: EXIT.CANNOT_START });
 
 // The caller's own typo is refused before anything else is asked of them - a missing

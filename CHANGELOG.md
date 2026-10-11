@@ -5,6 +5,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `collect-remote --out`, `--workflow` and `--ref` given no value are refused (`--<name>
+  needs a value`, exit 3) before anything is created or dispatched (#270). The flag parser
+  reads a bare flag as `true`, and these three were not among the checked values: a bare
+  `--out` became the folder `true`, created in the working directory before the token was
+  even asked for, and with a token a bare `--workflow` or `--ref` would have dispatched a
+  run against the literal file or branch "true". They now go through `checkFlagValues`
+  with the five values the workflow checks.
+
 - `decompose --max-scrapes` and `--limit` given no value are refused (`--<name> needs a
   value`) instead of becoming 1: the flag parser reads a bare flag as `true`, and the
   CLI's own `Number()` check let it through, so `--dry-run --max-scrapes` reported "scrape

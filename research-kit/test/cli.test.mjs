@@ -804,6 +804,20 @@ test('collect-remote refuses a bad --max-pages, --depth, --runner or --timeout b
   }
 });
 
+// Found 2026-10-11 (#270): parseFlags reads a bare flag as `true`, and --out, --workflow and
+// --ref were not among the checked values. A bare --out became `path.resolve("true")`, and
+// usableOutDir CREATED that folder before the token was even asked for; with a token, a bare
+// --workflow or --ref would have dispatched a run against the literal file "true".
+test('collect-remote refuses a bare --out, --workflow or --ref before it creates or dispatches anything', () => {
+  for (const flag of ['--out', '--workflow', '--ref']) {
+    const root = project();
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', flag], { root });
+    assert.equal(r.status, 3, `${flag}: ${r.all}`);
+    assert.match(r.err.split('\n')[0] ?? '', new RegExp(`^${flag} needs a value`), `${flag} was not refused by name first:\n${r.all}`);
+    assert.ok(!fs.existsSync(path.join(root, 'true')), `${flag}: a folder named "true" was created in the project`);
+  }
+});
+
 // Found 2026-10-01: lib/dispatch.mjs told the caller to "retry with --run-id <n>", exit 4 said
 // "the run id is on stdout", and collect-remote had no --run-id - it refused it as an unknown
 // option. A watch that ended (a timeout, a dropped connection, a closed laptop) could not be
