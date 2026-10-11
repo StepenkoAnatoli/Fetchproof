@@ -647,6 +647,24 @@ test('a name asked for is judged by what it resolves to, exempt or not; under an
   } finally { pages.close(); }
 });
 
+test('a literal address asked for is the caller\'s in every internal range, and refused in every range when it is not asked for', async () => {
+  // ADR-0155's literal-address rule, beyond loopback: judged in process, so no packet is sent
+  // into a private range, the metadata endpoint or a ULA network by the suite itself.
+  const literals = ['10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '[fd00::1]', '[fe80::1]', '[::ffff:a01:203]'];
+  for (const host of literals) {
+    const bare = host.replace(/^\[|\]$/g, '');
+    assert.deepEqual(await judge(host, 80, { allowInternal: false, exempt: new Set([`${bare}:80`]) }), { address: bare }, `${host}: the literal address asked for was refused`);
+    assert.deepEqual(await judge(host, 80, { allowInternal: false, exempt: new Set([`${bare}:81`]) }), { refused: `${bare} is an internal address` }, `${host}: another port on the host asked for was exempt`);
+    assert.deepEqual(await judge(host, 80, { allowInternal: false, exempt: new Set() }), { refused: `${bare} is an internal address` }, `${host}: an internal literal not asked for was admitted`);
+    assert.deepEqual(await judge(host, 80, { allowInternal: true, exempt: new Set() }), { address: bare }, `${host}: the operator's own network was refused`);
+  }
+  // And a public literal is never judged internal, exempt or not.
+  for (const host of ['93.184.216.34', '[2606:4700:4700::1111]']) {
+    const bare = host.replace(/^\[|\]$/g, '');
+    assert.deepEqual(await judge(host, 443, { allowInternal: false, exempt: new Set() }), { address: bare }, `${host} was taken for internal`);
+  }
+});
+
 test('the browser\'s own service hosts are known by name, and a page\'s hosts are not among them', () => {
   for (const host of ['clients2.google.com', 'clients.google.com', 'android.clients.google.com', 'mtalk.google.com', 'alt3-mtalk.google.com',
     'accounts.google.com', 'www.google.com', 'update.googleapis.com', 'safebrowsing.googleapis.com', 'redirector.gvt1.com', 'dl.google.com', 'WWW.GOOGLE.COM.']) {
