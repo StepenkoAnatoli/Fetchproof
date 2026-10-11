@@ -336,6 +336,117 @@ test('nested promotion pointers require a committed promotion and verify pointer
   }
 });
 
+// A one-artifact R28 release with a promotion pointer, so validateRelease reaches its
+// ledger branch. Its own findings (an uncommitted promotion, no snapshot) are not what the
+// tests below look at.
+async function writePointerRelease(root) {
+  const { payloadHash, sha256, canonicalJson, recordHash } = await import('../lib/release-validator.mjs');
+  const target = envelope({ artifactId: 'R28-04', payload: { manifest: true }, ownerRole: 'evidence-custodian' });
+  target.payloadSha256 = payloadHash(target.payload);
+  const pointerMeta = envelope({ artifactId: 'R28-04', payload: undefined, ownerRole: 'evidence-custodian' });
+  delete pointerMeta.payload;
+  const pointer = {
+    envelope: pointerMeta,
+    payload: {
+      pointerVersion: '1.0.0',
+      promotion: {
+        state: 'ready', package: 'R28', generation: 1, targetArtifactId: 'R28-04',
+        targetHash: target.payloadSha256,
+        predecessorClosureHash: sha256(canonicalJson([])), requiredGate: 'Q0',
+        publishedAt: '2026-01-01T00:00:00Z', previousPointerHash: null, revokedDescendantHashes: [],
+      },
+    },
+  };
+  pointer.envelope.payloadSha256 = payloadHash(pointer.payload);
+  pointer.envelope.recordHash = recordHash(pointer);
+  writeJson(path.join(root, 'records', 'R28-04.json'), target);
+  writeJson(path.join(root, 'pointers', 'R28-04.json'), pointer);
+  const registry = registryFor('R28-04');
+  registry.artifacts[0].ownerRoles = ['evidence-custodian'];
+  registry.artifacts[0].pointer = true;
+  const roles = roster();
+  roles.assignments[0].roleId = 'evidence-custodian';
+  writeJson(path.join(root, 'registry.json'), registry);
+  writeJson(path.join(root, 'roles.json'), roles);
+  // A single .qlog FILE, not a ledger directory: a directory would supply its own
+  // genesis.json and checkpoints/, and hide whether the explicit paths were read at all.
+  fs.mkdirSync(path.join(root, 'ledger'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'ledger', 'ledger.qlog'), '', 'utf8');
+  return {
+    root, package: 'R28',
+    registryPath: path.join(root, 'registry.json'),
+    rolesPath: path.join(root, 'roles.json'),
+    pointersDir: path.join(root, 'pointers'),
+    ledgerPath: path.join(root, 'ledger', 'ledger.qlog'),
+  };
+}
+
+// Found 2026-10-11: `researcher-release validate` advertised --genesis and --checkpoints and
+// parsed them, but validateRelease had no such parameters, so both were dropped before the
+// ledger was verified. An operator who supplied a signed genesis believed it was checked.
+test('validate verifies the genesis and checkpoints it is given, from the library and the CLI', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const genesisPath = path.join(root, 'anchors', 'genesis.json');
+    const checkpointsDir = path.join(root, 'anchors', 'checkpoints');
+    // Unsigned anchors: well-formed JSON, so they are read and then fail verification.
+    writeJson(genesisPath, { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+    writeJson(path.join(checkpointsDir, 'checkpoint-1.json'), { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+    const result = validateRelease({ ...inputs, genesisPath, checkpointsDir });
+    assert(result.errors.some((error) => error.code === 'LEDGER-GENESIS-SIGNATURE'), `the genesis was not verified: ${JSON.stringify(result.errors)}`);
+    assert(result.errors.some((error) => error.code === 'LEDGER-CHECKPOINT-SIGNATURE' && error.path.startsWith('.checkpoints[0]')), `the checkpoint was not verified: ${JSON.stringify(result.errors)}`);
+    assert(result.status !== 'PASS', JSON.stringify(result));
+
+    const run = spawnSync(process.execPath, [
+      'research-kit/bin/researcher-release.mjs', 'validate',
+      '--root', root, '--package', 'R28', '--registry', inputs.registryPath,
+      '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir,
+      '--ledger', inputs.ledgerPath, '--genesis', genesisPath, '--checkpoints', checkpointsDir, '--json',
+    ], { encoding: 'utf8' });
+    assert(run.status !== 0, `an unsigned genesis passed: ${run.stdout}`);
+    const codes = JSON.parse(run.stdout).errors.map((error) => error.code);
+    assert(codes.includes('LEDGER-GENESIS-SIGNATURE'), `the CLI dropped --genesis: ${codes.join(', ')}`);
+    assert(codes.includes('LEDGER-CHECKPOINT-SIGNATURE'), `the CLI dropped --checkpoints: ${codes.join(', ')}`);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('validate refuses a genesis or checkpoints path it would not read', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const refusal = (result, word) => result.errors.find((error) => error.code === 'LEDGER-PATH' && error.message.includes(word));
+
+    const missingGenesis = validateRelease({ ...inputs, genesisPath: path.join(root, 'no-such-genesis.json') });
+    assert(refusal(missingGenesis, 'genesis'), `a missing genesis was ignored: ${JSON.stringify(missingGenesis.errors)}`);
+
+    const missingCheckpoints = validateRelease({ ...inputs, checkpointsDir: path.join(root, 'no-such-checkpoints') });
+    assert(refusal(missingCheckpoints, 'checkpoints'), `a missing checkpoints directory was ignored: ${JSON.stringify(missingCheckpoints.errors)}`);
+
+    const outside = tempRoot();
+    try {
+      const outsideGenesis = path.join(outside, 'genesis.json');
+      writeJson(outsideGenesis, { ledgerVersion: '1.0.0' });
+      const escaped = validateRelease({ ...inputs, genesisPath: outsideGenesis });
+      assert(refusal(escaped, 'genesis'), `a genesis outside the record root was accepted: ${JSON.stringify(escaped.errors)}`);
+    } finally {
+      cleanup(outside);
+    }
+
+    // Without --ledger nothing verifies a ledger, so a genesis given anyway would be dropped.
+    writeJson(path.join(root, 'anchors', 'genesis.json'), { ledgerVersion: '1.0.0' });
+    const noLedger = validateRelease({ ...inputs, ledgerPath: null, genesisPath: path.join(root, 'anchors', 'genesis.json') });
+    assert(refusal(noLedger, '--ledger'), `a genesis without a ledger was ignored: ${JSON.stringify(noLedger.errors)}`);
+    assert(noLedger.status !== 'PASS', JSON.stringify(noLedger));
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('descendant invalidation attributes multiple roots to each affected pointer', async () => {
   const { computeDescendantInvalidation } = await import('../lib/release-validator.mjs');
   const rootA = 'a'.repeat(64);

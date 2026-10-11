@@ -606,6 +606,7 @@ The full table, including the release-evidence validators and the artifact forma
 | `evidencePolicy` | `pluralist`, `strict` | `pluralist` | whether a keyless or partial capture passes the gate with a warning or fails it |
 | `serpapiKey` | a key | none | SerpAPI search; the environment variable `SERPAPI_API_KEY` works too |
 | `searxngUrl` | a URL | none | a SearXNG instance for search |
+| `browserPath` | a path | the usual install paths | the Chromium or Chrome the `browser` transport runs; read before `RESEARCH_KIT_BROWSER` (ADR-0088) |
 | `failOpen` | `true`, `false` | `true` | what the gate does when it cannot run at all |
 | `editGate.mode` | `ask`, `hard-block`, `off` | `ask` | the Claude Code edit-time gate; `install-hooks.mjs --mode` sets it |
 | `editGate.settingsPath` | a path | `~/.claude/settings.json` | where the edit-time gate is registered |

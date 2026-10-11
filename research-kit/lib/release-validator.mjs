@@ -971,7 +971,7 @@ function loadSchema(schemaDir, name) {
   return loaded.error ? { value: null, error: loaded.error } : loaded;
 }
 
-export function validateRelease({ root, package: packageName, registryPath, rolesPath, pointersDir, schemaDir = DEFAULT_SCHEMA_DIR, ledgerPath = null, headPath = null, genesisHash = '0'.repeat(64), publicKeys = {}, now = Date.now(), snapshotMaxAgeMs = SNAPSHOT_MAX_AGE_MS } = {}) {
+export function validateRelease({ root, package: packageName, registryPath, rolesPath, pointersDir, schemaDir = DEFAULT_SCHEMA_DIR, ledgerPath = null, headPath = null, genesisPath = null, checkpointsDir = null, genesisHash = '0'.repeat(64), publicKeys = {}, now = Date.now(), snapshotMaxAgeMs = SNAPSHOT_MAX_AGE_MS } = {}) {
   const errors = [];
   const output = {
     validatorVersion: VALIDATOR_VERSION,
@@ -1012,6 +1012,11 @@ export function validateRelease({ root, package: packageName, registryPath, role
   if (pointersDir && fs.existsSync(pointersDir) && !inside(root, pointersDir)) add(errors, 'PATH-CONTAINMENT', 'pointer directory escapes record root', pointersDir);
   if (ledgerPath && (!fs.existsSync(ledgerPath) || !inside(root, ledgerPath))) add(errors, 'LEDGER-PATH', 'ledger path must exist below record root', ledgerPath, 'INCOMPLETE');
   if (headPath && (!fs.existsSync(headPath) || !inside(root, headPath))) add(errors, 'LEDGER-PATH', 'head path must exist below record root', headPath, 'INCOMPLETE');
+  if (genesisPath && (!fs.existsSync(genesisPath) || !inside(root, genesisPath))) add(errors, 'LEDGER-PATH', 'genesis path must exist below record root', genesisPath, 'INCOMPLETE');
+  if (checkpointsDir && (!fs.existsSync(checkpointsDir) || !inside(root, checkpointsDir))) add(errors, 'LEDGER-PATH', 'checkpoints path must exist below record root', checkpointsDir, 'INCOMPLETE');
+  // Only the ledger branch reads them: given without --ledger they would be dropped in silence,
+  // which is how both flags went unread before 2026-10-11.
+  if ((genesisPath || checkpointsDir) && !ledgerPath) add(errors, 'LEDGER-PATH', 'genesis and checkpoints are verified only with --ledger', genesisPath ?? checkpointsDir, 'INCOMPLETE');
   if (!artifacts.length) add(errors, 'INPUT-ARTIFACTS', `registry has no artifacts for ${packageName}`, '.artifacts', 'INCOMPLETE');
   if (!HASH.test(String(roster.rosterSha256 ?? ''))) add(errors, 'ROLE-ROSTER', 'role roster hash is invalid', '.rosterSha256');
   const records = new Map();
@@ -1070,6 +1075,8 @@ export function validateRelease({ root, package: packageName, registryPath, role
         pointer: pointer.value,
         publicKeys,
         genesisHash,
+        genesisPath,
+        checkpointsDir,
         expectedBenchmarkSpecSha256: registry.benchmarkSpecSha256,
         expectedRoleRosterSha256: registry.roleRosterSha256,
         genesisSchemaPath: path.join(schemaDir, 'qualification-ledger-genesis.schema.json'),
