@@ -494,7 +494,8 @@ node research-kit/bin/path-authority.mjs          conform | validate
 node research-kit/bin/ledger-conformance.mjs      --vectors <packet.json> --json
 node research-kit/bin/fi-sidecar-conformance.mjs  --vectors <packet.json> --json
 node research-kit/bin/property-vector-conformance.mjs --vectors <packet.json> --json
-node research-kit/bin/property-replay.mjs         --case <case-id>
+node research-kit/bin/property-replay.mjs         --case <property-regression.json> [--json]
+node research-kit/bin/property-replay.mjs         --all [--directory <property-regressions>] [--json]
 ```
 
 Status maps to exit code — `PASS` 0, `FAIL`/`REOPEN` 1, `INCOMPLETE` 2, `BLOCKED` 3 — and
