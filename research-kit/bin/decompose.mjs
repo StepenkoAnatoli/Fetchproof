@@ -12,7 +12,14 @@ import { UNIVERSAL_DIMENSIONS } from '../lib/dimensions.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-scrapes', 'recipe', 'recipes', 'transport', 'search-transport']);
-checkFlagValues(flags, { topic: 'value', recipe: 'value', transport: 'value', 'search-transport': 'value' });
+checkFlagValues(flags, {
+  topic: 'value',
+  recipe: 'value',
+  transport: 'value',
+  'search-transport': 'value',
+  limit: { int: true, min: 0 },
+  'max-scrapes': { int: true, min: 0 },
+});
 const root = process.cwd();
 
 // The topic is the project's (plan.json) unless --topic names it; a different one is refused.
@@ -52,16 +59,8 @@ if (flags.recipes) {
   process.exit(0);
 }
 
-// Numeric flags are validated BEFORE a transport is chosen or anything is spent: a
-// budget of NaN caps nothing, and finding that out after the first scrape is too late.
-const numbers = { limit: flags.limit ?? 8, 'max-scrapes': flags['max-scrapes'] ?? 0 };
-for (const [name, raw] of Object.entries(numbers)) {
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) {
-    process.stderr.write(`--${name} must be a whole number, not "${raw}"\n`);
-    process.exit(2);
-  }
-}
+// Numeric flags are validated by checkFlagValues above; resolve defaults here.
+const numbers = { limit: Number(flags.limit ?? 8), 'max-scrapes': Number(flags['max-scrapes'] ?? 0) };
 
 const spends = !flags['dry-run'];
 const policy = collectionPolicy();
