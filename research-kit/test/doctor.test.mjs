@@ -1022,6 +1022,19 @@ test('doctor reports the Node line: supported, odd and short-lived, or below the
   assert.match(`${odd.detail} ${odd.fix}`, /24|26/);
   assert.equal(find(nodeFindings('27.0.0'), 'node').severity, 'pass', 'from 27 every line goes LTS');
   assert.equal(find(nodeFindings('21.7.3'), 'node').severity, 'fail', 'below the floor the kit does not run');
+  // Found 2026-10-11 (#282, ADR-0159): 22.13.0 through 22.22.0 decode windows-1252 as Latin-1
+  // (nodejs/node#60888), so a page's euro signs and curly quotes are captured as C1 controls
+  // with no warning, and the suite's G7 tests go red. Measured: 22.12.0 right, 22.13.0 and
+  // 22.21.0 and 22.22.0 wrong, 22.22.1 and 22.22.3 and 22.23.0 and 22.23.3 right.
+  for (const bad of ['22.13.0', '22.21.0', '22.22.0']) {
+    const line = find(nodeFindings(bad), 'node');
+    assert.equal(line.severity, 'fail', `${bad} decodes windows-1252 as Latin-1 and was reported as ${line.severity}`);
+    assert.match(line.detail, /windows-1252/, `${bad}: the finding must name the defect`);
+    assert.match(line.fix, /22\.22\.1/, `${bad}: the fix must name the first good 22.x`);
+  }
+  for (const ok of ['22.12.0', '22.22.1', '22.23.3']) {
+    assert.equal(find(nodeFindings(ok), 'node').severity, 'pass', `${ok} decodes windows-1252 correctly`);
+  }
 });
 
 // Found 2026-09-27: a machine had core.hooksPath=/opt/myhooks. install-hooks refused the

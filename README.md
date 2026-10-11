@@ -109,7 +109,7 @@ exists for Claude Code only; every other agent gets the commit gate.
 
 | | Needed for | Notes |
 |---|---|---|
-| Node 22+ | everything | Node 22, 24 and 26 are each tested on every commit |
+| Node 22.22.1+ or 24+ | everything | Node 22, 24 and 26 are each tested on every commit; 22.13.0 to 22.22.0 decode windows-1252 pages as Latin-1 (ADR-0159), and `doctor` says so |
 | Git | everything | projects are git repositories; the commit gate is a git hook |
 | Python 3.11+ | the test suite only | the cross-language conformance runners; without it the suite blocks rather than passing |
 | Firecrawl CLI 1.25.3 and a Firecrawl account | metered collection | `npm install -g firecrawl-cli@1.25.3`, then `firecrawl login`. Free tier: 1,000 credits a month, no card |
@@ -648,9 +648,10 @@ images, 24.04 and 26.04
 
 macOS is excluded on purpose
 ([ADR-0101](docs/adr/0101-macos-is-best-effort-and-has-no-ci-leg.md)): a CI leg nobody
-intends to fix teaches people to ignore red. Requirements: Node 22+ and Git, with Python
-3.11+ for the conformance runners in the test suite. Behind an HTTPS proxy, the kit's own
-requests need Node 22.21+ or 24+; `doctor` says so when yours cannot.
+intends to fix teaches people to ignore red. Requirements: Node 22.22.1+ or 24+ and Git, with
+Python 3.11+ for the conformance runners in the test suite. Node 22.13.0 to 22.22.0 decode
+windows-1252 pages as Latin-1 (ADR-0159), and behind an HTTPS proxy the kit's own requests
+need Node 22.21+ or 24+; `doctor` says so when yours cannot do either.
 
 ## Repository layout
 
