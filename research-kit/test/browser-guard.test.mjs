@@ -14,7 +14,7 @@ import childProcess, { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { syncBuiltinESMExports } from 'node:module';
-import { test, describe, assert, tempDir, fs, path, requireCapability } from './harness.mjs';
+import { test, describe, assert, tempDir, fs, path, requireCapability, KIT_ROOT } from './harness.mjs';
 import { startGuard, judge, parseUpstream, renderThroughGuard, REFUSAL_MARKER, DROP_MARKER, isBrowserService } from '../lib/browser-guard.mjs';
 import browser, { findBrowser, renderGuarded, browserArgs } from '../lib/browser-transport.mjs';
 
@@ -604,6 +604,49 @@ test('LIVE: a real Chromium cannot be led into this machine\'s network by a scri
 // clock, the default search engine, accounts.google.com, the Cloud Messaging check-in and
 // its push channel - nine connections no page asked for, carried as external. Flags and
 // profile preferences were measured and left most of them (break-test, 2026-10-02).
+test('a name asked for is judged by what it resolves to, exempt or not; under an explicit refusal the child refuses it before any launch', async () => {
+  // ADR-0155, at the guard: the exemption for the host and port asked for is for the address
+  // the operator spelled out. A NAME among them is still judged by its resolution, so a
+  // resolver pointing the page's own name inward is refused instead of admitted as "the page".
+  const rebound = await judge('rebind.example', 80, { allowInternal: false, exempt: new Set(['rebind.example:80']), lookup: fakeLookup({ 'rebind.example': '127.0.0.1' }) });
+  assert.deepEqual(rebound, { refused: 'rebind.example resolves to 127.0.0.1, an internal address' });
+  assert.deepEqual(await judge('localhost', 80, { allowInternal: false, exempt: new Set(['localhost:80']) }), { refused: 'localhost is this machine' });
+  // The operator's own decision still admits it, and a literal address asked for is theirs.
+  assert.deepEqual(await judge('rebind.example', 80, { allowInternal: true, exempt: new Set(), lookup: fakeLookup({ 'rebind.example': '127.0.0.1' }) }), { address: '127.0.0.1' });
+  assert.deepEqual(await judge('127.0.0.1', 80, { allowInternal: false, exempt: new Set(['127.0.0.1:80']) }), { address: '127.0.0.1' });
+  assert.deepEqual(await judge('public.example', 80, { allowInternal: false, exempt: new Set(['public.example:80']), lookup: fakeLookup({ 'public.example': '93.184.216.34' }) }), { address: '93.184.216.34' });
+
+  // ADR-0155, before any launch: under `false` the child judges a name asked for and never
+  // starts the browser. The stand-in browser here would write a marker if it ran.
+  const pages = await pagesProcess();
+  try {
+    const marker = path.join(tempDir('rk-guard-launch-'), 'launched');
+    const writer = path.join(tempDir('rk-guard-writer-'), 'browser.mjs');
+    fs.writeFileSync(writer, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'launched'); process.stdout.write('<html></html>');`);
+    const run = (job) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(KIT_ROOT, 'lib', 'browser-guard.mjs')], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH ?? '', SystemRoot: process.env.SystemRoot ?? '' } });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('close', () => resolve(JSON.parse(out)));
+      child.stdin.end(JSON.stringify(job));
+    });
+    const byName = `http://localhost:${new URL(pages.outer).port}/plain`;
+    const early = await run({ binary: process.execPath, args: [writer, '--dump-dom', byName], url: byName, allowInternalRedirects: false, timeout: 20_000 });
+    assert.equal(early.errorCode, 'EINTERNAL', JSON.stringify(early));
+    assert.match(early.errorMessage, /^refused to render localhost:\d+ - localhost is this machine/);
+    assert.equal(early.allowInternal, false);
+    assert.equal(fs.existsSync(marker), false, 'the browser was launched for a name refused before launch');
+    // A literal address asked for under the same refusal is the caller's, and the browser is
+    // launched for it; so is the operator's own URL under the default policy (ADR-0110).
+    const literal = await run({ binary: process.execPath, args: [writer, '--dump-dom', `${pages.outer}/plain`], url: `${pages.outer}/plain`, allowInternalRedirects: false, timeout: 20_000 });
+    assert.ok(!literal.errorCode, JSON.stringify(literal));
+    assert.equal(fs.existsSync(marker), true, 'the browser was not launched for a literal address the caller spelled out');
+    const theirs = await run({ binary: process.execPath, args: [writer, '--dump-dom', byName], url: byName, timeout: 20_000 });
+    assert.ok(!theirs.errorCode, JSON.stringify(theirs));
+    assert.equal(theirs.allowInternal, true);
+  } finally { pages.close(); }
+});
+
 test('the browser\'s own service hosts are known by name, and a page\'s hosts are not among them', () => {
   for (const host of ['clients2.google.com', 'clients.google.com', 'android.clients.google.com', 'mtalk.google.com', 'alt3-mtalk.google.com',
     'accounts.google.com', 'www.google.com', 'update.googleapis.com', 'safebrowsing.googleapis.com', 'redirector.gvt1.com', 'dl.google.com', 'WWW.GOOGLE.COM.']) {

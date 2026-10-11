@@ -58,6 +58,29 @@ test('a redirect into an internal address is refused, and nothing behind it is c
   });
 });
 
+test('under an explicit refusal a NAME asked for is judged before any fetch; a literal address asked for is the caller\'s', async () => {
+  await withServer((base) => {
+    // ADR-0155: `false` judges the first URL by what its name resolves to, before fetching.
+    const port = new URL(base).port;
+    const byName = httpKeyless.scrape(`http://localhost:${port}/secret`, { env, allowInternalRedirects: false });
+    assert.equal(byName.ok, false, 'localhost was fetched under an explicit refusal');
+    assert.match(byName.error, /^refused to fetch localhost:\d+ - localhost is this machine/, byName.error);
+    assert.match(byName.error, /RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1/);
+    assert.doesNotMatch(JSON.stringify(byName), /SECRET-TOKEN/, 'the internal page reached the result');
+    assert.equal(byName.url, `http://localhost:${port}/secret`, 'the refusal is recorded against the URL asked for');
+    // The variable set to 0 is the same refusal.
+    const variable = httpKeyless.scrape(`http://localhost:${port}/secret`, { env: { ...env, RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: '0' } });
+    assert.equal(variable.ok, false);
+    assert.match(variable.error, /^refused to fetch localhost/);
+    // A literal address the caller spelled out cannot be rebound and stays the caller's: the
+    // page it names is fetched, and the policy a public page gets still governs where it may
+    // lead (the redirect tests above). This is the decision, not an omission.
+    const literal = httpKeyless.scrape(`${base}/secret`, { env, allowInternalRedirects: false });
+    assert.equal(literal.ok, true, literal.error);
+    assert.match(literal.markdown, /SECRET-TOKEN/);
+  });
+});
+
 test('an internal address the operator asked for is still fetched, redirects within it too', async () => {
   await withServer((base) => {
     const r = httpKeyless.scrape(`${base}/hop`, { env });

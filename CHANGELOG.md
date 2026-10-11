@@ -5,6 +5,13 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Under an explicit refusal of this machine's network (`allowInternalRedirects: false`,
+  or `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
+  resolves to - at the browser guard even when it is the page's own host, and before any
+  fetch or browser launch - so a resolver cannot turn the page asked for into this
+  machine's network (ADR-0155). A literal address the caller spelled out, and the default
+  policy for a URL the operator typed, are unchanged (ADR-0110).
+
 - QUICKSTART names the applicable trusted-PEM `NODE_EXTRA_CA_CERTS` remedy before
   starting Node on a network with TLS inspection, with missing/malformed-file warnings,
   setuid/Linux-capability and explicit TLS/HTTPS `ca` limits (break-test evidence

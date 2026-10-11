@@ -100,7 +100,10 @@ export async function judge(host, port, { allowInternal = false, exempt = new Se
     if (!skip && isInternal(name)) return { refused: `${name} is an internal address` };
     return { address: name };
   }
-  if (!skip && (name === 'localhost' || name.endsWith('.localhost'))) return { refused: `${name} is this machine` };
+  // A name is judged by what it resolves to even when it is the host asked for (ADR-0155): the
+  // exemption is for the address the operator spelled out, which cannot be rebound, not for a
+  // name a resolver can point inward after the page was asked for.
+  if (!allowInternal && (name === 'localhost' || name.endsWith('.localhost'))) return { refused: `${name} is this machine` };
   let found;
   try {
     found = await new Promise((resolve, reject) => lookup(name, { all: true }, (err, addresses) => (err ? reject(err) : resolve(addresses))));
@@ -111,7 +114,7 @@ export async function judge(host, port, { allowInternal = false, exempt = new Se
   }
   const list = Array.isArray(found) ? found : [{ address: found }];
   const inside = list.find((a) => isInternal(a.address));
-  if (!skip && inside) return { refused: `${name} resolves to ${inside.address}, an internal address` };
+  if (!allowInternal && inside) return { refused: `${name} resolves to ${inside.address}, an internal address` };
   return upstream ? {} : { address: list[0]?.address };
 }
 
@@ -238,13 +241,16 @@ export function guardFlags(port) {
  */
 export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, lookup = dns.lookup } = {}) {
   const asked = new URL(url);
+  // The host and port asked for are exempt from the literal-address judgment; a name among
+  // them is still judged by what it resolves to (ADR-0155).
+  const exempt = [`${asked.hostname.replace(/^\[|\]$/g, '').includes(':') ? `[${asked.hostname.replace(/^\[|\]$/g, '')}]` : asked.hostname}:${asked.port || (asked.protocol === 'https:' ? 443 : 80)}`];
   // The render timeout starts at the browser's first request through the guard; the launch
   // is allowed as long again, and no more (ADR-0119): on the CI runners Chromium's process
   // startup took 4 to 43 s before its first request, out of the render budget, and the page
   // was killed before it had been asked for.
   const clock = { timer: null, started: 0, firstRequestAt: null, timedOut: false, kill: () => {} };
   const arm = () => { clearTimeout(clock.timer); clock.timer = setTimeout(() => { clock.timedOut = true; clock.kill(); }, timeout); };
-  const guard = await startGuard({ allowInternal, exempt: [`${asked.hostname.replace(/^\[|\]$/g, '').includes(':') ? `[${asked.hostname.replace(/^\[|\]$/g, '')}]` : asked.hostname}:${asked.port || (asked.protocol === 'https:' ? 443 : 80)}`], upstream, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
+  const guard = await startGuard({ allowInternal, exempt, upstream, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
   // Chromium's net log, for the origin's HTTP status `--dump-dom` does not report (ADR-0137,
   // 2026-10-03): written to a private folder of this render's, read once the browser is gone,
   // and deleted on every way out. A folder that cannot be made means no log, which the
@@ -347,6 +353,21 @@ async function child() {
     // caller decided otherwise; RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1 lifts the check.
     const allowInternal = job.allowInternalRedirects === true
       || (job.allowInternalRedirects !== false && await internalTarget(new URL(job.url).hostname) !== null);
+    // A caller that said `false` refused this machine's network for the whole render, and a
+    // NAME asked for is judged by what it resolves to before any browser is launched
+    // (ADR-0155): the guard exempted the host and port asked for by name, so a name pointed
+    // inward was rendered as "the page" (found 2026-10-10, audit). A literal address the
+    // caller spelled out is the caller's. Nothing is rendered for a refused name.
+    if (job.allowInternalRedirects === false) {
+      const asked = new URL(job.url);
+      const why = net.isIP(asked.hostname.replace(/^\[|\]$/g, '')) ? null : await internalTarget(asked.hostname);
+      if (why) {
+        process.stdout.write(JSON.stringify({ errorCode: 'EINTERNAL', errorMessage: `refused to render ${asked.host} - ${why}. `
+          + 'This render was asked to stay out of this machine\'s network; if you meant that address, fetch it as your own '
+          + '(the default policy), or set RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1.', refused: [{ host: asked.host, why }], allowInternal: false }), () => process.exit(0));
+        return;
+      }
+    }
     const variable = proxyVariable(process.env);
     const result = await renderThroughGuard({ ...job, allowInternal, upstream: variable ? process.env[variable] : null });
     // The decision is reported with the render: the transport judges the final URL the net log

@@ -160,6 +160,17 @@ test('with no net log the status is not guessed: the capture is partial and says
   assert.match(late.omitted, /still unanswered through the guard/);
 });
 
+test('a URL the guard child refused before launching is reported as that refusal, not as a browser that could not start', () => {
+  // ADR-0155: under `false` the child judges a NAME asked for before any launch and answers
+  // EINTERNAL; the transport passes the refusal through in the child's words.
+  const named = 'http://intranet.example/start';
+  const early = browser.scrape(named, { render: renderWith({ status: null, error: Object.assign(new Error('refused to render intranet.example - intranet.example resolves to 10.0.0.5, an internal address. This render was asked to stay out of this machine\'s network'), { code: 'EINTERNAL' }), refused: [{ host: 'intranet.example', why: 'intranet.example resolves to 10.0.0.5, an internal address' }] }).render, browserPath: '/bin/true', env: {}, uid: 0, allowInternalRedirects: false });
+  assert.equal(early.ok, false);
+  assert.match(early.error, /^refused to render intranet\.example - intranet\.example resolves to 10\.0\.0\.5, an internal address/);
+  assert.doesNotMatch(early.error, /could not start/);
+  assert.equal(early.markdown, undefined);
+});
+
 test('a net log whose final URL is internal is refused, as an internal redirect is', () => {
   const asked = 'https://evil.example/a';
   const log = netLog([[asked, 302], ['http://169.254.169.254/latest/meta-data/', 200]]);

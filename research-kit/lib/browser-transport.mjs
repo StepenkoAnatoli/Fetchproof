@@ -329,6 +329,10 @@ export function scrape(url, { render = renderGuarded, browserPath = null, env = 
       : '';
     return { ok: false, url: target, transport: name, cmd, error: `the browser was killed by ${result.signal}${said}${denied}` };
   }
+  // The guard child refused the URL asked for before launching anything: a caller that said
+  // `false` and a target inside this machine's network (ADR-0155). The refusal, not a launch
+  // failure, is what happened.
+  if (result.error?.code === 'EINTERNAL') return { ok: false, url: target, transport: name, cmd, error: result.error.message };
   if (result.error && !timedOut) return { ok: false, url: target, transport: name, cmd, error: `the browser could not start: ${result.error.message}` };
   if (result.status !== 0 && !timedOut) {
     return { ok: false, url: target, transport: name, cmd, error: `the browser exited ${result.status}${said}` };
