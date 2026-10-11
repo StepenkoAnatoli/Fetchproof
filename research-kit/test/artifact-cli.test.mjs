@@ -134,6 +134,32 @@ test('an ordinary typo is refused too, without the authorization sentence', () =
     'a misspelled --json is not an authorization attempt and should not be told about one');
 });
 
+// Found 2026-10-11 (#280): parseFlags reads a bare flag as `true`, and create only asked whether
+// a required flag was PRESENT. A bare --ref went into the manifest as the string "true", a bare
+// --run-id as Number(true) = 1, a bare --output wrote a package literally named "true" - and the
+// package re-validated PASS, so nothing downstream could tell invented provenance from real.
+test('create refuses a bare --ref, --run-id or --output by name, and writes nothing', () => {
+  for (const bare of ['--ref', '--run-id', '--output']) {
+    const cwd = tempDir('rk-cli-bare-');
+    const args = ['create', '--root', collectedProject(), '--repository', 'o/r', '--commit', '0'.repeat(40), '--workflow', 'w.yml'];
+    if (bare !== '--ref') args.push('--ref', 'main');
+    if (bare !== '--run-id') args.push('--run-id', '7');
+    if (bare !== '--output') args.push('--output', path.join(cwd, 'p.zip'));
+    args.push(bare);
+    const r = run(args, { cwd });
+    assert.equal(r.code, 3, `${bare}: expected a refusal, got exit ${r.code}\n${r.out}${r.err}`);
+    assert.ok(new RegExp(`^${bare} needs a value`, 'm').test(r.err), `${bare} was not refused by name:\n${r.err}`);
+    assert.deepEqual(fs.readdirSync(cwd), [], `${bare}: something was written in the working folder`);
+  }
+});
+
+test('validate refuses a bare --file by name, instead of opening a file called "true"', () => {
+  const r = run(['validate', '--file']);
+  assert.equal(r.code, 3, `${r.out}${r.err}`);
+  assert.ok(/^--file needs a value/m.test(r.err), r.err);
+  assert.ok(!/ZIP-READ/.test(r.out), 'the flag must be refused before any file is opened');
+});
+
 test('a package still cannot claim authorization it did not earn', () => {
   // The property the refused flag used to prove, asserted where it belongs: through the
   // supported path, on a corpus that has not been reviewed.

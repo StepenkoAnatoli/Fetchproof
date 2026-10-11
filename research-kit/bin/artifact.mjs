@@ -16,7 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlags, canonicalJson } from '../lib/core.mjs';
+import { parseFlags, canonicalJson, checkFlagValues } from '../lib/core.mjs';
 import { requireRuntime } from '../lib/runtime.mjs';
 import { validateArtifact } from '../lib/artifact-validator.mjs';
 import { writeArtifact, packageName, checkClientRef, GITHUB_API_VERSION } from '../lib/artifact.mjs';
@@ -143,8 +143,23 @@ function printResult(result, { json = false, quiet = false } = {}) {
   process.stdout.write(`\n${line}\n`);
 }
 
+// A flag given no value is refused by name before anything is read or written (found
+// 2026-10-11, #280): parseFlags reads a bare flag as `true`, and the "needs" checks below
+// only ask whether a flag is PRESENT. A bare --ref went into the manifest as "true", a bare
+// --run-id as Number(true) = 1, a bare --output wrote a package named "true" - and it
+// re-validated PASS, so nothing downstream could tell invented provenance from real.
+const VALUE_FLAGS = Object.freeze({
+  validate: { file: {}, 'expect-client-ref': {} },
+  create: {
+    root: {}, output: {}, 'client-ref': {}, repository: {}, ref: {}, commit: {}, workflow: {},
+    'run-id': { int: true, min: 1 }, 'run-attempt': { int: true, min: 1 },
+    'run-url': {}, 'html-url': {}, 'api-version': {},
+  },
+});
+
 if (command === 'validate') {
   refuseUnknownFlags('validate');
+  checkFlagValues(flags, VALUE_FLAGS.validate, { exit: EXIT.BLOCKED });
   if (!flags.file) { process.stderr.write('validate needs --file <package.zip>\n\n'); process.stdout.write(HELP); process.exit(EXIT.BLOCKED); }
   const result = validateArtifact({
     file: String(flags.file),
@@ -156,6 +171,7 @@ if (command === 'validate') {
 
 if (command === 'create') {
   refuseUnknownFlags('create');
+  checkFlagValues(flags, VALUE_FLAGS.create, { exit: EXIT.BLOCKED });
   const required = ['repository', 'ref', 'commit', 'workflow', 'run-id'];
   const missing = required.filter((name) => flags[name] === undefined);
   if (missing.length) {
