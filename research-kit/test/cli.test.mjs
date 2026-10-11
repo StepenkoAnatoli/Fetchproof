@@ -978,6 +978,11 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
     ['evidence-context.mjs', ['--all', '--limit', 'abc'], /--limit must be a whole number/],
     ['evidence-context.mjs', ['--unknown'], /--unknown needs a value/],
     ['decompose.mjs', ['--dry-run', '--topic'], /--topic needs a value/],
+    // Found 2026-10-11 (#269): a bare --max-scrapes or --limit was read as `true`, which
+    // Number() makes 1 - so a real run paid for one page nobody asked for.
+    ['decompose.mjs', ['--dry-run', '--max-scrapes'], /--max-scrapes needs a value/],
+    ['decompose.mjs', ['--dry-run', '--limit'], /--limit needs a value/],
+    ['decompose.mjs', ['--dry-run', '--limit', 'abc'], /--limit must be a whole number of at least 0, not "abc"/],
     ['preflight.mjs', ['--check'], /--check needs a value/],
     ['gate.mjs', ['--gate', 'push'], /--gate must be one of/],
     ['prior.mjs', ['--file'], /--file needs a value/],

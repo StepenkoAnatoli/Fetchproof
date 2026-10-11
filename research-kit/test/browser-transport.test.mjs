@@ -225,6 +225,24 @@ test('the recorded command names the browser, not the keyless transport', () => 
   assert.doesNotMatch(none.cmd, /http-keyless/, 'the refusal carries the same command');
 });
 
+// Found 2026-10-11: the collector calls runScrape(url) with no options, so the adapter looked
+// for the browser with an empty config, and browserPath - the setting its own error message
+// names - was never consulted. A caller that passes no config gets the machine's.
+test('a scrape with no config of its own runs the browserPath the machine config names', () => {
+  const dir = tempDir('rk-browser-config-');
+  const binary = path.join(dir, 'chrome');
+  fs.writeFileSync(binary, '', 'utf8');
+  const configFile = path.join(dir, 'research-kit.config.json');
+  fs.writeFileSync(configFile, JSON.stringify({ browserPath: binary }), 'utf8');
+  const env = { RESEARCH_KIT_CONFIG: configFile };
+  const { render, calls } = renderWith({ stdout: PAGE });
+  const r = browser.runScrape('https://nodejs.org/api/fs.html', { render, env });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(calls[0]?.file, binary, 'the configured browser ran');
+  assert.equal(browser.status({ env }).path, binary, 'status reports the same browser');
+  assert.equal(browser.status({ env, config: {} }).path === binary, false, 'an explicit config still wins');
+});
+
 test('Chromium\'s own error page is a failure that names its code, though it exits 0', () => {
   assert.equal(chromeErrorOf(PRIVACY), 'ERR_CERT_AUTHORITY_INVALID');
   assert.equal(chromeErrorOf(PAGE), '');
