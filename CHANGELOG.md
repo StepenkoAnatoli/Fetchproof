@@ -5,6 +5,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `doctor` reports Node 22.13.0 through 22.22.0 as a failing Node line (#282, ADR-0159):
+  those builds' `TextDecoder` reads `windows-1252` as Latin-1 (nodejs/node#60888), so a
+  page's euro signs, curly quotes and dashes were captured as control characters with no
+  warning, and the suite's G7 decoding tests went red on them. The finding names the
+  defect and the first good build; the README's requirement is now Node 22.22.1+ or 24+.
+  The hard floor every command refuses below stays at 22. Measured 2026-10-11: 22.12.0
+  right, 22.13.0 to 22.22.0 wrong, 22.22.1 onward right.
+
 - `artifact create` and `artifact validate` refuse a value flag given no value (`--<name>
   needs a value`, exit 3) before anything is read or written (#280). The flag parser reads
   a bare flag as `true`, and `create` only asked whether a required flag was present: a

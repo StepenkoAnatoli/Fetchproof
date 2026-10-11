@@ -145,7 +145,9 @@ test('the prerequisites named in the policy are the ones the suite actually need
   // suite tells them.
   const readme = fs.readFileSync(ROOT_README, 'utf8');
   assert(/Python 3\.\d+\+/.test(readme), 'the README no longer names the Python requirement');
-  assert(/Node 22\+/.test(readme), 'the README no longer names the Node requirement');
+  // "Node 22+" until 2026-10-11; "Node 22.22.1+ or 24+" since, because 22.13.0 to 22.22.0
+  // decode windows-1252 as Latin-1 (ADR-0159). Either spelling names the 22 line's floor.
+  assert(/Node 22(\.\d+)*\+/.test(readme), 'the README no longer names the Node requirement');
 
   const yaml = fs.readFileSync(WORKFLOW, 'utf8');
   const node = yaml.match(/node-version:\s*'?([\d.]+)'?/);

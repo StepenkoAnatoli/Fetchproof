@@ -46,8 +46,9 @@ before spending), and a configured credential.
 **Supported on Linux and Windows; macOS is best-effort and untested.** "Supported" means
 the full offline suite runs on that platform in CI on every commit — see
 [the support policy](https://github.com/StepenkoAnatoli/Research-Kit/blob/main/README.md#supported-platforms) for why the distinction is worded
-that way and what it has already caught. Needs Node 22+ (22, 24 and 26 are each tested on
-every commit), Git, and Python 3.11+ for the cross-language conformance runners.
+that way and what it has already caught. Needs Node 22.22.1+ or 24+ (22, 24 and 26 are each
+tested on every commit; 22.13.0 to 22.22.0 decode windows-1252 pages as Latin-1, ADR-0159,
+and `doctor` says so), Git, and Python 3.11+ for the cross-language conformance runners.
 
 New here? [Run it on a real project](https://github.com/StepenkoAnatoli/Research-Kit/blob/main/README.md#run-it-on-a-real-project) is one ordered path
 from nothing to a `preflight` verdict, and

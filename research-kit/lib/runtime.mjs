@@ -33,8 +33,25 @@ export function checkNode(version = process.versions.node) {
 }
 
 function nodeParts(version) {
-  const [major, minor] = String(version).split('.').map(Number);
-  return { major, minor: Number.isFinite(minor) ? minor : 0 };
+  const [major, minor, patch] = String(version).split('.').map(Number);
+  return { major, minor: Number.isFinite(minor) ? minor : 0, patch: Number.isFinite(patch) ? patch : 0 };
+}
+
+/**
+ * Whether this Node's TextDecoder reads `windows-1252` as windows-1252. From 22.13.0 up to
+ * and including 22.22.0 it read it as Latin-1 (nodejs/node#60888, a regression that shipped
+ * after the line went LTS; fixed by nodejs/node#60893 and backported), so bytes 0x80-0x9F -
+ * the euro sign, the curly quotes, the dashes - came back as C1 control characters, and a
+ * page captured on such a build lost them with no warning (ADR-0159). Measured 2026-10-11:
+ * 22.12.0 right; 22.13.0, 22.21.0 and 22.22.0 wrong; 22.22.1, 22.22.3, 22.23.0, 22.23.3 and
+ * 24.21.0 right. The 20 line regressed the same way at 20.18.3 and is below the floor anyway.
+ */
+export function nodeDecodesWindows1252(version = process.versions.node) {
+  const { major, minor, patch } = nodeParts(version);
+  if (major !== 22) return true;
+  if (minor < 13) return true;
+  if (minor > 22) return true;
+  return minor === 22 && patch >= 1;
 }
 
 /**
@@ -362,6 +379,14 @@ export function nodeLine(version = process.versions.node) {
   if (!Number.isFinite(major)) return { level: 'fail', detail: `could not read a Node version from ${JSON.stringify(version)}`, fix: '' };
   if (major < REQUIRED_NODE_MAJOR) {
     return { level: 'fail', detail: `node ${version}; this kit needs ${REQUIRED_NODE_MAJOR} or newer`, fix: 'install Node 24 (Active LTS) from nodejs.org' };
+  }
+  // A 22 that cannot keep a euro sign is not a 22 the kit can collect on (ADR-0159).
+  if (!nodeDecodesWindows1252(version)) {
+    return {
+      level: 'fail',
+      detail: `node ${version} decodes windows-1252 pages as Latin-1 (nodejs/node#60888): a page's euro signs, curly quotes and dashes would be captured as control characters, with no warning`,
+      fix: 'install Node 22.22.1 or newer on the 22 line, or Node 24 (Active LTS) from nodejs.org',
+    };
   }
   if (major % 2 === 1 && major < 27) {
     return {
