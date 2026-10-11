@@ -5,6 +5,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The `browserPath` machine-config key is read. The browser transport's errors and ADR-0088
+  name it, but the config was loaded and saved without it: a fetch through the collector
+  never consulted it, and any save, `install-hooks --role` among them, erased a value set
+  by hand. `scrape` and `status` called without a config now read the machine's.
+
 - `researcher-release validate --genesis` and `--checkpoints` are verified. Both were
   advertised and parsed, but `validateRelease` had no parameters for them, so they were
   dropped before the ledger check and an operator who supplied a signed genesis believed it

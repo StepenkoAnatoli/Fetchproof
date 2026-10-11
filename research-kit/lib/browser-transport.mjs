@@ -20,6 +20,7 @@ import { mainContent, htmlToMarkdown, titleOf, gradeCompleteness, isInternal, se
 import httpKeyless from './http-transport.mjs';
 import { REFUSAL_MARKER } from './browser-guard.mjs';
 import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow } from './runtime.mjs';
+import { loadConfig } from './machine.mjs';
 
 const GUARD_CHILD = fileURLToPath(new URL('./browser-guard.mjs', import.meta.url));
 
@@ -252,10 +253,12 @@ export function command(argv) {
   return ['browser', ...argv.slice(-1)].map((p) => (/\s/.test(p) ? JSON.stringify(p) : p)).join(' ');
 }
 
-export function scrape(url, { render = renderGuarded, browserPath = null, env = process.env, config = {}, exists, timeout = TIMEOUT_MS, uid,
+export function scrape(url, { render = renderGuarded, browserPath = null, env = process.env, config = null, exists, timeout = TIMEOUT_MS, uid,
   allowInternalRedirects } = {}) {
   const target = String(url);
-  const binary = browserPath ?? findBrowser({ config, env, exists });
+  // No config from the caller means the machine's: the collector calls runScrape(url) with no
+  // options, and an empty default here meant browserPath was never consulted (2026-10-11).
+  const binary = browserPath ?? findBrowser({ config: config ?? loadConfig(env), env, exists });
   const cmd = command([target]);
   if (!binary) {
     return { ok: false, url: target, transport: name, cmd,
@@ -402,8 +405,8 @@ export function map(url, opts = {}) {
   return httpKeyless.map(url, opts);
 }
 
-export function status({ config = {}, env = process.env, exists } = {}) {
-  const path = findBrowser({ config, env, exists });
+export function status({ config = null, env = process.env, exists } = {}) {
+  const path = findBrowser({ config: config ?? loadConfig(env), env, exists });
   return { ok: Boolean(path), transport: name, path, error: path ? '' : 'no Chromium or Chrome found' };
 }
 
