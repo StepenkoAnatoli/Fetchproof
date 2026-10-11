@@ -27,6 +27,7 @@ in this repository.
 | read the 2026-10-04 break-test (pass 4) | [`build-report-2026-10-04-break-test.md`](build-report-2026-10-04-break-test.md) | thirteen green runs, five findings, four fixed as their own commits, one recorded as a decided trade-off |
 | review the 2026-10-06 handoff audit | [`review-2026-10-06-handoff-audit.md`](review-2026-10-06-handoff-audit.md) | truthful closure labels, chronological audit snapshots, gate wording and their verification limits |
 | read the 2026-10-07 break-test (pass 7) | [`build-report-2026-10-07-break-test.md`](build-report-2026-10-07-break-test.md) | historical Arena probes, POSIX read-only deployment repair, the Windows CI reproduction, reporting limits and a separate follow-up verification record |
+| read the 2026-10-11 break-test (pass 8) | [`build-report-2026-10-11-break-test.md`](build-report-2026-10-11-break-test.md) | the no-network and root gaps closed, 70 repeated runs with no flake, one Low finding: `handoff`'s message when run from inside `research/` |
 
 Two habits of this repository that a newcomer should know before reading further:
 
