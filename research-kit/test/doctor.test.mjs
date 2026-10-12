@@ -1013,6 +1013,12 @@ test('behind a proxy, a Node that cannot use it is named, with the version to mo
     'the lowercase variable wins when both are set (E-03), so the malformed one is never read');
   const secret = find(nodeFindings('24.21.0', { HTTPS_PROXY: 'user:hunter2@proxy.example:8080' }), 'proxy');
   assert.equal(`${secret.detail} ${secret.fix}`.includes('hunter2'), false, 'doctor printed a proxy password');
+  for (const value of ['http://proxy.example:8080/path', 'http://proxy.example:8080?x=1', 'http://proxy.example:8080#fragment']) {
+    const finding = find(nodeFindings('24.21.0', { HTTPS_PROXY: value }), 'proxy');
+    assert.equal(finding.severity, 'warn', 'a non-origin proxy URL was reported as working');
+    assert.match(finding.detail, /cannot use.*direct/);
+    assert.match(finding.fix, /http:\/\/host:port/);
+  }
 });
 
 test('doctor reports the Node line: supported, odd and short-lived, or below the floor', () => {

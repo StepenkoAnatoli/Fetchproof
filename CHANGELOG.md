@@ -4,6 +4,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- Proxy URLs containing a non-root path, query or fragment take the existing
+  invalid-proxy path rather than enabling Node proxy support and crashing in
+  Undici (#380). Requests remain direct, the existing diagnostic names the
+  variable and accepted spelling, and `doctor` warns. A bare trailing slash stays
+  valid.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

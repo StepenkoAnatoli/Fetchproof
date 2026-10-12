@@ -351,7 +351,8 @@ test('the SerpAPI child is started with the flag, from the environment its calle
 // ignored and requests went direct. So turning the proxy on for such a value turned a working
 // machine into a crashing one. The value is left alone, and the operator is told.
 
-const MALFORMED = ['proxy.example:8080', 'not a url', 'http://', 'socks5://127.0.0.1:1080'];
+const MALFORMED = ['proxy.example:8080', 'not a url', 'http://', 'socks5://127.0.0.1:1080',
+  'http://proxy.example:8080/path', 'http://proxy.example:8080?x=1', 'http://proxy.example:8080#fragment'];
 
 test('a proxy value Node cannot use is not turned on: the flag stays off, and the plan says why', () => {
   for (const value of MALFORMED) {
@@ -363,6 +364,7 @@ test('a proxy value Node cannot use is not turned on: the flag stays off, and th
   assert.equal(planFor({ HTTPS_PROXY: 'http://ok.example:8080', HTTP_PROXY: 'proxy.example:8080' }), 'invalid',
     'one unusable variable is enough: Node builds every configured proxy when the flag is on');
   assert.equal(fetchEnv({ HTTPS_PROXY: 'https://ok.example:8443' }).NODE_USE_ENV_PROXY, '1', 'an https proxy URL is usable');
+  assert.equal(fetchEnv({ HTTPS_PROXY: 'http://ok.example:8080/' }).NODE_USE_ENV_PROXY, '1', 'a root slash is a usable origin');
 });
 
 test('invalid: the command names the variable, says requests go direct, and shows the form Node needs', async () => {
@@ -379,18 +381,21 @@ test('invalid: the command names the variable, says requests go direct, and show
   assert.match(text, /http:\/\/proxy\.example:8080/, 'the operator is not shown the spelling that works');
 });
 
-test('LIVE: a scheme-less proxy value does not break a search that would have gone direct', async () => {
+test('LIVE: an unusable proxy value does not break a search that would have gone direct', async () => {
   // The stand-in answers plain requests itself, so it can play the vendor: reached directly,
   // it returns the payload. The malformed proxy value must leave that path working.
   const vendor = await standInProxy({ body: JSON.stringify(PAYLOAD) });
   try {
     const root = tempDir('rk-proxy-bad-');
-    const r = serpapi.search('direct despite a bad proxy value', {
-      key: KEY, endpoint: `${vendor.url}/search`, timeout: 15_000,
-      env: { ...hostEnv(root), HTTP_PROXY: 'proxy.example:8080', HTTPS_PROXY: 'proxy.example:8080' },
-    });
-    assert.equal(r.ok, true, `the search broke on a proxy value it should have left alone: ${String(r.error).slice(0, 300)}`);
-    assert.equal(r.results[0].url, 'https://a.example/1');
+    for (const value of ['proxy.example:8080', 'http://proxy.example:8080/path',
+      'http://proxy.example:8080?x=1', 'http://proxy.example:8080#fragment']) {
+      const r = serpapi.search('direct despite a bad proxy value', {
+        key: KEY, endpoint: `${vendor.url}/search`, timeout: 15_000,
+        env: { ...hostEnv(root), HTTP_PROXY: value, HTTPS_PROXY: value },
+      });
+      assert.equal(r.ok, true, `the search broke on a proxy value it should have left alone: ${String(r.error).slice(0, 300)}`);
+      assert.equal(r.results[0].url, 'https://a.example/1');
+    }
   } finally {
     vendor.close();
   }

@@ -83,11 +83,12 @@ export function proxyVariable(env = process.env) {
   return PROXY_VARIABLES.find((key) => env[key]) ?? null;
 }
 
-// Node takes a proxy as an http: or https: URL with a host (E-03).
+// Node takes an http(s) origin: Undici's parseOrigin refuses paths, queries and fragments.
 function usableProxyUrl(value) {
   try {
     const url = new URL(String(value));
-    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname)
+      && url.pathname === '/' && !url.search && !url.hash;
   } catch {
     return false;
   }
