@@ -155,7 +155,7 @@ checkFlagValues(flags, {
 // token would otherwise hide it, and a dispatched bad URL would be searched as text.
 const queriesValue = queriesInput({ queries: flagList(flags.query), urls: flagList(flags.url) });
 if (queriesValue.error) {
-  process.stderr.write(`${queriesValue.error}\n  fix: --url takes a page address starting with https://\n`);
+  process.stderr.write(`${redact(queriesValue.error)}\n  fix: --url takes a page address starting with https://\n`);
   process.exit(EXIT.CANNOT_START);
 }
 

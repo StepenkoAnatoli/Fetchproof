@@ -1581,3 +1581,13 @@ test('install-hooks --dry-run answers what the real run answers, deployed or not
   const gitconfig = fs.existsSync(path.join(home, 'gitconfig')) ? fs.readFileSync(path.join(home, 'gitconfig'), 'utf8') : '';
   assert.doesNotMatch(gitconfig, /hooksPath/, 'a dry run set core.hooksPath');
 });
+
+test('collect-remote redacts credentials in refused URLs', () => {
+  const credentials = [`ghp_${'z'.repeat(36)}`, `github_pat_${'B2'.repeat(20)}`];
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't',
+    '--url', `ftp://user:${credentials[0]}@a.example/`, '--url', `ftp://a.example/?token=${credentials[1]}`], { root: project() });
+  assert.equal(r.status, 3);
+  for (const credential of credentials) assert.ok(!r.all.includes(credential), 'a caller credential leaked');
+  assert.match(r.err, /redacted/);
+  assert.match(r.err, /not an http\(s\) URL/);
+});

@@ -4,6 +4,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- Rejected collection URLs pass through the existing credential redactor before
+  MCP tool results or `collect-remote` stderr can echo them (#378). Regression
+  coverage includes caller credentials in URL userinfo and query parameters.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

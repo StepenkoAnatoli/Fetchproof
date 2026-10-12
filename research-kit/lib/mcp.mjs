@@ -311,7 +311,7 @@ async function callTool(message, deps) {
   try {
     if (name === 'collect') {
       const queries = queriesInput({ queries: args.queries ?? [], urls: args.urls ?? [] });
-      if (queries.error) return ok(message.id, { isError: true, content: [text(`${queries.error}. urls takes page addresses starting with https://`)] });
+      if (queries.error) return ok(message.id, { isError: true, content: [text(redact(`${queries.error}. urls takes page addresses starting with https://`))] });
       const started = await deps.dispatch({
         repository: args.repository,
         inputs: {

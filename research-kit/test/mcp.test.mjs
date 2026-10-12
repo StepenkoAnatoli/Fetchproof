@@ -725,3 +725,16 @@ test('the server installs the closed-stdout guard before it writes its first byt
   assert.ok(call !== -1, 'mcp-server.mjs no longer tolerates a closed stdout (2026-09-30)');
   assert.ok(call < firstWrite, `the guard is installed after the first write (write at ${firstWrite}, guard at ${call})`);
 });
+
+test('refused URLs never echo caller credentials in a tool result', async () => {
+  const credentials = [`ghp_${'z'.repeat(36)}`, `github_pat_${'B2'.repeat(20)}`];
+  const d = deps();
+  const r = await handle(call('collect', { repository: 'o/r', topic: 'x', urls: [
+    `ftp://user:${credentials[0]}@a.example/`, `ftp://a.example/?token=${credentials[1]}`,
+  ] }), d);
+  assert.equal(r.result.isError, true);
+  for (const credential of credentials) assert.ok(!JSON.stringify(r).includes(credential), 'a caller credential leaked');
+  assert.match(r.result.content[0].text, /redacted/);
+  assert.match(r.result.content[0].text, /not an http\(s\) URL/);
+  assert.equal(d.seen.dispatch, undefined, 'a refused URL must not start a run');
+});
