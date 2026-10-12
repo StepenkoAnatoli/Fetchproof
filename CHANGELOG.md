@@ -4,6 +4,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- Each collection query and URL is refused when it contains CR or LF before trimming
+  or joining into workflow input (#376). MCP and `collect-remote` cannot turn one
+  declared item into extra searches or page fetches on the runner.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

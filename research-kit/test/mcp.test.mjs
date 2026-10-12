@@ -725,3 +725,15 @@ test('the server installs the closed-stdout guard before it writes its first byt
   assert.ok(call !== -1, 'mcp-server.mjs no longer tolerates a closed stdout (2026-09-30)');
   assert.ok(call < firstWrite, `the guard is installed after the first write (write at ${firstWrite}, guard at ${call})`);
 });
+
+test('collect refuses line breaks inside a query or URL before dispatch', async () => {
+  for (const key of ['queries', 'urls']) {
+    for (const value of ['https://a.example/x\nsecond', 'https://a.example/x\rsecond']) {
+      const d = deps();
+      const r = await handle(call('collect', { repository: 'o/r', topic: 'x', [key]: [value] }), d);
+      assert.equal(r.result.isError, true);
+      assert.match(r.result.content[0].text, /must be one line/);
+      assert.equal(d.seen.dispatch, undefined, 'a line break must not start a run');
+    }
+  }
+});

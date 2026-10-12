@@ -521,3 +521,14 @@ function require_read(bytes) {
   // openZip is what unwrapArtifact uses; reading the one entry is where the throw came from.
   return importedOpenZip(bytes).read('package.zip');
 }
+
+test('each query and URL must be one line before workflow input serialization', () => {
+  for (const key of ['queries', 'urls']) {
+    for (const value of ['https://a.example/x\ninjected', 'https://a.example/x\rinjected',
+      'https://a.example/x\r\ninjected', '\nhttps://a.example/x', 'https://a.example/x\n', '\r\n']) {
+      const r = queriesInput({ [key]: [value] });
+      assert.equal(r.value, undefined, `${key}: ${JSON.stringify(value)} was serialized`);
+      assert.match(r.error, /must be one line/);
+    }
+  }
+});

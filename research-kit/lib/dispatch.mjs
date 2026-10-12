@@ -71,14 +71,22 @@ export function redact(text) {
  * looks exactly like one from before these options existed.
  */
 export function queriesInput({ queries = [], urls = [] } = {}) {
-  const clean = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? '').trim()).filter(Boolean);
-  const pages = clean(urls);
+  const items = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? ''));
+  const searches = items(queries);
+  const addresses = items(urls);
+  // Check before trimming: even a leading/trailing newline changes the caller's item
+  // shape. collect.yml splits this input into lines, and URL parsing discards newlines.
+  if ([...searches, ...addresses].some((item) => /[\r\n]/.test(item))) {
+    return { value: undefined, error: 'a query or URL must be one line' };
+  }
+  const clean = (list) => list.map((item) => item.trim()).filter(Boolean);
+  const pages = clean(addresses);
   const bad = pages.filter((page) => {
     if (!/^https?:\/\/./i.test(page)) return true;
     try { new URL(page); return false; } catch { return true; }
   });
   if (bad.length) return { value: undefined, error: `not an http(s) URL: ${bad.join(', ')}` };
-  const lines = [...clean(queries), ...pages];
+  const lines = [...clean(searches), ...pages];
   return { value: lines.length ? lines.join('\n') : undefined, error: '' };
 }
 

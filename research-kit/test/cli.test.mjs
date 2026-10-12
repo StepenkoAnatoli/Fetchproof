@@ -1581,3 +1581,15 @@ test('install-hooks --dry-run answers what the real run answers, deployed or not
   const gitconfig = fs.existsSync(path.join(home, 'gitconfig')) ? fs.readFileSync(path.join(home, 'gitconfig'), 'utf8') : '';
   assert.doesNotMatch(gitconfig, /hooksPath/, 'a dry run set core.hooksPath');
 });
+
+test('collect-remote refuses line breaks in queries and URLs before asking for a token', () => {
+  const root = project();
+  for (const flag of ['--query', '--url']) {
+    for (const value of ['https://a.example/x\nsecond', 'https://a.example/x\rsecond']) {
+      const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', flag, value], { root });
+      assert.equal(r.status, 3);
+      assert.match(r.err.split('\n')[0], /must be one line/);
+      assert.ok(!r.err.includes('no GitHub token'), 'the input refusal must come first');
+    }
+  }
+});
