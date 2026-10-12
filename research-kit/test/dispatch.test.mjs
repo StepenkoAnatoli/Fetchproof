@@ -206,6 +206,7 @@ test('a 200 whose body is not JSON is a dispatch error, not a SyntaxError', asyn
     json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); },
   });
   for (const [name, call] of [
+    ['dispatchCollection', () => dispatchCollection({ repository: REPO, token: TOKEN, fetch: html })],
     ['getRun', () => getRun({ repository: REPO, runId: 1, token: TOKEN, fetch: html })],
     ['listArtifacts', () => listArtifacts({ repository: REPO, runId: 1, token: TOKEN, fetch: html })],
   ]) {

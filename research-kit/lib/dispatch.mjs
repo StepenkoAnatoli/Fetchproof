@@ -201,8 +201,7 @@ export async function dispatchCollection({
     throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${await readError(response)}`, { status: response.status });
   }
 
-  let body;
-  try { body = await response.json(); } catch { body = null; }
+  const body = await readJsonBody(response, 'dispatch');
   const workflowRunId = body?.workflow_run_id;
   if (!Number.isInteger(workflowRunId)) {
     throw new DispatchError('NO_RUN_ID', `the dispatch returned HTTP ${response.status} with no workflow_run_id`, {
@@ -225,7 +224,7 @@ function stringifyInputs(inputs) {
 /**
  * A 200 whose body is not JSON, as a DispatchError rather than a raw SyntaxError.
  *
- * dispatchCollection already guarded its body; getRun and listArtifacts did not. A 200 with
+ * dispatchCollection, getRun and listArtifacts share this parser. A 200 with
  * an HTML body - a maintenance page, a TLS-inspecting proxy, an edge cache under load -
  * threw `SyntaxError: Unexpected token <` straight out, and collect-remote reported it only
  * as UNKNOWN, with no status and no remedy (found 2026-09-30, break-test). The parser's
