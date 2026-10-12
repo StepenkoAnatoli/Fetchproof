@@ -106,7 +106,7 @@ function headers(token) {
 
 function splitRepository(repository) {
   const parts = String(repository ?? '').split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+  if (parts.length !== 2 || parts.some((part) => !part || /[^A-Za-z0-9._-]/.test(part) || part === '.' || part === '..')) {
     throw new DispatchError('REPOSITORY', `repository must be "owner/name", got ${JSON.stringify(String(repository))}`);
   }
   return parts;

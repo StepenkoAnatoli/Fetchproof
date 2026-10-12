@@ -225,9 +225,12 @@ test('a 200 whose body is not JSON is a dispatch error, not a SyntaxError', asyn
 
 test('a malformed repository is refused before any request is made', async () => {
   const doFetch = stubFetch([jsonResponse(200, { workflow_run_id: 1 })]);
-  for (const bad of ['no-slash', '/leading', 'trailing/', 'a/b/c']) {
-    await assert.rejects(() => dispatchCollection({ repository: bad, token: TOKEN, fetch: doFetch }),
-      (err) => err.code === 'REPOSITORY');
+  for (const bad of ['no-slash', '/leading', 'trailing/', 'a/b/c', '../x', 'o/..', './r', 'o/.',
+    'o/r?x=1', 'o/r#f', 'o/r%2fother', 'o/r\\other', 'o/r name', 'o/r\nname', 'o/r\n', 'o/r\r', 'o/répo']) {
+    for (const request of [dispatchCollection, getRun, listArtifacts, downloadArtifact]) {
+      await assert.rejects(() => request({ repository: bad, token: TOKEN, runId: 1, artifactId: 1, fetch: doFetch }),
+        (err) => err.code === 'REPOSITORY', `${request.name} accepted ${JSON.stringify(bad)}`);
+    }
   }
   assert.equal(doFetch.calls.length, 0, 'a bad repository must not produce a request');
 });
@@ -521,3 +524,9 @@ function require_read(bytes) {
   // openZip is what unwrapArtifact uses; reading the one entry is where the throw came from.
   return importedOpenZip(bytes).read('package.zip');
 }
+
+test('repository names with dots, underscores and hyphens retain their API path', async () => {
+  const doFetch = stubFetch([jsonResponse(200, { workflow_run_id: 1 })]);
+  await dispatchCollection({ repository: 'Example-org/project.name_v2-1', token: TOKEN, fetch: doFetch });
+  assert.match(doFetch.calls[0].url, /\/repos\/Example-org\/project\.name_v2-1\/actions\//);
+});

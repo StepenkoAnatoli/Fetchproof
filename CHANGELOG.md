@@ -4,6 +4,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- GitHub request helpers refuse repository components outside `[A-Za-z0-9._-]+`,
+  including `.` and `..`, before any request is made (#379). Query/fragment
+  delimiters, encoded separators, whitespace and control characters cannot alter
+  the API path.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,
