@@ -181,17 +181,23 @@ export function validateArtifact({
     }
 
     // ---- format version, before schema ------------------------------------------
-    // An unsupported MAJOR is reported distinctly from an invalid manifest: a v2 package
+    // A newer MAJOR is reported distinctly from an invalid manifest: such a package
     // is probably correct and simply newer than this reader, and calling that "invalid"
     // would send somebody hunting a corruption that is not there.
-    const version = String(manifest?.formatVersion ?? '');
-    const major = Number(version.split('.')[0]);
+    const version = manifest?.formatVersion;
+    const major = typeof version === 'string' && /^\d+\.\d+(?:\.\d+)?$/.test(version)
+      ? Number(version.split('.')[0]) : NaN;
     if (manifest?.format !== 'research-kit-artifact') {
       reject('FAIL', 'MANIFEST-SCHEMA', `${MANIFEST_PATH} does not declare format "research-kit-artifact"`,
         { path: MANIFEST_PATH, remedy: 'this is not a Research-Kit artifact' });
       return report();
     }
-    if (!Number.isInteger(major) || major < OLDEST_FORMAT_MAJOR || major > SUPPORTED_FORMAT_MAJOR) {
+    if (!Number.isInteger(major) || major < OLDEST_FORMAT_MAJOR) {
+      reject('FAIL', 'MANIFEST-SCHEMA', `${MANIFEST_PATH} has a missing, malformed or below-oldest formatVersion`,
+        { path: MANIFEST_PATH, remedy: 'regenerate the artifact' });
+      return report();
+    }
+    if (major > SUPPORTED_FORMAT_MAJOR) {
       reject('INCOMPLETE', 'FORMAT-UNSUPPORTED',
         `this package declares format version ${version || '(none)'}; this validator reads majors ${OLDEST_FORMAT_MAJOR} to ${SUPPORTED_FORMAT_MAJOR}`,
         { path: MANIFEST_PATH, remedy: `upgrade Research-Kit to a version that reads format ${major || '?'}.x` });

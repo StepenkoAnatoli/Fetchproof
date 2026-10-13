@@ -4,6 +4,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+
+- Missing, malformed and below-oldest artifact format versions are invalid manifests; only newer numeric majors receive the upgrade remedy (#361).
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

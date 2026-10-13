@@ -431,6 +431,25 @@ test('SUPPORTED_FORMAT_MAJOR is 2, and a 3.x package is INCOMPLETE rather than i
     'a newer package is probably correct and merely unreadable here; calling it invalid sends somebody hunting a corruption that is not there');
 });
 
+test('malformed and below-oldest format versions are invalid manifests, not newer formats', () => {
+  for (const [index, version] of [undefined, null, 3, ['3.0'], '', 'abc', '0.9.0', '1e2.0', '3.nope'].entries()) {
+    const manifest = clone(collected.manifest);
+    if (version === undefined) delete manifest.formatVersion;
+    else manifest.formatVersion = version;
+    const file = writeFixture(scratch, `invalid-version-${index}`, seal(copyPayload(collected.payload), manifest));
+    const result = validateArtifact({ file, tempRoot: scratch });
+    assert.equal(result.status, 'FAIL', JSON.stringify(version));
+    assert.equal(result.buildAuthorized, false);
+    assert.ok(result.errors.some((error) => error.code === 'MANIFEST-SCHEMA' && /regenerate/.test(error.remedy)));
+    assert.ok(result.errors.every((error) => error.code !== 'FORMAT-UNSUPPORTED'));
+  }
+  const manifest = clone(collected.manifest);
+  manifest.formatVersion = '3.0';
+  const result = validateArtifact({ file: writeFixture(scratch, 'future-version-short', seal(copyPayload(collected.payload), manifest)), tempRoot: scratch });
+  assert.equal(result.status, 'INCOMPLETE');
+  assert.ok(result.errors.some((error) => error.code === 'FORMAT-UNSUPPORTED' && /3\.x/.test(error.remedy)));
+});
+
 // ADR-0107: format 2.0.0 renames HUMAN_REVIEW_REQUIRED to REVIEW_REQUIRED and retires the
 // `human` reviewer. A 1.x package made before stays valid, and is reported under the new
 // name, so a consumer switches on one state; a 2.x package carrying either old value is not
