@@ -152,6 +152,24 @@ const FIXTURES = {
     },
     expect: { status: 'FAIL', code: 'ZIP-CASE-COLLISION' },
   },
+  '30-file-directory-collision-file-first': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/a', data: text('file') });
+      payload.push({ name: 'project/docs/a/b.md', data: text('child') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
+  },
+  '31-file-directory-collision-child-first': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/a/b.md', data: text('child') });
+      payload.push({ name: 'project/docs/a', data: text('file') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
+  },
   '18-unsupported-major-version': {
     build: () => {
       const manifest = clone(collected.manifest);
@@ -299,6 +317,11 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
       const codes = result.errors.map((e) => e.code);
       assert.ok(codes.includes(fixture.expect.code),
         `${name}: expected error ${fixture.expect.code}, got ${codes.join(', ') || '(none)'}`);
+    }
+    if (fixture.expect.noTempPath) {
+      const diagnostics = result.errors.map((error) => `${error.message} ${error.remedy ?? ''}`).join('\n');
+      assert.ok(!diagnostics.includes(scratch) && !/rk-artifact-|EEXIST|ENOTDIR/.test(diagnostics),
+        `${name}: structural ZIP error must not expose a materialization temp path`);
     }
     if ('buildAuthorized' in fixture.expect) {
       assert.equal(result.buildAuthorized, fixture.expect.buildAuthorized,

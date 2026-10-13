@@ -212,6 +212,8 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
   const problems = [];
   const seen = new Map();          // exact name -> count
   const folded = new Map();        // lowercased name -> first exact name that produced it
+  const files = new Set();
+  const directories = new Set();
   let totalBytes = 0;
 
   for (const entry of entries) {
@@ -242,7 +244,12 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
       continue;
     }
 
-    if (entry.isDirectory) continue;   // carries no payload and declares no size worth counting
+    if (entry.isDirectory) {
+      directories.add(entry.name.replace(/\/$/, ''));
+      continue;   // carries no payload and declares no size worth counting
+    }
+
+    files.add(entry.name);
 
     const count = (seen.get(entry.name) ?? 0) + 1;
     seen.set(entry.name, count);
@@ -278,6 +285,31 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
           path: entry.name,
         });
       }
+    }
+  }
+
+  // An archive may not use one path as both a regular file and the directory
+  // containing another entry. Otherwise materialization order decides whether mkdir
+  // or writeFileSync throws, turning a readable contradictory package into BLOCKED.
+  for (const file of files) {
+    if (directories.has(file)) {
+      problems.push({
+        code: 'ZIP-PATH-COLLISION',
+        detail: `file "${file}" is also declared as a directory`,
+        path: file,
+      });
+    }
+    let slash = file.indexOf('/');
+    while (slash !== -1) {
+      const parent = file.slice(0, slash);
+      if (files.has(parent)) {
+        problems.push({
+          code: 'ZIP-PATH-COLLISION',
+          detail: `file "${parent}" is also a directory prefix of "${file}"`,
+          path: file,
+        });
+      }
+      slash = file.indexOf('/', slash + 1);
     }
   }
 
