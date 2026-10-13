@@ -199,11 +199,13 @@ export function readMachineConfig(env = process.env) {
   try {
     const raw = parseJson(text ?? '');
     const { settings, retired, illTyped } = shape(raw && typeof raw === 'object' ? raw : {});
-    try { writeText(lastGoodPath(file), text); } catch { /* snapshot is best-effort */ }
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      try { writeText(lastGoodPath(file), text); } catch { /* snapshot is best-effort */ }
+    }
     return { settings, state: 'readable', source: file, error: null, retiredKeys: retired, illTypedKeys: illTyped };
   } catch (err) {
     const snapshot = readJson(lastGoodPath(file), null);
-    if (snapshot) {
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
       const { settings, retired, illTyped } = shape(snapshot);
       return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
     }

@@ -86,6 +86,33 @@ test('unreadable with nothing to hold fails CLOSED, and tightens exactly two kno
   assert.equal(posture(env).exitCode, 2, 'unreadable and resolved to blocking is its own code');
 });
 
+test('a non-object snapshot cannot restore a role or a permissive posture', () => {
+  for (const value of [[], 'x', [{ role: 'builder' }], null, 0, false, true]) {
+    const { env } = envWith('{"role": "buil', { snapshot: JSON.stringify(value) });
+    const read = readMachineConfig(env);
+    assert.equal(read.resolvedFrom, 'fallback-closed', JSON.stringify(value));
+    assert.equal(read.settings.role, 'unknown');
+    assert.equal(read.settings.failOpen, false);
+    assert.equal(collectionPolicy(env).mayCollect, false);
+    assert.equal(posture(env).exitCode, 2);
+  }
+});
+
+test('a parsed non-object config never creates or replaces the last-good snapshot', () => {
+  for (const value of [[], 'x', null, 0, false, true]) {
+    const contents = JSON.stringify(value);
+    const { env, file } = envWith(contents);
+    readMachineConfig(env);
+    assert.equal(fs.existsSync(`${file}.last-good`), false, `${contents} became a snapshot`);
+    const held = JSON.stringify({ role: 'builder', failOpen: false });
+    fs.writeFileSync(`${file}.last-good`, held);
+    readMachineConfig(env);
+    assert.equal(fs.readFileSync(`${file}.last-good`, 'utf8'), held);
+    fs.writeFileSync(file, '{"role": "buil');
+    assert.equal(readMachineConfig(env).settings.role, 'builder');
+  }
+});
+
 // ADR-0121 (2026-10-02, arena break-test #198): a posture key that is PRESENT and not of its
 // type resolved to the laxer default - `{"failOpen":"false"}` to fail-open, `"STRICT"` to
 // pluralist, `"HARD-BLOCK"` to ask - while `role` beside them resolves to the restrictive
