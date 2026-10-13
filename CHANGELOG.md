@@ -4,6 +4,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- `doctor` warns when an explicit Node startup choice leaves a configured proxy
+  off (#381): `NODE_USE_ENV_PROXY` accepts only `1`, and `--no-use-env-proxy`
+  disables it. The diagnostic shares the runtime choice reader and respects
+  command-line flag precedence over `NODE_OPTIONS` and the environment variable;
+  it never overrules the operator or echoes the variable value.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

@@ -983,12 +983,28 @@ test('registeredPath reads the path out of a command, quoted or bare', async () 
 // 22.20.0 the fetch went around the proxy and got HTTP 403. Nothing told the operator; the
 // error named no proxy.
 
-const nodeFindings = (nodeVersion, extraEnv = {}) => {
+const nodeFindings = (nodeVersion, extraEnv = {}, execArgv = []) => {
   const { env } = machine({ config: { role: 'collector' } });
   const scrubbed = { ...env };
   for (const key of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete scrubbed[key];
-  return machineHealth({ env: { ...scrubbed, ...extraEnv }, probe: READY, nodeVersion });
+  return machineHealth({ env: { ...scrubbed, ...extraEnv }, probe: READY, nodeVersion, execArgv });
 };
+
+test('doctor warns when an explicit startup choice leaves the configured proxy off', () => {
+  const configured = { HTTPS_PROXY: 'http://proxy.example:8080' };
+  const proxyFinding = (env, execArgv = []) => find(nodeFindings('24.21.0', { ...configured, ...env }, execArgv), 'proxy');
+  for (const value of ['0', 'true', 'yes', '', 'garbage']) {
+    const finding = proxyFinding({ NODE_USE_ENV_PROXY: value });
+    assert.equal(finding.severity, 'warn');
+    assert.match(finding.detail, /NODE_USE_ENV_PROXY.*requests go direct/);
+    assert.match(finding.fix, /unset NODE_USE_ENV_PROXY or set it to 1/);
+  }
+  assert.equal(proxyFinding({ NODE_USE_ENV_PROXY: '1' }).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--use-env-proxy' }).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_USE_ENV_PROXY: '1', NODE_OPTIONS: '--no-use-env-proxy' }).severity, 'warn');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--no-use-env-proxy' }, ['--use-env-proxy']).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--use-env-proxy' }, ['--no-use-env-proxy']).severity, 'warn');
+});
 
 test('behind a proxy, a Node that cannot use it is named, with the version to move to', () => {
   const old = find(nodeFindings('22.20.0', { HTTPS_PROXY: 'http://proxy.example:8080' }), 'proxy');

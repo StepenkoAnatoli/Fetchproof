@@ -17,7 +17,7 @@ import net from 'node:net';
 import { EventEmitter } from 'node:events';
 import { test, describe, assert, tempDir, fs, path, KIT_ROOT } from './harness.mjs';
 import * as serpapi from '../lib/serpapi.mjs';
-import { nodeHonoursEnvProxy, envProxyPlan, honourEnvProxy, fetchEnv, PROXY_VARIABLES } from '../lib/runtime.mjs';
+import { nodeHonoursEnvProxy, envProxyPlan, envProxyChoice, honourEnvProxy, fetchEnv, PROXY_VARIABLES } from '../lib/runtime.mjs';
 
 describe('proxy');
 
@@ -269,6 +269,24 @@ test('a choice made at startup is never overruled, even a choice of 0', () => {
   assert.equal(planFor({ ...PROXIED, NODE_USE_ENV_PROXY: '1' }), 'none', 'the restart sets it, so a restart cannot loop');
   assert.equal(planFor(PROXIED, { execArgv: ['--use-env-proxy'] }), 'none');
   assert.equal(planFor({ ...PROXIED, NODE_OPTIONS: '--max-old-space-size=4096 --no-use-env-proxy' }, { setGlobal: SWITCH }), 'none');
+});
+
+test('the startup proxy choice distinguishes disabled values and respects flag precedence', () => {
+  const choice = (env, execArgv = []) => envProxyChoice({ env, execArgv });
+  assert.equal(choice({}), null);
+  assert.equal(choice({ NODE_USE_ENV_PROXY: '1' }), true);
+  for (const value of ['0', 'true', 'yes', '', 'garbage']) {
+    const env = { ...PROXIED, NODE_USE_ENV_PROXY: value };
+    assert.equal(choice(env), false);
+    assert.equal(planFor(env, { setGlobal: SWITCH }), 'none', 'an explicit value must never be overruled');
+    assert.equal(fetchEnv(env), env, 'the child environment keeps the operator choice');
+    assert.equal(choice(env, ['--use-env-proxy']), true, 'the flag outranks the variable');
+  }
+  assert.equal(choice({ NODE_USE_ENV_PROXY: '1', NODE_OPTIONS: '--no-use-env-proxy' }), false);
+  assert.equal(choice({ NODE_OPTIONS: '--no-use-env-proxy' }, ['--use-env-proxy']), true);
+  assert.equal(choice({ NODE_OPTIONS: '--use-env-proxy' }, ['--no-use-env-proxy']), false);
+  assert.equal(choice({}, ['--use-env-proxy', '--no-use-env-proxy']), false);
+  assert.equal(choice({}, ['--no-use-env-proxy', '--use-env-proxy']), true);
 });
 
 test('set: the proxy is turned on once, with the environment, and nothing restarts', async () => {

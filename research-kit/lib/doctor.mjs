@@ -19,7 +19,7 @@ import { recordOverride } from './provenance.mjs';
 import { probeFirecrawl, selectTransport } from './transport.mjs';
 import { loadConfig, configPath } from './machine.mjs';
 import { cliInstallSpec, cliCompatibility } from './firecrawl.mjs';
-import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling } from './runtime.mjs';
+import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice } from './runtime.mjs';
 import { verifyBundle, bundleSummary } from './bundle.mjs';
 import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
@@ -41,7 +41,7 @@ function samePath(a, b) {
 
 // ---------------------------------------------------------------- machine
 
-export function machineHealth({ env = process.env, gitPaths = {}, probe = probeFirecrawl, nodeVersion = process.versions.node } = {}) {
+export function machineHealth({ env = process.env, gitPaths = {}, probe = probeFirecrawl, nodeVersion = process.versions.node, execArgv = process.execArgv } = {}) {
   const out = [];
   const read = readMachineConfig(env);
   const post = posture(env);
@@ -93,6 +93,10 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
     out.push(f('warn', 'proxy',
       `${unusable} is set to a value Node cannot use as a proxy (it takes an http:// or https:// URL) - the kit's requests go direct`,
       `write it as ${proxySpelling(env[unusable])}`));
+  } else if (proxy && envProxyChoice({ env, execArgv }) === false) {
+    out.push(f('warn', 'proxy',
+      'NODE_USE_ENV_PROXY is set to a value other than 1, or --no-use-env-proxy was selected; the kit leaves the proxy off and requests go direct',
+      'unset NODE_USE_ENV_PROXY or set it to 1, and remove --no-use-env-proxy from Node startup options'));
   } else if (proxy) {
     out.push(nodeHonoursEnvProxy(nodeVersion)
       ? f('pass', 'proxy', `${proxy} is set, and node ${nodeVersion} sends the kit's requests through it`)
