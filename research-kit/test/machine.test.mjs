@@ -64,16 +64,27 @@ test('an ABSENT config still reads as collector - ADR-0010\'s default is untouch
 });
 
 test('unreadable: a truncated config holds the last one that parsed - every knob, not just failOpen', () => {
-  const { env } = envWith('{"failOpen": fal', {
+  const { env, file } = envWith('{"failOpen": fal', {
     snapshot: JSON.stringify({ failOpen: false, role: 'builder', evidencePolicy: 'strict', editGate: { mode: 'hard-block' } }),
   });
   const read = readMachineConfig(env);
   assert.equal(read.state, 'unreadable');
+  assert.equal(read.source, file, 'source names the broken config');
+  assert.equal(read.snapshotSource, `${file}.last-good`);
   assert.equal(read.settings.failOpen, false, 'a hardened machine must not silently revert to fail-open');
   assert.equal(read.settings.role, 'builder', 'a builder must not silently become a collector - that role may spend credits');
   assert.equal(read.settings.evidencePolicy, 'strict');
   assert.equal(read.settings.editGate.mode, 'hard-block');
   assert.ok(read.error, 'the parse error is carried, not swallowed');
+});
+
+test('an unknown role held from a snapshot names its value and actual source', () => {
+  const { env, file } = envWith('{broken', { snapshot: '{"role":"collecter"}' });
+  const policy = collectionPolicy(env);
+  assert.equal(policy.mayCollect, false);
+  assert.ok(policy.reason.includes(`${file}.last-good`));
+  assert.match(policy.reason, /collecter/);
+  assert.doesNotMatch(policy.reason, /no last-good snapshot|does not parse/);
 });
 
 test('unreadable with nothing to hold fails CLOSED, and tightens exactly two knobs', () => {

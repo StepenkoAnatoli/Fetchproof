@@ -4,6 +4,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+
+- Broken machine-config diagnostics name the actual config and distinguish settings held by a last-good snapshot from fail-closed fallback (#366).
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

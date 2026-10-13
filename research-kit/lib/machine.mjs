@@ -205,7 +205,7 @@ export function readMachineConfig(env = process.env) {
     const snapshot = readJson(lastGoodPath(file), null);
     if (snapshot) {
       const { settings, retired, illTyped } = shape(snapshot);
-      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
+      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: file, snapshotSource: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
     }
     // Nothing to hold: fail CLOSED, and the ROLE becomes `unknown` rather than the
     // default. The old "every config was previously snapshotted" rationale does not
@@ -318,9 +318,9 @@ export function collectionPolicy(env = process.env) {
     return {
       role,
       mayCollect: false,
-      reason: read.state === 'unreadable'
+      reason: read.resolvedFrom === 'fallback-closed'
         ? `this machine's role cannot be established: ${read.source} does not parse (${read.error}) and there is no last-good snapshot`
-        : `this machine's config names a role the kit does not know ("${readJson(read.source, {})?.role ?? 'unreadable value'}")`,
+        : `this machine's ${read.resolvedFrom === 'snapshot' ? `last-good snapshot (${read.snapshotSource})` : 'config'} names a role the kit does not know ("${readJson(read.snapshotSource ?? read.source, {})?.role ?? 'unreadable value'}")`,
       remedy: `repair the config, or declare the role: ${kitCommand('install-hooks.mjs', '--role collector|builder')}`,
     };
   }

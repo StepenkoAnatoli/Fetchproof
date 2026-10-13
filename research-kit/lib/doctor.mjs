@@ -47,8 +47,11 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
   const post = posture(env);
 
   if (read.state === 'unreadable') {
+    const resolution = read.resolvedFrom === 'snapshot'
+      ? `Posture (${post.failOpen ? 'fail-open' : 'fail-CLOSED'}) and role (${read.settings.role}) held from ${read.snapshotSource}, the last config that parsed.`
+      : 'There is no last-good snapshot: fail-CLOSED, role unknown.';
     out.push(f('critical', 'machine-config',
-      `${read.source} exists and does not parse (${read.error}). Resolved posture: ${post.failOpen ? 'fail-open from the last config that parsed' : 'fail-CLOSED, because there was nothing to hold'}.`,
+      `${read.source} exists and does not parse (${read.error}). ${resolution}`,
       'repair or delete the config file; the kit keeps a <config>.last-good snapshot beside it'));
   } else {
     out.push(f('pass', 'machine-config', `${read.state} (${read.source}); posture: ${post.failOpen ? 'fail-open' : 'fail-closed'}`));

@@ -151,6 +151,22 @@ test('an unreadable machine config is a blocking CRITICAL that names the resolve
   assert.match(finding.detail, /fail-CLOSED/);
 });
 
+test('a held config names the broken file and distinguishes its snapshot from fallback', () => {
+  for (const failOpen of [false, true]) {
+    const { env, configFile } = machine({ config: { failOpen, role: 'builder' } });
+    machineHealth({ env, probe: READY }); // Save the last readable config.
+    writeText(configFile, '{broken');
+    const finding = find(machineHealth({ env, probe: READY }), 'machine-config');
+    assert.equal(finding.severity, 'critical');
+    assert.ok(finding.detail.startsWith(`${configFile} exists and does not parse`));
+    assert.ok(finding.detail.includes(`${configFile}.last-good`));
+    assert.match(finding.detail, /held from/);
+    assert.match(finding.detail, failOpen ? /fail-open/ : /fail-CLOSED/);
+    assert.match(finding.detail, /builder/);
+    assert.doesNotMatch(finding.detail, /nothing to hold|no last-good snapshot/);
+  }
+});
+
 test('a retired config key and a retired env var are both reported', () => {
   const { env, configFile } = machine({});
   writeText(configFile, JSON.stringify({ claudeGate: 'hard-block' }));
