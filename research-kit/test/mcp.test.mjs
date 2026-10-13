@@ -258,6 +258,29 @@ test('an unknown or mistyped argument is refused, not ignored', () => {
 
 // ---------------------------------------------------------------- collecting
 
+test('collect refuses unsafe client references before token lookup or dispatch', async () => {
+  const bad = ['job 1', 'x'.repeat(65), 'a/b', '..', 'ünï', '-lead', 'job\n', 'job\r'];
+  for (const client_ref of bad) {
+    for (const env of [TOKEN_ENV, {}]) {
+      const d = deps({ env });
+      const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref }), d);
+      assert.equal(r.error, undefined);
+      assert.equal(r.result.isError, true, JSON.stringify(client_ref));
+      assert.match(r.result.content[0].text, /client_ref.*refusing rather than rewriting/);
+      assert.equal(d.seen.dispatch, undefined);
+    }
+  }
+  for (const client_ref of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+    const d = deps();
+    const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref }), d);
+    assert.equal(r.result.isError, undefined);
+    assert.equal(d.seen.dispatch.inputs.client_ref, client_ref);
+  }
+  const secret = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
+  const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref: `${secret}/bad` }), deps());
+  assert.ok(!JSON.stringify(r).includes(secret), 'the refusal leaked a caller credential');
+});
+
 test('collect refuses non-array query and URL arguments before dispatch', async () => {
   const cases = [
     ['queries', 42], ['queries', 'q'], ['queries', {}], ['queries', null],

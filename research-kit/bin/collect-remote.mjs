@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFlags, flagList, canonicalJson, checkFlagValues } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
+import { checkClientRef } from '../lib/artifact.mjs';
 import {
   dispatchCollection, waitForRun, MAX_POLL_RETRIES, fetchCorpus, queriesInput, usableOutDir,
   tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS,
@@ -150,6 +151,16 @@ checkFlagValues(flags, {
   timeout: { int: true, min: 1 },
   out: {}, workflow: {}, ref: {},
 }, { exit: EXIT.CANNOT_START });
+
+if (flags['client-ref'] === true) {
+  process.stderr.write('--client-ref needs a value\n');
+  process.exit(EXIT.CANNOT_START);
+}
+const clientReference = checkClientRef(flags['client-ref']);
+if (!clientReference.ok) {
+  process.stderr.write(`${redact(clientReference.detail)}\n`);
+  process.exit(EXIT.CANNOT_START);
+}
 
 // The caller's own typo is refused before anything else is asked of them - a missing
 // token would otherwise hide it, and a dispatched bad URL would be searched as text.

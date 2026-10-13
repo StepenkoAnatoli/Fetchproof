@@ -324,7 +324,7 @@ test('roles and media types are assigned, not guessed at read time', () => {
 // ---------------------------------------------------------------- client_ref and naming
 
 test('an invalid client_ref is refused, never rewritten', () => {
-  for (const bad of ['../escape', 'has space', '-leading-dash', 'a'.repeat(65), 'sl/ash']) {
+  for (const bad of ['../escape', 'has space', '-leading-dash', 'a'.repeat(65), 'sl/ash', 'job\n', 'job\r', 'job\r\n']) {
     const check = checkClientRef(bad);
     assert.equal(check.ok, false, `${JSON.stringify(bad)} should be refused`);
     assert.ok(/refusing rather than rewriting/.test(check.detail));

@@ -54,7 +54,7 @@ const CLIENT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export function checkClientRef(value) {
   if (value === null || value === undefined || value === '') return { ok: true, value: null };
-  if (typeof value !== 'string' || !CLIENT_REF_RE.test(value)) {
+  if (typeof value !== 'string' || /[\r\n]/.test(value) || !CLIENT_REF_RE.test(value)) {
     return {
       ok: false,
       // Rewriting a caller's correlation token into something "safe" is the worst of both

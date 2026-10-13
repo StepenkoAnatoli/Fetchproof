@@ -21,6 +21,29 @@ import { renderTable } from '../lib/render.mjs';
 
 describe('cli');
 
+test('collect-remote refuses unsafe client references before token lookup or creating out', () => {
+  const root = project();
+  const out = path.join(root, 'not-created');
+  for (const clientRef of ['job 1', 'x'.repeat(65), 'a/b', '..', 'ünï', '-lead', 'job\n', 'job\r']) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--out', out], { root });
+    assert.equal(r.status, 3);
+    assert.match(r.err, /client_ref.*refusing rather than rewriting/);
+    assert.equal(fs.existsSync(out), false);
+  }
+  const bare = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref'], { root });
+  assert.equal(bare.status, 3);
+  assert.match(bare.err, /--client-ref needs a value/);
+  for (const clientRef of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--no-wait'], { root });
+    assert.equal(r.status, 3);
+    assert.match(r.err, /no GitHub token/, 'valid input must reach the existing missing-token refusal');
+  }
+  const secret = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
+  const redacted = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', `${secret}/bad`], { root });
+  assert.ok(!redacted.all.includes(secret));
+  assert.match(redacted.err, /redacted/);
+});
+
 function preflightScopeEnv(evidencePolicy = 'pluralist') {
   const home = tempDir('rk-preflight-scope-home-');
   const config = path.join(home, 'config.json');

@@ -45,6 +45,7 @@
 
 import { dispatchCollection, getRunSummary, fetchCorpus, tokenFromEnv, redact, DispatchError, queriesInput, usableOutDir } from './dispatch.mjs';
 import { KIT_VERSION } from './core.mjs';
+import { checkClientRef } from './artifact.mjs';
 
 /**
  * DUAL-ERA, and the reason is that the specification is ahead of every client.
@@ -417,6 +418,10 @@ export function validateArgs(tool, args) {
     if (prop.enum && !prop.enum.includes(value)) return `${key} must be one of ${prop.enum.join(', ')}`;
     if (prop.minimum !== undefined && value < prop.minimum) return `${key} must be at least ${prop.minimum}`;
     if (prop.maximum !== undefined && value > prop.maximum) return `${key} must be at most ${prop.maximum}`;
+  }
+  if (tool.name === 'collect') {
+    const reference = checkClientRef(args.client_ref);
+    if (!reference.ok) return redact(reference.detail);
   }
   return null;
 }
