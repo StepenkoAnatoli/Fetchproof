@@ -1,6 +1,13 @@
+![Research-Kit workflow: frame the unknowns, collect primary sources, review claims, run the gate, and hand an authored brief to a builder.](docs/assets/research-overview.svg)
+
 # Research-Kit
 
-[![offline suite](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml/badge.svg)](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml)
+[![Tests and CI](https://img.shields.io/github/actions/workflow/status/StepenkoAnatoli/Research-Kit/offline-suite.yml?branch=main&label=tests%20%26%20CI&style=flat-square)](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml)
+[![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-2563eb?style=flat-square)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/StepenkoAnatoli/Research-Kit/main?style=flat-square&color=0d9488)](https://github.com/StepenkoAnatoli/Research-Kit/commits/main)
+[![GitHub stars](https://img.shields.io/github/stars/StepenkoAnatoli/Research-Kit?style=flat-square&color=f5b942)](https://github.com/StepenkoAnatoli/Research-Kit/stargazers)
+
+[Quickstart](QUICKSTART.md) · [Command reference](research-kit/README.md) · [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
 
 **Research first, build second.** Research-Kit gives AI agents a workflow for collecting
 sources, declaring blocking unknowns, and handing traceable research artifacts to a builder.
@@ -45,6 +52,7 @@ through GitHub with one token, and you only read the brief.
 - [Supported platforms](#supported-platforms)
 - [Repository layout](#repository-layout)
 - [Documentation](#documentation)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## How it works
@@ -680,6 +688,7 @@ docs/
   architecture-history/  what the architecture map used to say, and when it changed
   review-*.md and other dated files: past reviews, audits and build reports
 AGENTS.md                the rules every agent follows in this repository
+CONTRIBUTING.md          setup, verification and PR guidance for contributors
 CONTEXT.md               the domain vocabulary
 CHANGELOG.md             what changed in each release
 QUICKSTART.md            the GitHub route with one token
@@ -709,6 +718,13 @@ BUNDLE_INDEX.md, RESEARCH_REPORT.md      the archive this repository was receive
 - [`CHANGELOG.md`](CHANGELOG.md): release notes. The kit is feature-frozen since 0.9.0;
   it takes bug fixes, documentation, tests and vendor updates.
 
+## Contributing
+
+Bug fixes, documentation, regression tests and vendor compatibility updates are welcome.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification, commit reports and
+PR guidance. Browse the [good first issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+and check for an existing fix PR before starting.
+
 ## License
 
 The code, tests and documentation are licensed under the
@@ -723,3 +739,5 @@ licence. They are other people's pages, reproduced as research evidence so that 
 claim can be checked against the page it rests on. Copyright stays with their owners, this
 repository grants no licence over them, and [`NOTICE`](NOTICE) says which hosts' own
 licences permit redistribution with attribution. `REUSE.toml` marks those paths.
+
+> *If you find this project helpful, please consider giving it a ⭐!*

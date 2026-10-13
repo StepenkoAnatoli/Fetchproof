@@ -6,6 +6,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 ## Unreleased
 
 - selftest refuses each unmatched group before starting tests, including when another requested group matches (#332).
+
+- The README opens with an accessible workflow preview and linked CI, license,
+  last-commit and stars badges. A contributor guide explains setup, verification,
+  issue labels and the existing commit/PR protocol.
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,
