@@ -4,6 +4,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+
+- Fetch and search registries refuse inherited object members as provider names
+  at every precedence level (#349), before a run or doctor can treat them as adapters.
+
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

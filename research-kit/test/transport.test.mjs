@@ -46,6 +46,28 @@ test('an unknown transport is an error naming the two that exist', () => {
   assert.throws(() => selectTransport({ explicit: 'curl', env: {}, config: {} }), /Known transports/);
 });
 
+test('inherited registry members are refused at every transport and search precedence level', () => {
+  const absent = () => ({ installed: false, authenticated: false, version: null, credits: null });
+  for (const name of ['constructor', 'toString', '__proto__', 'valueOf', 'hasOwnProperty']) {
+    for (const choice of [
+      { explicit: name, env: {}, config: {} },
+      { env: { RESEARCH_KIT_TRANSPORT: name }, config: {} },
+      { env: {}, config: { transport: name } },
+    ]) {
+      assert.throws(() => selectTransport({ ...choice, probe: absent }), (err) =>
+        err.code === 'UNKNOWN_TRANSPORT' && /Known transports/.test(err.message));
+    }
+    for (const choice of [
+      { explicit: name, env: {}, config: {} },
+      { env: { RESEARCH_KIT_SEARCH_TRANSPORT: name }, config: {} },
+      { env: {}, config: { searchTransport: name } },
+    ]) {
+      assert.throws(() => selectSearch({ ...choice, probe: absent }), (err) =>
+        err.code === 'UNKNOWN_SEARCH_PROVIDER' && /Known search providers/.test(err.message));
+    }
+  }
+});
+
 test('probeFirecrawl takes injected probes, so doctor\'s tests need no CLI', () => {
   // cache:false, because the probe is now memoised per process - two different injected
   // CLIs in one test are two different questions, and both have to be asked.
