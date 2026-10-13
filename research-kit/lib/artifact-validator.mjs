@@ -35,6 +35,7 @@ import { validateJsonSchema } from './release/schema.mjs';
 import { readCorpus } from './corpus.mjs';
 import { verifyHandoff } from './handoff.mjs';
 import { SECRET_PATTERNS } from './doctor.mjs';
+import { derivePortableState } from './artifact-state.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = path.resolve(here, '..');
@@ -361,6 +362,23 @@ export function validateArtifact({
         workdir = fs.mkdtempSync(path.join(tempRoot, 'rk-artifact-'));
         const projectRoot = materializeProject(workdir, bodies);
         for (const finding of provenanceProblems(projectRoot)) reject('FAIL', finding.code, finding.message, finding);
+      }
+    }
+
+    if (manifest.buildAuthorized === true && status === 'PASS') {
+      if (!workdir) workdir = fs.mkdtempSync(path.join(tempRoot, 'rk-artifact-'));
+      const projectRoot = materializeProject(workdir, bodies);
+      const derived = derivePortableState(projectRoot, { formatMajor: major });
+      if (!derived.buildAuthorized) {
+        reject('FAIL', 'AUTHORIZATION-INCONSISTENT',
+          `the package claims APPROVED_BRIEF, but its corpus derives ${derived.state}`,
+          { path: MANIFEST_PATH, remedy: 'complete the packaged corpus gate and review steps, then regenerate the artifact' });
+      } else {
+        warnings.push(problem('PORTABLE-BASELINE', 'approval was re-derived with unpromoted portable findings and the shared 180-day freshness default; producer or consumer policy and hooks were not used'));
+        if (derived.legacyBriefCompatible) warnings.push(problem('BRIEF-LEGACY-COMPATIBLE', 'the format-1 brief has no gate field and its covered inputs match the pre-0069 hash; current gate and review checks also pass'));
+        for (const finding of derived.verdict?.warnings ?? []) warnings.push(problem(
+          `PREFLIGHT-${finding.rule}`, String(finding.detail ?? finding.rule), { remedy: finding.fix ?? null },
+        ));
       }
     }
 

@@ -135,7 +135,8 @@ node "$HOME/.agents/research-kit/bin/handoff.mjs"     # did the corpus arrive wh
 | `property-vector-conformance.mjs` + `.py` | exported property vectors, in two languages |
 | `property-replay.mjs` | replay a captured property failure deterministically |
 | `evidence-context.mjs` | what one unknown rests on (`--unknown U-5`, `--all`, `--json`), read-only |
-| `artifact.mjs` | the portable package: `create` (derives authorization, never takes it) and `validate` (offline, read-only) |
+| `artifact.mjs` | create and write portable packages; authorization comes from the shared derivation |
+| `artifact-state.mjs` | shared producer/validator gate, handoff, map, findings and brief approval derivation |
 | `collect-remote.mjs` | run the collector on GitHub and bring the result back (`--repository`, `--topic`, `--query`, `--url`, `--prefer`, `--prior`, `--json`) |
 | `mcp-server.mjs` | the collector as an MCP server over stdio, for an agent that speaks the protocol |
 | `disclosure.mjs` | what a stranger can read of a workflow run (`--repository`, `--run`, `--topic`), unauthenticated and read-only |
@@ -563,7 +564,7 @@ node research-kit/bin/selftest.mjs            # all of it
 node research-kit/bin/selftest.mjs gate hook  # just these files
 ```
 
-1789 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
+1795 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
 the assertions settled (ADR-0021), and each test is raced against a watchdog
 (`RESEARCH_KIT_TEST_TIMEOUT`, default 60s).
 

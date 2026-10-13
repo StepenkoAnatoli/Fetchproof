@@ -1,0 +1,58 @@
+[
+  {
+    "profile": "unstamped",
+    "syntheticInputs": true,
+    "writerCommit": "3bac1f26ddbf8cb6a794626e53dc2af313860940",
+    "formatVersion": "1.0.0",
+    "producerState": "APPROVED_BRIEF",
+    "producerAuthorized": true,
+    "consumerStatus": "PASS",
+    "consumerAuthorized": true,
+    "stamp": null,
+    "stampHasGate": false,
+    "historicalInputs": "e0babc86cec671c9",
+    "currentInputs": "4a70d60bab6fe05e",
+    "currentProducerState": "APPROVED_BRIEF",
+    "briefText": "# Brief - Fixture topic\n\n_Auto-drafted 2026-10-13 by `bin/brief.mjs` from the corpus. Sections marked **TODO**\nrequire the reviewing agent's judgement; everything else is assembled from evidence already\nin `research/`. While a **TODO** remains, this brief is **not reviewed** and the\nhandoff is **not approved** - a structurally valid corpus, a reviewed one, and an\napproved handoff are three different states._\n\nReviewed by: _agent - the agent that classified the map, rewrote the findings and answered the **TODO** sections replaces this line with `Reviewed by: agent`_\n\n**This is the phase-1 to phase-2 handoff.** **Gate state: not evaluated in this run.**\n\n**Gate warnings: not evaluated in this run.**\n\nWhoever you are - another agent, a different model, or a person - read this file\nfirst. You should not need to re-research anything to start work. If something\nhere is not enough to build from, say which fact is missing rather than guessing\nit: that is a phase-1 gap to close, not a phase-2 judgment call.\n\n## Intent\n\nA fixture project that passes its own gate, so a test can prove the gate says PASS for a\ncorpus that deserves it.\n\n## What we verified\n\n**These are declared CLOSED claims; verification has not been evaluated in this run.**\nRead the recorded claims and sources below as a draft for review, not successful verification.\n\n| Claim | Source | Type |\n|---|---|---|\n| The free tier caps this design at 10 requests per minute, which is what sets the collector default; the 1,000 included credits are roughly 25 runs at the quick depth. | E-01 `example.invalid` (U-1) | P |\n\n## Contradictions and how they were resolved\n\nNone. One source, re-read on 2026-10-13, and nothing else in the corpus speaks to the same limit.\n\n## Known unknowns\n\nNone. No unknown is declared KNOWN-UNKNOWN.\n\n## Decision\n\nBuild against a 10-request-per-minute ceiling and a 1,000-credit month. Out of scope: paid tiers, which no row in this corpus touches.\n\n## Next steps\n\n1. Review the **TODO** sections above (Contradictions, Decision) before handing off.\n2. Hand this file to the builder (phase 2). Re-running `node \"C:\\Users\\PC\\Desktop\\gittoken\\Research-Kit-issue-357\\research-kit/bin/brief.mjs\"`\n   redrafts this file while it is unedited; after any edit it refuses without `--force`,\n   so your judgements are preserved.\n\n"
+  },
+  {
+    "profile": "pre-0069",
+    "syntheticInputs": true,
+    "writerCommit": "3bac1f26ddbf8cb6a794626e53dc2af313860940",
+    "formatVersion": "1.0.0",
+    "producerState": "APPROVED_BRIEF",
+    "producerAuthorized": true,
+    "consumerStatus": "PASS",
+    "consumerAuthorized": true,
+    "stamp": {
+      "edited": true,
+      "inputs": "e0babc86cec671c9",
+      "gate": "unknown"
+    },
+    "stampHasGate": false,
+    "historicalInputs": "e0babc86cec671c9",
+    "currentInputs": "4a70d60bab6fe05e",
+    "currentProducerState": "REVIEW_IN_PROGRESS",
+    "briefText": "# Brief - Fixture topic\n\n_Auto-drafted 2026-10-13 by `bin/brief.mjs` from the corpus. Sections marked **TODO**\nrequire the reviewing agent's judgement; everything else is assembled from evidence already\nin `research/`. While a **TODO** remains, this brief is **not reviewed** and the\nhandoff is **not approved** - a structurally valid corpus, a reviewed one, and an\napproved handoff are three different states._\n\nReviewed by: _agent - the agent that classified the map, rewrote the findings and answered the **TODO** sections replaces this line with `Reviewed by: agent`_\n\n**This is the phase-1 to phase-2 handoff.** **Gate state: not evaluated in this run.**\n\n**Gate warnings: not evaluated in this run.**\n\nWhoever you are - another agent, a different model, or a person - read this file\nfirst. You should not need to re-research anything to start work. If something\nhere is not enough to build from, say which fact is missing rather than guessing\nit: that is a phase-1 gap to close, not a phase-2 judgment call.\n\n## Intent\n\nA fixture project that passes its own gate, so a test can prove the gate says PASS for a\ncorpus that deserves it.\n\n## What we verified\n\n**These are declared CLOSED claims; verification has not been evaluated in this run.**\nRead the recorded claims and sources below as a draft for review, not successful verification.\n\n| Claim | Source | Type |\n|---|---|---|\n| The free tier caps this design at 10 requests per minute, which is what sets the collector default; the 1,000 included credits are roughly 25 runs at the quick depth. | E-01 `example.invalid` (U-1) | P |\n\n## Contradictions and how they were resolved\n\nNone. One source, re-read on 2026-10-13, and nothing else in the corpus speaks to the same limit.\n\n## Known unknowns\n\nNone. No unknown is declared KNOWN-UNKNOWN.\n\n## Decision\n\nBuild against a 10-request-per-minute ceiling and a 1,000-credit month. Out of scope: paid tiers, which no row in this corpus touches.\n\n## Next steps\n\n1. Review the **TODO** sections above (Contradictions, Decision) before handing off.\n2. Hand this file to the builder (phase 2). Re-running `node \"C:\\Users\\PC\\Desktop\\gittoken\\Research-Kit-issue-357\\research-kit/bin/brief.mjs\"`\n   redrafts this file while it is unedited; after any edit it refuses without `--force`,\n   so your judgements are preserved.\n\n<!-- research-kit:brief-draft body=09cf0348c43232bd inputs=e0babc86cec671c9 -->\n"
+  },
+  {
+    "profile": "current",
+    "syntheticInputs": true,
+    "writerCommit": "3fa03fa1749d591af9cd7197e1c09f66ffacd231",
+    "formatVersion": "2.0.0",
+    "producerState": "APPROVED_BRIEF",
+    "producerAuthorized": true,
+    "consumerStatus": "PASS",
+    "consumerAuthorized": true,
+    "stamp": {
+      "edited": true,
+      "inputs": "4a70d60bab6fe05e",
+      "gate": "unknown"
+    },
+    "stampHasGate": true,
+    "historicalInputs": "e0babc86cec671c9",
+    "currentInputs": "4a70d60bab6fe05e",
+    "currentProducerState": "APPROVED_BRIEF",
+    "briefText": "# Brief - Fixture topic\n\n_Auto-drafted 2026-10-13 by `bin/brief.mjs` from the corpus. Sections marked **TODO**\nrequire the reviewing agent's judgement; everything else is assembled from evidence already\nin `research/`. While a **TODO** remains, this brief is **not reviewed** and the\nhandoff is **not approved** - a structurally valid corpus, a reviewed one, and an\napproved handoff are three different states._\n\nReviewed by: _agent - the agent that classified the map, rewrote the findings and answered the **TODO** sections replaces this line with `Reviewed by: agent`_\n\n**This is the phase-1 to phase-2 handoff.** **Gate state: not evaluated in this run.**\n\n**Gate warnings: not evaluated in this run.**\n\nWhoever you are - another agent, a different model, or a person - read this file\nfirst. You should not need to re-research anything to start work. If something\nhere is not enough to build from, say which fact is missing rather than guessing\nit: that is a phase-1 gap to close, not a phase-2 judgment call.\n\n## Intent\n\nA fixture project that passes its own gate, so a test can prove the gate says PASS for a\ncorpus that deserves it.\n\n## What we verified\n\n**These are declared CLOSED claims; verification has not been evaluated in this run.**\nRead the recorded claims and sources below as a draft for review, not successful verification.\n\n| Claim | Source | Type |\n|---|---|---|\n| The free tier caps this design at 10 requests per minute, which is what sets the collector default; the 1,000 included credits are roughly 25 runs at the quick depth. | E-01 `example.invalid` (U-1) | P |\n\n## Contradictions and how they were resolved\n\nNone. One source, re-read on 2026-10-13, and nothing else in the corpus speaks to the same limit.\n\n## Known unknowns\n\nNone. No unknown is declared KNOWN-UNKNOWN.\n\n## Decision\n\nBuild against a 10-request-per-minute ceiling and a 1,000-credit month. Out of scope: paid tiers, which no row in this corpus touches.\n\n## Next steps\n\n1. Review the **TODO** sections above (Contradictions, Decision) before handing off.\n2. Hand this file to the builder (phase 2). Re-running `node \"C:\\Users\\PC\\Desktop\\gittoken\\Research-Kit-issue-357\\research-kit/bin/brief.mjs\"`\n   redrafts this file while it is unedited; after any edit it refuses without `--force`,\n   so your judgements are preserved.\n\n<!-- research-kit:brief-draft body=48b7691be9cb4a56 inputs=4a70d60bab6fe05e gate=unknown -->\n"
+  }
+]

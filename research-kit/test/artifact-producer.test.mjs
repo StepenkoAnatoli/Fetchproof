@@ -14,7 +14,7 @@ import {
 } from '../lib/artifact.mjs';
 import { validateArtifact, MANIFEST_PATH, MANIFEST_DIGEST_PATH } from '../lib/artifact-validator.mjs';
 import { openZip } from '../lib/artifact-zip.mjs';
-import { readCorpus, appendRow } from '../lib/corpus.mjs';
+import { readCorpus, appendRow, parseCapture } from '../lib/corpus.mjs';
 import { writeRaw } from '../lib/collect.mjs';
 import { firstFinding } from '../lib/finding.mjs';
 import { collectedProject, approvedProject, IDENTITY } from './artifact-fixtures.mjs';
@@ -28,6 +28,19 @@ const scratch = tempDir('rk-producer-');
 function build(root, overrides = {}) {
   return createArtifact({ root, ...IDENTITY, ...overrides });
 }
+
+test('a blank Raw cell cannot make an extractor-identical finding count as reviewed', () => {
+  const root = approvedProject();
+  const corpus = readCorpus(root);
+  const row = corpus.evidence[0];
+  const capture = corpus.captures.byFile.get(row.raw);
+  const { front, body } = parseCapture(readText(resolve(root, capture.file)));
+  row.finding = firstFinding(body, front.title || front.url || row.url);
+  row.raw = '';
+  const review = findingsReviewState(root, corpus);
+  assert.equal(review.reviewed, false);
+  assert.ok(review.unrewritten.includes(row.id));
+});
 
 test('package handoff prose retains gate warnings without changing build authorization', () => {
   for (const [label, root, authorized] of [['collected', collectedProject(), false], ['approved', approvedProject(), true]]) {
