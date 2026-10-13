@@ -26,6 +26,33 @@ const copyPayload = (payload) => payload.map((e) => ({ name: e.name, data: Buffe
 
 const text = (s) => Buffer.from(s, 'utf8');
 
+test('relabelled evidence still requires and verifies its ledger from package contents', () => {
+  for (const variant of ['missing-ledger', 'invalid-ledger', 'rows-without-captures']) {
+    const manifest = clone(collected.manifest);
+    let payload = copyPayload(collected.payload);
+    manifest.collection.captures = 0;
+    manifest.files = manifest.files.map((entry) => entry.role === 'RAW_CAPTURE' ? { ...entry, role: 'OTHER' } : entry);
+    if (variant === 'invalid-ledger') {
+      const ledger = payload.find((entry) => entry.name.endsWith('.fetches.jsonl'));
+      ledger.data = text('{"garbage":true}\n');
+      const declared = manifest.files.find((entry) => entry.path === ledger.name);
+      declared.byteLength = ledger.data.length;
+      declared.sha256 = sha256(ledger.data);
+    } else {
+      const removed = new Set(payload.filter((entry) => entry.name.endsWith('.fetches.jsonl')
+        || (variant === 'rows-without-captures' && entry.name.startsWith('project/research/raw/'))).map((entry) => entry.name));
+      payload = payload.filter((entry) => !removed.has(entry.name));
+      manifest.files = manifest.files.filter((entry) => !removed.has(entry.path));
+    }
+    const file = writeFixture(scratch, variant, seal(payload, manifest, { recomputeFiles: false }));
+    const report = validateArtifact({ file, tempRoot: scratch });
+    assert.equal(report.status, 'FAIL', variant);
+    assert.equal(report.buildAuthorized, false);
+    const code = variant === 'invalid-ledger' ? 'LEDGER-INVALID' : 'LEDGER-MISSING';
+    assert.ok(report.errors.some((error) => error.code === code), JSON.stringify(report.errors));
+  }
+});
+
 /**
  * name -> { build, expect }. `expect.code` means "this code must be among the errors",
  * not "this is the only error": a package can be wrong in more than one way and pinning
@@ -46,6 +73,11 @@ const FIXTURES = {
     build: () => {
       const payload = copyPayload(collected.payload)
         .filter((e) => !e.name.startsWith('project/research/raw/'));
+      // A genuinely uncollected scaffold has no evidence rows either. Leaving the
+      // collected fixture's table here falsely claimed evidence with no chain.
+      payload.find((entry) => entry.name === 'project/research/EVIDENCE.md').data = text(
+        '# Evidence\n\n| ID | Retrieved | Type | URL | Finding | Raw |\n|---|---|---|---|---|---|\n',
+      );
       const manifest = clone(collected.manifest);
       manifest.state = 'COLLECTION_FAILED';
       manifest.kind = 'COLLECTED_CORPUS';

@@ -28,11 +28,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sha256, tempBase, looksBinary } from './core.mjs';
+import { sha256, tempBase, looksBinary, HEADERS } from './core.mjs';
 import { openZip, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
 import { parseJsonNoDuplicates } from './release/json.mjs';
 import { validateJsonSchema } from './release/schema.mjs';
-import { readCorpus } from './corpus.mjs';
+import { readCorpus, parseTable } from './corpus.mjs';
 import { verifyHandoff } from './handoff.mjs';
 import { SECRET_PATTERNS } from './doctor.mjs';
 
@@ -345,11 +345,13 @@ export function validateArtifact({
     // package shape whose entire purpose is to carry a diagnosis home, and would do it
     // with a message implying evidence went missing when none was ever fetched.
     //
-    // So the trigger is a claim: a declared RAW_CAPTURE, or a manifest asserting captures.
-    // Either of those says "there is evidence in here", and evidence without its chain is
-    // exactly what this format refuses to let travel.
+    // The contents are also evidence: a producer cannot disable the chain check by
+    // relabelling captures or declaring their count as zero.
+    const packagedEvidence = bodies.get('project/research/EVIDENCE.md');
     const claimsEvidence = declaredFiles.some((f) => f.role === 'RAW_CAPTURE')
-      || (manifest.collection?.captures ?? 0) > 0;
+      || (manifest.collection?.captures ?? 0) > 0
+      || zip.names.some((name) => name.startsWith('project/research/raw/') && name !== LEDGER_PATH && !name.endsWith('/'))
+      || (packagedEvidence && parseTable(packagedEvidence.toString('utf8'), HEADERS.evidence).rows.length > 0);
     if (claimsEvidence) {
       if (!zip.has(LEDGER_PATH)) {
         reject('FAIL', 'LEDGER-MISSING', `${LEDGER_PATH} is not in the package, but the package claims collected evidence - a corpus without its chain proves nothing`,
