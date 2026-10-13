@@ -7,7 +7,7 @@ import { TESTED_CLI_VERSION } from '../lib/firecrawl.mjs';
 import { PATHS, resolve, readText, writeText, readJson } from '../lib/core.mjs';
 import { runDoctor, machineHealth, gateHealth, editGateState, scanForSecrets } from '../lib/doctor.mjs';
 import { installEditGate, removeEditGate, installCommitGate, removeCommitGate, settingsState, retiredRepairNote, MATCHER } from '../lib/installer.mjs';
-import { EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS } from '../lib/machine.mjs';
+import { EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS, hooksPath, previousHooksPath } from '../lib/machine.mjs';
 
 describe('doctor');
 
@@ -25,6 +25,43 @@ function machine({ config = {}, settings = undefined } = {}) {
 }
 
 const find = (findings, name) => findings.find((f) => f.name === name);
+
+test('included global hooks are recorded, preserved and restored by the commit-gate install', () => {
+  requireGit('global include-based hooks');
+  for (const conditional of [false, true]) {
+    const { dir, env } = machine();
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    const globalFile = path.join(dir, 'gitconfig');
+    const gitPaths = { cwd: repo, env: { ...env, GIT_CONFIG_GLOBAL: globalFile, GIT_CONFIG_NOSYSTEM: '1' } };
+    const initialized = spawnSync('git', fixtureInitArgs(repo), { env: gitPaths.env, encoding: 'utf8', windowsHide: true });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const old = path.join(dir, 'included-hooks');
+    writeText(path.join(old, 'pre-commit'), '#!/bin/sh\n# somebody else\n');
+    const included = path.join(dir, 'included.gitconfig');
+    writeText(included, `[core]\n hooksPath = ${JSON.stringify(old.replace(/\\/g, '/'))}\n`);
+    const gitTopLevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: repo, env: gitPaths.env, encoding: 'utf8', windowsHide: true,
+    });
+    assert.equal(gitTopLevel.status, 0, gitTopLevel.stderr);
+    const heading = conditional
+      ? `[includeIf "gitdir:${gitTopLevel.stdout.trim().replace(/\\/g, '/')}/"]`
+      : '[include]';
+    writeText(globalFile, `${heading}\n path = ${JSON.stringify(included.replace(/\\/g, '/'))}\n`);
+    assert.equal(hooksPath('global', gitPaths), old.replace(/\\/g, '/'), conditional ? 'conditional include at Git’s resolved worktree path' : 'ordinary include');
+    const preview = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: repo, dryRun: true });
+    assert.equal(preview.previous, old.replace(/\\/g, '/'));
+    const installed = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: repo });
+    assert.equal(installed.ok, true);
+    assert.equal(installed.previous, old.replace(/\\/g, '/'));
+    assert.equal(previousHooksPath(gitPaths), old.replace(/\\/g, '/'));
+    const state = readJson(env.RESEARCH_KIT_INSTALL_STATE);
+    assert.equal(state.previousHooksPath, old.replace(/\\/g, '/'));
+    const removed = removeCommitGate({ env, gitPaths });
+    assert.equal(removed.restored, old.replace(/\\/g, '/'));
+    assert.equal(hooksPath('global', gitPaths), old.replace(/\\/g, '/'));
+  }
+});
 
 // A no-hit result describes inspected files. Reaching the count at the final file is
 // different from returning at that count while another path remains uninspected.

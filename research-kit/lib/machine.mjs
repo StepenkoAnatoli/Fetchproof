@@ -357,7 +357,7 @@ export function gitVersion(opts = {}) {
 /** Scope-aware readers: which hooksPath is set where. */
 export function hooksPath(scope = 'global', opts = {}) {
   const flag = { global: '--global', local: '--local', system: '--system' }[scope] ?? '--global';
-  return git(['config', flag, '--get', 'core.hooksPath'], opts);
+  return git(['config', flag, '--includes', '--get', 'core.hooksPath'], opts);
 }
 
 export function hooksPathEffective(opts = {}) {
