@@ -4,6 +4,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- Corrected ADR-0121's links to ADR-0020 and ADR-0023, and check relative file links in every ADR body. Historical benchmark plans and the snapshot review now identify references to artifacts not retained in this repository (#292).
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

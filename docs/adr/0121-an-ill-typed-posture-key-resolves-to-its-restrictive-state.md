@@ -4,8 +4,8 @@
 - **Status:** accepted
 - **Area:** `lib/machine.mjs` (`shape`, `readMachineConfig`, `posture`), `lib/doctor.mjs`
   (`config-ill-typed`), `githooks/pre-commit` (the sh posture reader)
-- **Refines:** [ADR-0020](0020-the-machine-config-has-three-states.md) and
-  [ADR-0023](0023-a-role-the-kit-cannot-establish-does-not-collect.md), one level down
+- **Refines:** [ADR-0020](0020-five-trusted-boundaries-that-did-not-hold.md) and
+  [ADR-0023](0023-an-unestablished-role-does-not-collect.md), one level down
 - **Lifts the freeze (ADR-0117)** for one item: the `config-ill-typed` doctor finding.
 
 ## Context
