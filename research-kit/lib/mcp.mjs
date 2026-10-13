@@ -147,7 +147,7 @@ export const TOOLS = Object.freeze([
       properties: {
         repository: { type: 'string', description: 'owner/name' },
         workflow_run_id: { type: 'integer', minimum: 1, description: 'The id `collect` returned' },
-        out_dir: { type: 'string', description: 'Where to save the package. Default: the system temp directory.' },
+        out_dir: { type: 'string', description: 'Where to save the package. Default: a new private folder in the system temp directory.' },
       },
     },
   },

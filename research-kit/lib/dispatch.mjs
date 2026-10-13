@@ -415,7 +415,17 @@ export async function fetchCorpus({
 } = {}) {
   // The folder is checked first: the download is the slow, rate-limited part, and an
   // unusable folder found after it would waste it and surface as a raw ENOTDIR.
-  const dir = usableOutDir(outDir ?? tempBase());
+  let dir;
+  try {
+    dir = outDir == null
+      ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
+      : usableOutDir(outDir);
+  } catch (err) {
+    if (err instanceof DispatchError) throw err;
+    throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
+      remedy: 'pass an existing writable folder, or repair the system temp directory',
+    });
+  }
 
   const artifacts = await listArtifacts({ repository, runId, token, fetch: doFetch, api });
   const wanted = artifacts.filter((a) => !a.expired && a.name.startsWith('research-kit-corpus-v1-'));
@@ -442,6 +452,16 @@ export async function fetchCorpus({
     });
   }
   const file = path.join(dir, fileName);
+  let target;
+  try { target = fs.lstatSync(file); }
+  catch (err) {
+    if (err.code !== 'ENOENT') throw new DispatchError('OUT_DIR', `could not inspect ${file} (${err.code ?? err.message})`, {
+      remedy: 'choose a writable output folder without a symbolic link at the package name',
+    });
+  }
+  if (target?.isSymbolicLink()) throw new DispatchError('OUT_DIR', `${file} is a symbolic link; the package write must not be redirected`, {
+    remedy: 'remove the link or choose another writable output folder',
+  });
   // Whole or not at all (ADR-0079), as writeArtifact is: a failed write must not empty a
   // package already at this name (Arena break test 10, 2026-09-28).
   writeBytes(file, pkg);

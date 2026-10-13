@@ -5,7 +5,8 @@
 // sent, that a token never appears in an error, that a 204 is diagnosed rather than
 // swallowed. The live path is verified separately, by running it.
 
-import { test, describe, assert, tempDir, cleanup, fs, path } from './harness.mjs';
+import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink } from './harness.mjs';
+import { tempBase } from '../lib/core.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
   tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus,
@@ -14,6 +15,54 @@ import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
 
 describe('dispatch');
+
+test('default corpus downloads use different private directories even for the same artifact name', async () => {
+  const name = `research-kit-corpus-v1-private-${process.pid}`;
+  const downloads = [];
+  const fetch = () => stubFetch([
+    jsonResponse(200, { artifacts: [{ id: 7, name, expired: false }] }),
+    { ok: true, status: 200, arrayBuffer: async () => Buffer.from('package bytes') },
+  ]);
+  try {
+    for (let runId = 1; runId <= 2; runId++) downloads.push(await fetchCorpus({ repository: REPO, runId, token: TOKEN, fetch: fetch() }));
+    const folders = downloads.map((download) => path.dirname(download.file));
+    assert.notEqual(folders[0], folders[1]);
+    for (const download of downloads) {
+      const folder = path.dirname(download.file);
+      assert.equal(path.dirname(folder), tempBase());
+      assert.match(path.basename(folder), /^research-kit-corpus-/);
+      assert.equal(fs.readFileSync(download.file, 'utf8'), 'package bytes');
+      if (process.platform !== 'win32') assert.equal(fs.statSync(folder).mode & 0o077, 0);
+    }
+  } finally {
+    for (const download of downloads) {
+      const folder = path.dirname(download.file);
+      if (folder === tempBase()) fs.rmSync(download.file, { force: true });
+      else cleanup(folder);
+    }
+  }
+});
+
+test('an existing or dangling package symlink is refused without writing its target', async () => {
+  const dir = tempDir('rk-download-link-');
+  const name = 'research-kit-corpus-v1-link';
+  const target = path.join(dir, 'victim.txt');
+  const output = path.join(dir, `${name}.zip`);
+  for (const dangling of [false, true]) {
+    if (!dangling) fs.writeFileSync(target, 'precious');
+    requireSymlink(target, output, 'a package symlink must not redirect a download');
+    const fetch = stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 7, name, expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => Buffer.from('replacement') },
+    ]);
+    await assert.rejects(() => fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: dir, fetch }),
+      (error) => error.code === 'OUT_DIR' && /symbolic link/.test(error.message));
+    if (dangling) assert.equal(fs.existsSync(target), false);
+    else assert.equal(fs.readFileSync(target, 'utf8'), 'precious');
+    fs.unlinkSync(output);
+    if (!dangling) fs.unlinkSync(target);
+  }
+});
 
 const TOKEN = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
 const REPO = 'example-org/example-project';
