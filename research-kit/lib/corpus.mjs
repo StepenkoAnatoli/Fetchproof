@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   PATHS, HEADERS, resolve, relative, exists, isDirectory, readText, readJson,
-  writeText, appendLine, listFiles, sha256File, ageInDays, hostOf, parseJson, realInside, urlKey,
+  writeText, appendLine, listFiles, sha256File, ageInDays, hostOf, parseJson, urlKey, projectFile,
 } from './core.mjs';
 import { sketch } from './similarity.mjs';
 import { parseJsonNoDuplicates } from './release/json.mjs';
@@ -315,11 +315,17 @@ export function readCaptures(root, { known = null, sketches: wantSketches = true
     if (known?.has(rel)) continue;
     // A link that lands outside the project is not read (ADR-0076): git stores symlinks,
     // and research/raw/x.md -> ~/.ssh/id_rsa would otherwise be read as a capture.
-    if (!realInside(root, abs)) {
-      problems.push({ kind: 'capture-outside', file: rel, detail: `${rel} is a link to somewhere outside the project - not read` });
+    const named = projectFile(root, rel);
+    const raw = projectFile(dir, name);
+    if (named.problem === 'outside' || raw.problem === 'outside') {
+      problems.push({ kind: 'capture-outside', file: rel, detail: `${rel} is a link outside the project or its capture folder - not read` });
       continue;
     }
     if (isDirectory(abs)) continue;
+    if (named.problem || raw.problem) {
+      problems.push({ kind: 'capture-unreadable', file: rel, detail: `${rel} is missing or not a regular file - not read` });
+      continue;
+    }
     // Checked BEFORE reading: every file here is either read or named, never dropped.
     let size = 0;
     try { size = fs.statSync(abs).size; } catch { /* unreadable - named below */ }
@@ -643,14 +649,15 @@ export function readCorpus(root) {
   // A cited capture that is not on disk is a corpus problem, not a check's discovery.
   for (const row of evidence) {
     if (!row.raw) continue;
-    if (exists(at(row.raw)) && !realInside(root, at(row.raw))) {
+    const named = projectFile(root, row.raw);
+    if (named.problem === 'outside') {
       // A Raw cell that lands outside the project (a "../" spelling, or a link) is never
       // read: evidence-context printed such a file into an agent's context (2026-09-28).
       problems.push({ kind: 'raw-outside', artifact: PATHS.evidence, row: row.id, file: row.raw, line: row.line,
         detail: `${row.raw} (row ${row.id}) is outside the project - a Raw cell names a capture in ${PATHS.raw}/` });
       continue;
     }
-    if (!exists(at(row.raw))) {
+    if (named.problem === 'missing') {
       problems.push({ kind: 'raw-dangling', artifact: PATHS.evidence, row: row.id, file: row.raw, line: row.line });
     }
   }

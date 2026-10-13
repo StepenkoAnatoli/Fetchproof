@@ -29,6 +29,14 @@ function build(root, overrides = {}) {
   return createArtifact({ root, ...IDENTITY, ...overrides });
 }
 
+test('a directory at the explicit ledger path is refused as an unpackageable file', () => {
+  const root = collectedProject();
+  const ledger = path.join(root, PATHS.ledger);
+  fs.unlinkSync(ledger);
+  fs.mkdirSync(ledger);
+  assert.throws(() => build(root), (error) => error.code === 'UNPACKAGEABLE_FILE' && /ledger|fetches/.test(error.message));
+});
+
 test('package handoff prose retains gate warnings without changing build authorization', () => {
   for (const [label, root, authorized] of [['collected', collectedProject(), false], ['approved', approvedProject(), true]]) {
     const built = build(root);

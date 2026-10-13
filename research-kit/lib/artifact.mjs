@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PATHS, resolve, exists, isDirectory, isRegularFile, readText, sha256, canonicalJson, nowIso, listFiles, homeCommand, realInside, writeBytes,
+  PATHS, resolve, relative, exists, isDirectory, isRegularFile, readText, sha256, canonicalJson, nowIso, listFiles, homeCommand, realInside, writeBytes, projectFile,
 } from './core.mjs';
 import { buildZip } from './archive.mjs';
 import { checkEntryName } from './artifact-zip.mjs';
@@ -308,8 +308,11 @@ export function findingsReviewState(root, corpus) {
   const unrewritten = [];
   for (const row of rows) {
     if (!row.raw) continue;
-    if (!realInside(root, resolve(root, row.raw))) continue;   // never read from outside (ADR-0076)
-    const text = readText(resolve(root, row.raw));
+    const named = projectFile(root, row.raw);
+    const rawRoot = resolve(root, PATHS.raw);
+    const raw = projectFile(rawRoot, relative(rawRoot, named.abs));
+    if (named.problem || raw.problem) continue;
+    const text = readText(raw.abs);
     if (text === null) continue;
     // The collector's own call, over what it extracted from: the page body after the
     // front-matter, falling back to the page's title or URL (collect.mjs). Found 2026-09-27
@@ -556,13 +559,19 @@ export function createArtifact({
     add(`project/${rel}`, fs.readFileSync(resolve(root, rel)));
   }
 
-  const ledgerAbs = resolve(root, PATHS.ledger);
-  if (exists(ledgerAbs) && !realInside(root, ledgerAbs)) {
+  const ledger = projectFile(root, PATHS.ledger);
+  const ledgerAbs = ledger.abs;
+  if (ledger.problem === 'outside') {
     const err = new Error(`${PATHS.ledger} is a link to somewhere outside the project; packaging would copy what is there into the archive.`);
     err.code = 'OUTSIDE_PROJECT';
     throw err;
   }
-  if (exists(ledgerAbs) && !entries.some((e) => e.name === `project/${PATHS.ledger}`)) {
+  if (ledger.problem === 'not-file') {
+    const err = new Error(`${PATHS.ledger} is not a regular file and cannot travel as a provenance ledger.`);
+    err.code = 'UNPACKAGEABLE_FILE';
+    throw err;
+  }
+  if (!ledger.problem && !entries.some((e) => e.name === `project/${PATHS.ledger}`)) {
     // The ledger is a dotfile inside research/raw/ and every hand-rolled copy in this
     // project's history has lost exactly this file. Added explicitly rather than trusted
     // to the walk.

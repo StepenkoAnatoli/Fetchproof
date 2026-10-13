@@ -4,6 +4,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+
+- Evidence context refuses Raw cells outside research/raw and names directories before reading; the ADR-0109 trigger also moves corpus and artifact recorded-path readers to projectFile (#351).
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,
