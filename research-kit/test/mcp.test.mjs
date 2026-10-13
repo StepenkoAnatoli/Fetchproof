@@ -404,13 +404,29 @@ test('an approved corpus says so instead, and the two texts cannot both appear',
 });
 
 test('an invalid package is flagged isError even though the call succeeded', async () => {
-  const d = deps({ corpus: async () => ({
-    file: '/tmp/x.zip',
-    validation: { status: 'FAIL', buildAuthorized: false, state: 'REVIEW_REQUIRED', packageId: null, errors: [{ code: 'FILE-HASH-MISMATCH', message: 'x' }] },
-  }) });
-  const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), d);
-  assert.equal(r.result.isError, true);
-  assert.equal(r.result.structuredContent.errors.length, 1);
+  for (const [status, code, state, buildAuthorized] of [
+    ['FAIL', 'FILE-HASH-MISMATCH', 'REVIEW_REQUIRED', false],
+    ['FAIL', 'ZIP-READ', null, false],
+    ['BLOCKED', 'ZIP-READ', null, false],
+    ['INCOMPLETE', 'FORMAT-VERSION', 'APPROVED_BRIEF', true],
+  ]) {
+    const diagnostic = { code, message: 'the download could not be validated', remedy: 'download the artifact again' };
+    const d = deps({ corpus: async () => ({
+      file: '/tmp/x.zip', validation: { status, buildAuthorized, state, packageId: null, errors: [diagnostic] },
+    }) });
+    const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), d);
+    assert.equal(r.result.isError, true);
+    assert.equal(r.result.structuredContent.buildAuthorized, false);
+    assert.deepEqual(r.result.structuredContent.errors, [diagnostic]);
+    const content = r.result.content;
+    assert.ok(content.every((item) => item.type === 'text'), 'an invalid download was linked as a corpus ZIP');
+    const message = content.map((item) => item.text).join('\n');
+    assert.ok(message.includes(status));
+    assert.ok(message.includes(code));
+    assert.match(message, /the download could not be validated/);
+    assert.match(message, /download the artifact again/);
+    assert.doesNotMatch(message, /COLLECTED CORPUS|APPROVED brief|review steps remain|README-FIRST/);
+  }
 });
 
 test('a thrown transport failure never leaks the token', async () => {

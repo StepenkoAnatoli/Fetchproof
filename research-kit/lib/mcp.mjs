@@ -355,17 +355,30 @@ async function callTool(message, deps) {
 
     const got = await deps.corpus({ repository: args.repository, runId: args.workflow_run_id, token, outDir: args.out_dir });
     const { validation, file } = got;
+    const structuredContent = {
+      status: validation.status,
+      buildAuthorized: validation.status === 'PASS' && validation.buildAuthorized,
+      state: validation.state,
+      reviewedBy: validation.reviewedBy,
+      packageId: validation.packageId,
+      workflowRunId: args.workflow_run_id,
+      errors: validation.errors,
+    };
+    if (validation.status !== 'PASS') {
+      const diagnostics = (validation.errors ?? []).map((problem) =>
+        `${problem.code}: ${problem.message}${problem.remedy ? ` - fix: ${problem.remedy}` : ''}`);
+      return ok(message.id, {
+        structuredContent,
+        content: [text(redact([
+          `This download did not validate (${validation.status}). Do not review or build from it.`,
+          ...diagnostics,
+        ].join('\n')))],
+        isError: true,
+      });
+    }
     return ok(message.id, {
       // The whole point of the format, restated where an agent cannot miss it.
-      structuredContent: {
-        status: validation.status,
-        buildAuthorized: validation.buildAuthorized,
-        state: validation.state,
-        reviewedBy: validation.reviewedBy,
-        packageId: validation.packageId,
-        workflowRunId: args.workflow_run_id,
-        errors: validation.errors,
-      },
+      structuredContent,
       content: [
         text(validation.buildAuthorized
           ? `This package is an APPROVED brief: the gate passed, and the brief declares it was reviewed by: ${validation.reviewedBy}. `
