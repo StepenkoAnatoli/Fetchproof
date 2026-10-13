@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="820" viewBox="0 0 1440 820" role="img" aria-labelledby="title desc">
+  <title id="title">Research-Kit — research first, build second</title>
+  <desc id="desc">A workflow overview: frame the blocking unknowns, collect primary sources with cached pages and a fetch ledger, review the claims, run the configured gate, and hand an authored brief to a builder. PASS checks the declared contract and provenance; source review remains essential.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#0b1220"/><stop offset="1" stop-color="#15253b"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#5eead4"/><stop offset="1" stop-color="#93c5fd"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#5168bd" stop-opacity=".28"/><stop offset="1" stop-color="#5168bd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#1b2c43"/><stop offset="1" stop-color="#142238"/>
+    </linearGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#a4bad4" opacity=".13"/>
+    </pattern>
+  </defs>
+  <rect width="1440" height="820" rx="28" fill="url(#background)"/>
+  <rect x="1" y="1" width="1438" height="818" rx="27" fill="none" stroke="#304258"/>
+  <circle cx="1140" cy="110" r="540" fill="url(#glow)"/>
+  <rect x="760" y="40" width="610" height="370" fill="url(#dots)"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <!-- A small connected-page mark, drawn in the repository's own vector asset. -->
+    <rect x="64" y="58" width="44" height="44" rx="12" fill="#5eead4"/>
+    <path d="M77 69h13l6 6v15H77z M89 69v7h7 M81 81h10 M81 85h7" fill="none" stroke="#102739" stroke-width="2.2" stroke-linejoin="round"/>
+    <text x="122" y="89" fill="#f1f5f9" font-size="28" font-weight="700" letter-spacing="-.5">Research-Kit</text>
+    <rect x="1125" y="63" width="251" height="34" rx="17" fill="#1b3445" stroke="#345869"/>
+    <circle cx="1145" cy="80" r="4" fill="#5eead4"/>
+    <text x="1158" y="86" fill="#b9e9e4" font-size="15" font-weight="600" letter-spacing="1">WORKFLOW OVERVIEW</text>
+
+    <text x="64" y="184" fill="#f8fafc" font-size="66" font-weight="700" letter-spacing="-2.2">Research first.</text>
+    <text x="64" y="261" fill="url(#accent)" font-size="66" font-weight="700" letter-spacing="-2.2">Build with evidence.</text>
+    <text x="66" y="310" fill="#c0cddd" font-size="23">Give your AI agent a clear path from blocking</text>
+    <text x="66" y="342" fill="#c0cddd" font-size="23">unknowns to a traceable research handoff.</text>
+
+    <!-- The output is a portable research corpus, not a simulated application UI. -->
+    <rect x="854" y="134" width="522" height="240" rx="18" fill="#0d192b" stroke="#3c526c"/>
+    <path d="M854 183h522" stroke="#2b3c54"/>
+    <circle cx="878" cy="158" r="5" fill="#f1a6a6"/>
+    <circle cx="896" cy="158" r="5" fill="#f4d69a"/>
+    <circle cx="914" cy="158" r="5" fill="#83d6b8"/>
+    <text x="947" y="164" fill="#c4d2e3" font-size="17" font-weight="600">YOUR RESEARCH CORPUS</text>
+    <g font-family="Cascadia Code, Consolas, monospace" font-size="19">
+      <text x="882" y="216" fill="#93c5fd">research/</text>
+      <text x="901" y="249" fill="#e2e8f0">DISCOVERY.md</text>
+      <text x="901" y="282" fill="#e2e8f0">EVIDENCE.md</text>
+      <text x="901" y="315" fill="#e2e8f0">raw/ + .fetches.jsonl</text>
+      <text x="901" y="348" fill="#5eead4">BRIEF.md</text>
+    </g>
+    <path d="M885 231v112 M885 244h9 M885 277h9 M885 310h9 M885 343h9" fill="none" stroke="#435970" stroke-width="1.5"/>
+    <text x="1191" y="248" fill="#91a5bf" font-size="15">unknowns</text>
+    <text x="1191" y="281" fill="#91a5bf" font-size="15">claims</text>
+    <text x="1220" y="347" fill="#8ce3d5" font-size="15">handoff</text>
+
+    <text x="66" y="423" fill="#a7bbd2" font-size="15" font-weight="600" letter-spacing="2.3">A REPEATABLE PATH FROM QUESTION TO BRIEF</text>
+    <!-- Four stages, with the authored handoff below. -->
+    <g>
+      <rect x="64" y="452" width="298" height="183" rx="16" fill="url(#card)" stroke="#3a4c63"/>
+      <rect x="94" y="480" width="40" height="30" rx="8" fill="#254247"/>
+      <text x="105" y="501" fill="#75e6d4" font-size="17" font-weight="700">01</text>
+      <text x="150" y="503" fill="#f1f5f9" font-size="29" font-weight="600">Frame</text>
+      <text x="94" y="552" fill="#c8d5e5" font-size="21">Map the topic. Declare</text>
+      <text x="94" y="580" fill="#c8d5e5" font-size="21">the blocking unknowns.</text>
+      <text x="94" y="612" fill="#95aac3" font-size="17">Map · contract · collection plan</text>
+
+      <rect x="402" y="452" width="298" height="183" rx="16" fill="url(#card)" stroke="#3a4c63"/>
+      <rect x="432" y="480" width="40" height="30" rx="8" fill="#254247"/>
+      <text x="443" y="501" fill="#75e6d4" font-size="17" font-weight="700">02</text>
+      <text x="488" y="503" fill="#f1f5f9" font-size="29" font-weight="600">Collect</text>
+      <text x="432" y="552" fill="#c8d5e5" font-size="21">Fetch primary sources.</text>
+      <text x="432" y="580" fill="#c8d5e5" font-size="21">Keep the pages and hashes.</text>
+      <text x="432" y="612" fill="#95aac3" font-size="17">Cached captures · fetch ledger</text>
+
+      <rect x="740" y="452" width="298" height="183" rx="16" fill="url(#card)" stroke="#3a4c63"/>
+      <rect x="770" y="480" width="40" height="30" rx="8" fill="#254247"/>
+      <text x="781" y="501" fill="#75e6d4" font-size="17" font-weight="700">03</text>
+      <text x="826" y="503" fill="#f1f5f9" font-size="29" font-weight="600">Review</text>
+      <text x="770" y="552" fill="#c8d5e5" font-size="21">Check what sources say.</text>
+      <text x="770" y="580" fill="#c8d5e5" font-size="21">Write claims with citations.</text>
+      <text x="770" y="612" fill="#95aac3" font-size="17">Findings · gaps · contradictions</text>
+
+      <rect x="1078" y="452" width="298" height="183" rx="16" fill="url(#card)" stroke="#518782"/>
+      <rect x="1108" y="480" width="40" height="30" rx="8" fill="#254247"/>
+      <text x="1119" y="501" fill="#75e6d4" font-size="17" font-weight="700">04</text>
+      <text x="1164" y="503" fill="#f1f5f9" font-size="29" font-weight="600">Gate</text>
+      <text x="1108" y="552" fill="#c8d5e5" font-size="21">Run the configured checks.</text>
+      <text x="1108" y="580" fill="#c8d5e5" font-size="21">Resolve the named gaps.</text>
+      <text x="1108" y="612" fill="#95aac3" font-size="16">Contract · structure · provenance</text>
+    </g>
+    <g fill="none" stroke="#75c4c3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M373 543h17 M384 537l6 6-6 6"/>
+      <path d="M711 543h17 M722 537l6 6-6 6"/>
+      <path d="M1049 543h17 M1060 537l6 6-6 6"/>
+    </g>
+
+    <rect x="64" y="665" width="1312" height="91" rx="16" fill="#18363e" stroke="#386469"/>
+    <rect x="88" y="687" width="46" height="46" rx="12" fill="#28535a"/>
+    <path d="M101 699h15l6 6v18h-21z M115 699v7h7 M106 712h10 M106 717h8" fill="none" stroke="#a8f3e5" stroke-width="2" stroke-linejoin="round"/>
+    <text x="153" y="702" fill="#e1fff7" font-size="24" font-weight="600">Hand off an authored brief</text>
+    <text x="153" y="731" fill="#b7d5d5" font-size="19">The builder reads BRIEF.md and its evidence, then implements.</text>
+    <rect x="1059" y="690" width="285" height="41" rx="20" fill="#28535a"/>
+    <text x="1084" y="717" fill="#c6f7eb" font-size="17" font-weight="600">RESEARCH → HANDOFF → BUILD</text>
+    <text x="66" y="788" fill="#a7bad0" font-size="16">PASS checks the declared contract and provenance. Source review remains essential.</text>
+    <text x="1194" y="788" fill="#91a5bf" font-size="16">Plain Node · CLI + MCP</text>
+  </g>
+</svg>
