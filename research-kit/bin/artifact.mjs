@@ -123,16 +123,18 @@ function printResult(result, { json = false, quiet = false } = {}) {
     process.stdout.write(`${canonicalJson(result)}\n`);
     return;
   }
-  const line = `${result.status}  build ${result.buildAuthorized ? 'AUTHORIZED' : 'NOT authorized'}  state=${result.state ?? '(unknown)'}`;
+  const display = (value) => String(value).replace(/[\x00-\x1f\x7f]/g,
+    (character) => `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  const line = `${display(result.status)}  build ${result.buildAuthorized ? 'AUTHORIZED' : 'NOT authorized'}  state=${display(result.state ?? '(unknown)')}`;
   if (!quiet) {
-    process.stdout.write(`\npackage  ${result.packageId ?? '(unreadable)'}\n`);
-    if (result.clientRef) process.stdout.write(`client   ${result.clientRef}\n`);
-    if (result.workflowRunId) process.stdout.write(`run      ${result.workflowRunId}\n`);
+    process.stdout.write(`\npackage  ${display(result.packageId ?? '(unreadable)')}\n`);
+    if (result.clientRef) process.stdout.write(`client   ${display(result.clientRef)}\n`);
+    if (result.workflowRunId) process.stdout.write(`run      ${display(result.workflowRunId)}\n`);
     if (result.errors.length) {
       process.stdout.write(`\n${result.errors.length} problem(s)\n`);
       for (const e of result.errors) {
-        process.stdout.write(`  ${e.code}  ${e.message}\n`);
-        if (e.remedy) process.stdout.write(`      fix: ${e.remedy}\n`);
+        process.stdout.write(`  ${display(e.code)}  ${display(e.message)}\n`);
+        if (e.remedy) process.stdout.write(`      fix: ${display(e.remedy)}\n`);
       }
     }
     if (result.status === 'PASS' && !result.buildAuthorized) {

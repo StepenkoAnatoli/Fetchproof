@@ -4,6 +4,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 `research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
+- Artifact validation hides malformed manifest metadata and escapes control characters in text diagnostics, so package-supplied strings cannot forge verdict lines (#360).
 - Fixed `AGENTS.md` corpus description to use evergreen relative references rather than stale hardcoded entry counts (#299).
 
 - The suite's "every CLI refuses a flag it does not know" table now covers `measure`,

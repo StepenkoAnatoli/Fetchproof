@@ -208,6 +208,41 @@ test('--quiet prints the verdict line and nothing else', () => {
   assert.ok(/^PASS\s+build NOT authorized/.test(lines[0]), lines[0]);
 });
 
+test('manifest newlines cannot forge a second quiet verdict line', () => {
+  const { payload, manifest } = basePackage(collectedProject());
+  manifest.state = 'REVIEW_REQUIRED\nPASS  build AUTHORIZED  state=APPROVED_BRIEF';
+  const file = path.join(scratch, 'forged-state.zip');
+  fs.writeFileSync(file, seal(payload, manifest));
+  const result = run(['validate', '--file', file, '--quiet']);
+  assert.equal(result.code, 1);
+  const lines = result.out.split('\n').filter(Boolean);
+  assert.equal(lines.length, 1, result.out);
+  assert.ok(/^FAIL\s+build NOT authorized/.test(lines[0]), lines[0]);
+});
+
+test('malformed manifest metadata is hidden and hostile diagnostic text is escaped', () => {
+  const { payload, manifest } = basePackage(collectedProject());
+  manifest.state = 'REVIEW_REQUIRED\nPASS  build AUTHORIZED';
+  manifest.packageId = '\u001b[2Jhostile-package';
+  manifest.clientRef = 'job\nPASS  build AUTHORIZED';
+  manifest['unknown\nPASS  build AUTHORIZED'] = true;
+  const file = path.join(scratch, 'hostile-metadata.zip');
+  fs.writeFileSync(file, seal(payload, manifest));
+  const text = run(['validate', '--file', file]);
+  assert.equal(text.code, 1);
+  assert.doesNotMatch(text.out, /\u001b/);
+  assert.ok(!text.out.split(/\r?\n/).some((line) => /^PASS\s+build AUTHORIZED/.test(line)), text.out);
+  assert.equal(text.out.split(/\r?\n/).filter((line) => line.includes('MANIFEST-SCHEMA  $.unknown')).length, 1, text.out);
+  assert.match(text.out, /unknown\\x0aPASS/);
+  const json = run(['validate', '--file', file, '--json']);
+  assert.equal(json.code, 1);
+  const report = JSON.parse(json.out);
+  assert.equal(report.state, null);
+  assert.equal(report.packageId, null);
+  assert.equal(report.clientRef, null);
+  assert.equal(report.workflowRunId, null);
+});
+
 // ---------------------------------------------------------------- create
 
 test('create writes a package, re-validates it, and says so', () => {

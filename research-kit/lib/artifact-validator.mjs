@@ -103,6 +103,7 @@ export function validateArtifact({
   const warnings = [];
   let status = 'PASS';
   let manifest = null;
+  let manifestSchemaValid = false;
   let workdir = null;
 
   const reject = (verdict, ...args) => { status = worse(status, verdict); errors.push(problem(...args)); };
@@ -215,6 +216,7 @@ export function validateArtifact({
       checkAuthorization();
       return report();
     }
+    manifestSchemaValid = true;
 
     // Each major carries its own names (ADR-0107). The schema lists both eras' values, so the
     // pairing is checked here, where the message can say which name belongs to which format.
@@ -391,14 +393,17 @@ export function validateArtifact({
     return {
       status,
       buildAuthorized: status === 'PASS' && claimed,
-      packageId: manifest?.packageId ?? null,
-      clientRef: manifest?.clientRef ?? null,
-      workflowRunId: manifest?.source?.workflowRunId ?? null,
+      // Manifest strings are display metadata only after the schema has established their
+      // type and alphabet. Do not echo malformed values through text or JSON consumers.
+      packageId: manifestSchemaValid ? manifest.packageId : null,
+      clientRef: manifestSchemaValid ? manifest.clientRef : null,
+      workflowRunId: manifestSchemaValid ? manifest.source?.workflowRunId ?? null : null,
       // A 1.x package's HUMAN_REVIEW_REQUIRED is reported under its 2.0.0 name, so a consumer
       // switches on one state whichever format it was handed (ADR-0107).
-      state: manifest?.state === 'HUMAN_REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : (manifest?.state ?? null),
+      state: !manifestSchemaValid ? null
+        : manifest.state === 'HUMAN_REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : manifest.state,
       // The reviewer's own declaration (format 1.1.0, ADR-0074); a 1.0.0 package has none.
-      reviewedBy: manifest?.review?.by ?? 'undeclared',
+      reviewedBy: manifestSchemaValid ? manifest.review?.by ?? 'undeclared' : 'undeclared',
       errors,
       warnings,
     };
