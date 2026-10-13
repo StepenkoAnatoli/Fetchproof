@@ -26,6 +26,28 @@ function machine({ config = {}, settings = undefined } = {}) {
 
 const find = (findings, name) => findings.find((f) => f.name === name);
 
+test('malformed install records produce a named deploy warning and valid CLI JSON', () => {
+  const root = makePassingProject();
+  const { dir, env } = machine({});
+  const gitEnv = { ...env, GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  writeText(gitEnv.GIT_CONFIG_GLOBAL, `[core]\n hooksPath = ${JSON.stringify(path.join(KIT_ROOT, 'githooks').replace(/\\/g, '/'))}\n`);
+  for (const record of [{ kitHome: 42 }, { kitHome: {} }, { kitHome: true }, { kitHome: ['/x'] }, { kitHome: '' }, [], 'str']) {
+    writeText(env.RESEARCH_KIT_INSTALL_STATE, JSON.stringify(record));
+    const report = runDoctor(root, { env: gitEnv, gitPaths: { env: gitEnv }, probe: READY, record: false });
+    const warning = find(report.findings, 'deploy');
+    assert.equal(warning.severity, 'warn');
+    assert.ok(warning.detail.includes(env.RESEARCH_KIT_INSTALL_STATE));
+    assert.match(warning.detail, /not readable/);
+  }
+  writeText(env.RESEARCH_KIT_INSTALL_STATE, '{"kitHome":42}');
+  const result = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'doctor.mjs'), '--json'], {
+    cwd: root, env: gitEnv, encoding: 'utf8', windowsHide: true,
+  });
+  assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE|TypeError/);
+  const report = JSON.parse(result.stdout);
+  assert.ok(report.findings.some((finding) => finding.name === 'deploy' && finding.severity === 'warn'));
+});
+
 // A no-hit result describes inspected files. Reaching the count at the final file is
 // different from returning at that count while another path remains uninspected.
 test('secret cap: coverage distinguishes a complete boundary from an uninspected path', () => {

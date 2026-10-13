@@ -25,7 +25,7 @@ import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
   hooksPath, hooksPathEffective, runtimePaths, skillLocations,
   readInstallState, gitVersion, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
-  EDIT_GATE_HOOK, KIT_HOME, namesHook,
+  EDIT_GATE_HOOK, KIT_HOME, INSTALL_STATE_PATH, namesHook,
 } from './machine.mjs';
 
 import { kitCommand } from './core.mjs';
@@ -542,8 +542,10 @@ export function runDoctor(root, { env = process.env, gitPaths = {}, probe = prob
   // `commitGateState` reads the same way - so the measurement and the message agree.
   const deployHome = installed?.kitHome ?? KIT_HOME;
   const drift = deployedDrift({ env, kitHome: deployHome });
-  if (!installed) {
-    findings.push(f('warn', 'deploy', `no install state recorded - run: node ${path.join(KIT_ROOT, 'bin', 'install.mjs')}`));
+  if (!installed?.kitHome) {
+    const stateFile = env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH;
+    const detail = exists(stateFile) ? `the install state at ${stateFile} is not readable` : 'no install state recorded';
+    findings.push(f('warn', 'deploy', `${detail} - run: node ${path.join(KIT_ROOT, 'bin', 'install.mjs')}`));
   } else if (samePath(KIT_ROOT, deployHome)) {
     // Found 2026-10-02 (break-test pass 3): run from the deployed copy - the copy an agent
     // runs - after a line was appended to its lib/core.mjs, doctor printed "matches this

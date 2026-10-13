@@ -6,12 +6,43 @@ import { pathToFileURL } from 'node:url';
 import { test, describe, assert, tempDir, fs, path, os, KIT_ROOT } from './harness.mjs';
 import { writeText, readText, homeDir } from '../lib/core.mjs';
 import {
-  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy,
+  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy, readInstallState,
   collectionRefusal, evidencePolicy, runtimePaths, skillLocations, retiredEnvNotes,
   RUNTIME_ANCHORS, RETIRED_ENV_VARS, RETIRED_CONFIG_KEYS, DEFAULTS, ROLES,
 } from '../lib/machine.mjs';
 
 describe('machine');
+
+test('install state refuses JSON that is not an object', () => {
+  const file = path.join(tempDir('rk-state-shape-'), 'install.json');
+  const env = { RESEARCH_KIT_INSTALL_STATE: file };
+  for (const value of [null, [], 'str', true, 42]) {
+    writeText(file, JSON.stringify(value));
+    assert.equal(readInstallState(env), null, JSON.stringify(value));
+  }
+});
+
+test('install state keeps typed paths, arrays and skill hashes without changing the file', () => {
+  const file = path.join(tempDir('rk-state-fields-'), 'install.json');
+  const env = { RESEARCH_KIT_INSTALL_STATE: file };
+  const paths = ['kitHome', 'hooksPath', 'previousHooksPath', 'bound', 'deployedFrom'];
+  for (const value of [42, true, {}, ['/x'], '', '   ']) {
+    writeText(file, JSON.stringify(Object.fromEntries(paths.map((key) => [key, value]))));
+    const state = readInstallState(env);
+    for (const key of paths) assert.equal(state[key], undefined, `${key}: ${JSON.stringify(value)}`);
+  }
+  const raw = { ...Object.fromEntries(paths.map((key) => [key, '/valid/path'])), skills: ['/a', 42, '', '/b'],
+    boundSet: ['/c', false, null], skillSetHashes: { '/a': 'hash', '/b': 42 }, at: 'saved-time' };
+  writeText(file, JSON.stringify(raw));
+  const before = readText(file);
+  const state = readInstallState(env);
+  for (const key of paths) assert.equal(state[key], raw[key]);
+  assert.deepEqual(state.skills, ['/a', '/b']);
+  assert.deepEqual(state.boundSet, ['/c']);
+  assert.deepEqual(state.skillSetHashes, { '/a': 'hash' });
+  assert.equal(state.at, 'saved-time');
+  assert.equal(readText(file), before);
+});
 
 function envWith(contents, { snapshot = null, extra = {} } = {}) {
   const dir = tempDir('research-kit-config-');

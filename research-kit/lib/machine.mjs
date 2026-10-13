@@ -418,7 +418,22 @@ export function localHooksPathOverride(cwd = process.cwd(), opts = {}) {
 // ---------------------------------------------------------------- install state
 
 export function readInstallState(env = process.env) {
-  return readJson(env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH, null);
+  const raw = readJson(env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH, null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const state = { ...raw };
+  const isPath = (value) => typeof value === 'string' && value.trim().length > 0;
+  for (const key of ['kitHome', 'hooksPath', 'previousHooksPath', 'bound', 'deployedFrom']) {
+    if (!isPath(state[key])) delete state[key];
+  }
+  for (const key of ['skills', 'boundSet']) {
+    if (key in state) state[key] = Array.isArray(state[key]) ? state[key].filter(isPath) : [];
+  }
+  if ('skillSetHashes' in state) {
+    const hashes = state.skillSetHashes;
+    state.skillSetHashes = hashes && typeof hashes === 'object' && !Array.isArray(hashes)
+      ? Object.fromEntries(Object.entries(hashes).filter(([, hash]) => typeof hash === 'string')) : {};
+  }
+  return state;
 }
 
 export function writeInstallState(state, env = process.env) {
