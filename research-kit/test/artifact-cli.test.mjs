@@ -208,6 +208,27 @@ test('--quiet prints the verdict line and nothing else', () => {
   assert.ok(/^PASS\s+build NOT authorized/.test(lines[0]), lines[0]);
 });
 
+test('large validation reports drain piped stdout in JSON and text modes', () => {
+  const { payload, manifest } = basePackage(collectedProject());
+  const template = manifest.files.find((entry) => entry.path.startsWith('project/research/raw/'));
+  assert.ok(template);
+  for (let index = 0; index < 700; index += 1) {
+    manifest.files.push({ ...template, path: `project/research/raw/missing-${String(index).padStart(4, '0')}-${'x'.repeat(70)}.md` });
+  }
+  const file = path.join(scratch, 'large-missing.zip');
+  fs.writeFileSync(file, seal(payload, manifest, { recomputeFiles: false }));
+  const json = run(['validate', '--file', file, '--json'], { maxBuffer: 4 * 1024 * 1024 });
+  assert.equal(json.code, 1, json.err);
+  const parsed = JSON.parse(json.out);
+  assert.equal(parsed.errors.filter((error) => error.code === 'FILE-MISSING').length, 700);
+  assert.ok(Buffer.byteLength(json.out) > 65536);
+  const text = run(['validate', '--file', file], { maxBuffer: 4 * 1024 * 1024 });
+  assert.equal(text.code, 1, text.err);
+  assert.equal((text.out.match(/FILE-MISSING/g) ?? []).length, 700);
+  assert.ok(Buffer.byteLength(text.out) > 65536);
+  assert.match(text.out, /FAIL\s+build NOT authorized/);
+});
+
 // ---------------------------------------------------------------- create
 
 test('create writes a package, re-validates it, and says so', () => {

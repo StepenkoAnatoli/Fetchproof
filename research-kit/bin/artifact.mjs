@@ -16,7 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlags, canonicalJson, checkFlagValues } from '../lib/core.mjs';
+import { parseFlags, canonicalJson, checkFlagValues, exitAfterFlush } from '../lib/core.mjs';
 import { requireRuntime } from '../lib/runtime.mjs';
 import { validateArtifact } from '../lib/artifact-validator.mjs';
 import { writeArtifact, packageName, checkClientRef, GITHUB_API_VERSION } from '../lib/artifact.mjs';
@@ -98,10 +98,10 @@ if (flags.help || !command) {
     for (const flag of Object.keys(flags).filter((f) => !known.has(f))) process.stderr.write(`unknown option --${flag}\n`);
   }
   process.stdout.write(HELP);
-  process.exit(flags.help ? 0 : 2);
+  await exitAfterFlush(flags.help ? 0 : 2);
 }
 
-function refuseUnknownFlags(name) {
+async function refuseUnknownFlags(name) {
   const known = new Set(KNOWN_FLAGS[name] ?? []);
   const unknown = Object.keys(flags).filter((flag) => !known.has(flag));
   if (!unknown.length) return;
@@ -113,7 +113,7 @@ function refuseUnknownFlags(name) {
     }
   }
   process.stdout.write(HELP);
-  process.exit(EXIT.BLOCKED);
+  await exitAfterFlush(EXIT.BLOCKED);
 }
 
 function printResult(result, { json = false, quiet = false } = {}) {
@@ -158,29 +158,29 @@ const VALUE_FLAGS = Object.freeze({
 });
 
 if (command === 'validate') {
-  refuseUnknownFlags('validate');
+  await refuseUnknownFlags('validate');
   checkFlagValues(flags, VALUE_FLAGS.validate, { exit: EXIT.BLOCKED });
-  if (!flags.file) { process.stderr.write('validate needs --file <package.zip>\n\n'); process.stdout.write(HELP); process.exit(EXIT.BLOCKED); }
+  if (!flags.file) { process.stderr.write('validate needs --file <package.zip>\n\n'); process.stdout.write(HELP); await exitAfterFlush(EXIT.BLOCKED); }
   const result = validateArtifact({
     file: String(flags.file),
     expectedClientRef: flags['expect-client-ref'] === undefined ? null : String(flags['expect-client-ref']),
   });
   printResult(result, { json: Boolean(flags.json), quiet: Boolean(flags.quiet) });
-  process.exit(EXIT[result.status] ?? EXIT.BLOCKED);
+  await exitAfterFlush(EXIT[result.status] ?? EXIT.BLOCKED);
 }
 
 if (command === 'create') {
-  refuseUnknownFlags('create');
+  await refuseUnknownFlags('create');
   checkFlagValues(flags, VALUE_FLAGS.create, { exit: EXIT.BLOCKED });
   const required = ['repository', 'ref', 'commit', 'workflow', 'run-id'];
   const missing = required.filter((name) => flags[name] === undefined);
   if (missing.length) {
     process.stderr.write(`create needs ${missing.map((m) => `--${m}`).join(', ')}\n\n`);
     process.stdout.write(HELP);
-    process.exit(EXIT.BLOCKED);
+    await exitAfterFlush(EXIT.BLOCKED);
   }
   const refCheck = checkClientRef(flags['client-ref'] === undefined ? null : String(flags['client-ref']));
-  if (!refCheck.ok) { process.stderr.write(`${refCheck.detail}\n`); process.exit(EXIT.BLOCKED); }
+  if (!refCheck.ok) { process.stderr.write(`${refCheck.detail}\n`); await exitAfterFlush(EXIT.BLOCKED); }
 
   const runId = Number(flags['run-id']);
   const root = path.resolve(String(flags.root ?? '.'));
@@ -203,7 +203,7 @@ if (command === 'create') {
     });
   } catch (err) {
     process.stderr.write(`could not package ${root}: ${err.message}\n`);
-    process.exit(EXIT.BLOCKED);
+    await exitAfterFlush(EXIT.BLOCKED);
   }
 
   const size = fs.statSync(written.file).size;
@@ -214,12 +214,12 @@ if (command === 'create') {
   if (written.validation.status !== 'PASS') {
     process.stderr.write('\nthe package this run just wrote does NOT validate:\n');
     for (const e of written.validation.errors) process.stderr.write(`  ${e.code}  ${e.message}\n`);
-    process.exit(EXIT[written.validation.status] ?? EXIT.BLOCKED);
+    await exitAfterFlush(EXIT[written.validation.status] ?? EXIT.BLOCKED);
   }
   process.stdout.write('re-validated after writing: PASS\n');
-  process.exit(EXIT.PASS);
+  await exitAfterFlush(EXIT.PASS);
 }
 
 process.stderr.write(`unknown command ${JSON.stringify(command)}\n\n`);
 process.stdout.write(HELP);
-process.exit(EXIT.BLOCKED);
+await exitAfterFlush(EXIT.BLOCKED);
