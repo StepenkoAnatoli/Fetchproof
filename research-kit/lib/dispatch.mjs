@@ -118,6 +118,24 @@ async function readError(response) {
   return redact(body);
 }
 
+async function rateLimitError(response) {
+  const body = await readError(response);
+  const remaining = response.headers?.get?.('x-ratelimit-remaining');
+  const retry = response.headers?.get?.('retry-after');
+  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body)) return null;
+  const waits = [];
+  if (retry != null && /^\d+$/.test(retry)) waits.push(`wait at least ${retry} seconds (Retry-After) before retrying`);
+  const reset = response.headers?.get?.('x-ratelimit-reset');
+  if (reset != null && /^\d+$/.test(reset)) {
+    const date = new Date(Number(reset) * 1000);
+    if (!Number.isNaN(date.getTime())) waits.push(`do not retry before ${date.toISOString()} (x-ratelimit-reset: ${reset} UTC epoch seconds)`);
+  }
+  return new DispatchError('RATE_LIMITED', `GitHub rate limited the request${body ? `: ${body}` : ''}`, {
+    status: response.status,
+    remedy: waits.length ? waits.join('; ') : 'wait at least one minute before retrying; back off further if the rate limit continues',
+  });
+}
+
 // ---------------------------------------------------------------- dispatch
 
 /**
@@ -192,6 +210,8 @@ export async function dispatchCollection({
     });
   }
   if (response.status === 403) {
+    const limited = await rateLimitError(response);
+    if (limited) throw limited;
     throw new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
       status: 403,
       remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
@@ -255,6 +275,10 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/runs/${runId}`,
     { headers: headers(token) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
   if (!response.ok) {
+    if (response.status === 403) {
+      const limited = await rateLimitError(response);
+      if (limited) throw limited;
+    }
     // A refusal names its own way out; the caller's generic "pick it up again" would send
     // somebody back to a run number that does not exist, with a token that cannot see it.
     const remedy = response.status === 404 ? `no run ${runId} on ${repository}, or the token cannot see it - check the number the dispatch printed`

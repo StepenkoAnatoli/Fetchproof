@@ -152,6 +152,29 @@ test('404 and 403 get remedies that name the real cause', async () => {
     (err) => err.code === 'FORBIDDEN' && /Actions/.test(err.remedy));
 });
 
+test('rate-limited 403 responses name the wait instead of token permissions', async () => {
+  const cases = [
+    [{ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '2000000000' }, 'Forbidden', /2000000000/],
+    [{ 'retry-after': '60' }, 'Forbidden', /60 seconds/],
+    [{}, 'You have exceeded a secondary rate limit.', /at least (?:one minute|60 seconds)/],
+  ];
+  for (const [headerValues, message, wait] of cases) {
+    for (const call of [
+      (fetch) => dispatchCollection({ repository: REPO, token: TOKEN, fetch }),
+      (fetch) => getRun({ repository: REPO, runId: 7, token: TOKEN, fetch }),
+    ]) {
+      const fetch = stubFetch([jsonResponse(403, { message }, { headers: new Headers(headerValues) })]);
+      await assert.rejects(() => call(fetch), (error) => {
+        assert.equal(error.code, 'RATE_LIMITED');
+        assert.equal(error.status, 403);
+        assert.match(error.remedy, wait);
+        assert.doesNotMatch(error.remedy, /permission|Actions/);
+        return true;
+      });
+    }
+  }
+});
+
 test('no error message ever carries the token, whatever the server said', async () => {
   // The server echoing the credential back is the case a hand-written message forgets.
   const leaky = stubFetch([jsonResponse(500, { message: `bad credentials for ${TOKEN}` })]);
