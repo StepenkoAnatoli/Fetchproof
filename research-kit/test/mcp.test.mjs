@@ -383,6 +383,23 @@ test('a Windows path becomes a usable file URI', () => {
     'backslashes are not path separators in a URI, and a client given one cannot open the file');
 });
 
+test('a relative output folder gives a link to the actual absolute download path', async () => {
+  const root = tempDir('rk-mcp-relative-out-');
+  try {
+    const out_dir = path.relative(process.cwd(), path.join(root, 'nested', 'out'));
+    const expected = path.join(path.resolve(out_dir), 'corpus.zip');
+    const d = deps({ corpus: async ({ outDir }) => {
+      fs.writeFileSync(path.join(outDir, 'corpus.zip'), 'download');
+      return { file: path.join(outDir, 'corpus.zip'), validation: { status: 'PASS', buildAuthorized: false, state: 'REVIEW_REQUIRED', errors: [] } };
+    } });
+    const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42, out_dir }), d);
+    assert.equal(r.result.isError, false);
+    assert.equal(r.result.content.find((c) => c.type === 'resource_link').uri,
+      resourceLink(expected, { name: 'corpus.zip', description: 'd' }).uri);
+    assert.equal(fs.readFileSync(expected, 'utf8'), 'download');
+  } finally { cleanup(root); }
+});
+
 test('buildAuthorized reaches the caller in structured form and in words', async () => {
   const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), deps());
   assert.equal(r.result.structuredContent.buildAuthorized, false);

@@ -382,22 +382,24 @@ export async function getRunSummary({ repository, runId, token, fetch: doFetch =
 }
 
 /**
- * `usableOutDir(dir)` -> `dir`, created if absent, or a named `OUT_DIR` failure.
+ * `usableOutDir(dir)` -> its absolute path, created if absent, or a named `OUT_DIR` failure.
  *
  * Exported because every caller that downloads should check it before it spends
  * anything: `collect-remote` before it dispatches a paid run, the MCP server before it
  * reads the run, and `fetchCorpus` before it downloads.
  */
 export function usableOutDir(dir) {
+  let absolute;
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.accessSync(dir, fs.constants.W_OK);
+    absolute = path.resolve(dir);
+    fs.mkdirSync(absolute, { recursive: true });
+    fs.accessSync(absolute, fs.constants.W_OK);
   } catch (err) {
     throw new DispatchError('OUT_DIR', `${dir} is not a folder this process can write (${err.code ?? err.message})`, {
       remedy: 'pass an existing writable folder, or omit it for the default',
     });
   }
-  return dir;
+  return absolute;
 }
 
 /**

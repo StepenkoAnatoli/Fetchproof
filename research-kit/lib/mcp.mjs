@@ -337,7 +337,7 @@ async function callTool(message, deps) {
     }
 
     // fetch_corpus - the folder first, so an unusable one costs no GitHub call
-    if (args.out_dir !== undefined) usableOutDir(args.out_dir);
+    const outDir = args.out_dir === undefined ? undefined : usableOutDir(args.out_dir);
     const state = await deps.summary({ repository: args.repository, runId: args.workflow_run_id, token });
     if (state.status !== 'completed') {
       return ok(message.id, {
@@ -353,7 +353,7 @@ async function callTool(message, deps) {
       });
     }
 
-    const got = await deps.corpus({ repository: args.repository, runId: args.workflow_run_id, token, outDir: args.out_dir });
+    const got = await deps.corpus({ repository: args.repository, runId: args.workflow_run_id, token, outDir });
     const { validation, file } = got;
     return ok(message.id, {
       // The whole point of the format, restated where an agent cannot miss it.

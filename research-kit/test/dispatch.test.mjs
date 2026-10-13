@@ -8,12 +8,30 @@
 import { test, describe, assert, tempDir, cleanup, fs, path } from './harness.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
-  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus,
+  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir,
 } from '../lib/dispatch.mjs';
 import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
 
 describe('dispatch');
+
+test('relative output folders resolve once and downloads report the actual absolute file', async () => {
+  const root = tempDir('rk-relative-out-');
+  try {
+    const relative = path.relative(process.cwd(), path.join(root, 'nested', 'out'));
+    const absolute = path.resolve(relative);
+    assert.equal(usableOutDir(relative), absolute);
+    const bytes = Buffer.from('not a zip');
+    const doFetch = stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 1, name: 'research-kit-corpus-v1-job-1', expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
+    ]);
+    const r = await fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: relative, fetch: doFetch });
+    assert.equal(r.file, path.join(absolute, 'research-kit-corpus-v1-job-1.zip'));
+    assert.equal(path.isAbsolute(r.file), true);
+    assert.deepEqual(fs.readFileSync(r.file), bytes);
+  } finally { cleanup(root); }
+});
 
 const TOKEN = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
 const REPO = 'example-org/example-project';
