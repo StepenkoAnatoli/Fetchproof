@@ -24,13 +24,13 @@ function patch(base, patches) {
     if (!operation || !['set', 'remove'].includes(operation.op)) throw packetError('patch operation must be set or remove');
     const parts = segments(operation.path); let parent = value;
     for (const part of parts.slice(0, -1)) {
-      if (Array.isArray(parent) ? !/^0$|^[1-9]\\d*$/.test(part) || Number(part) >= parent.length : !parent || typeof parent !== 'object' || !(part in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
+      if (Array.isArray(parent) ? !/^(?:0|[1-9]\d*)$/.test(part) || Number(part) >= parent.length : !parent || typeof parent !== 'object' || !(part in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
       parent = parent[part];
     }
     const key = parts.at(-1);
     if (operation.op === 'set') parent[key] = clone(operation.value);
     else {
-      if (Array.isArray(parent) ? !/^0$|^[1-9]\\d*$/.test(key) || Number(key) >= parent.length : !parent || typeof parent !== 'object' || !(key in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
+      if (Array.isArray(parent) ? !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= parent.length : !parent || typeof parent !== 'object' || !(key in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
       Array.isArray(parent) ? parent.splice(Number(key), 1) : delete parent[key];
     }
   }

@@ -2,6 +2,7 @@
 // Every case is embedded synthetic JSON; no workbook, evidence directory, credential,
 // network, or benchmark fixture is consulted.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +56,36 @@ test('FI Python runner agrees with Node on every vector row and expected code', 
   assertEqual(pythonReport.profile, nodeReport.profile);
   assertEqual(pythonReport.vectorPacketSha256, nodeReport.vectorPacketSha256);
   assertEqual(JSON.stringify(pythonReport.vectors), JSON.stringify(nodeReport.vectors), 'Python and Node rows must agree');
+});
+
+test('FI Node and Python runners agree on patches past the first array index', async () => {
+  const { loadFiSchemaVectors, runFiSchemaConformance } = await import('../lib/fi-sidecar-conformance.mjs');
+  const packet = JSON.parse(fs.readFileSync(VECTOR_FILE, 'utf8'));
+  const second = { ...packet.documents.manifest.entries[0], evidenceId: 'FI-02-status', fieldLabel: 'Second status', path: 'release-evidence/FI-02-status.json' };
+  packet.documents.manifest.entries.push(second);
+  packet.vectors = [
+    { vectorId: 'X-IDX1', target: 'manifest', base: 'manifest', patches: [{ op: 'remove', path: '/entries/1/sha256' }], expectedCode: 'SCHEMA-REQUIRED' },
+    { vectorId: 'X-IDX0', target: 'manifest', base: 'manifest', patches: [{ op: 'remove', path: '/entries/0/sha256' }], expectedCode: 'SCHEMA-REQUIRED' },
+  ];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fi-sidecar-idx-'));
+  try {
+    const file = path.join(dir, 'packet.json');
+    fs.writeFileSync(file, JSON.stringify(packet));
+    const nodeRows = runFiSchemaConformance(loadFiSchemaVectors(file)).vectors;
+    const python = spawnSync(requirePython('FI sidecar array index agreement'), [
+      path.join(ROOT, 'bin', 'fi_sidecar_conformance.py'), '--vectors', file, '--json',
+    ], { encoding: 'utf8' });
+    assertEqual(python.status, 0, python.stderr || python.stdout);
+    const pythonRows = JSON.parse(python.stdout).vectors;
+    for (const id of ['X-IDX1', 'X-IDX0']) {
+      const nodeRow = nodeRows.find((row) => row.vectorId === id);
+      const pythonRow = pythonRows.find((row) => row.vectorId === id);
+      assertEqual(nodeRow.observedCode, 'SCHEMA-REQUIRED', `Node ${id}: ${JSON.stringify(nodeRow)}`);
+      assertEqual(pythonRow.observedCode, nodeRow.observedCode, `Python ${id} must match Node`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('FI vector packet remains synthetic and does not carry completed evidence', () => {
