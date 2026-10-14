@@ -28,13 +28,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sha256, tempBase, looksBinary } from './core.mjs';
+import { sha256, tempBase, looksBinary, HEADERS } from './core.mjs';
 import { openZip, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
 import { parseJsonNoDuplicates } from './release/json.mjs';
 import { validateJsonSchema } from './release/schema.mjs';
-import { readCorpus } from './corpus.mjs';
+import { readCorpus, parseTable } from './corpus.mjs';
 import { verifyHandoff } from './handoff.mjs';
 import { SECRET_PATTERNS } from './doctor.mjs';
+import { derivePortableState } from './artifact-state.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = path.resolve(here, '..');
@@ -103,6 +104,7 @@ export function validateArtifact({
   const warnings = [];
   let status = 'PASS';
   let manifest = null;
+  let manifestSchemaValid = false;
   let workdir = null;
 
   const reject = (verdict, ...args) => { status = worse(status, verdict); errors.push(problem(...args)); };
@@ -181,17 +183,23 @@ export function validateArtifact({
     }
 
     // ---- format version, before schema ------------------------------------------
-    // An unsupported MAJOR is reported distinctly from an invalid manifest: a v2 package
+    // A newer MAJOR is reported distinctly from an invalid manifest: such a package
     // is probably correct and simply newer than this reader, and calling that "invalid"
     // would send somebody hunting a corruption that is not there.
-    const version = String(manifest?.formatVersion ?? '');
-    const major = Number(version.split('.')[0]);
+    const version = manifest?.formatVersion;
+    const major = typeof version === 'string' && /^\d+\.\d+(?:\.\d+)?$/.test(version)
+      ? Number(version.split('.')[0]) : NaN;
     if (manifest?.format !== 'research-kit-artifact') {
       reject('FAIL', 'MANIFEST-SCHEMA', `${MANIFEST_PATH} does not declare format "research-kit-artifact"`,
         { path: MANIFEST_PATH, remedy: 'this is not a Research-Kit artifact' });
       return report();
     }
-    if (!Number.isInteger(major) || major < OLDEST_FORMAT_MAJOR || major > SUPPORTED_FORMAT_MAJOR) {
+    if (!Number.isInteger(major) || major < OLDEST_FORMAT_MAJOR) {
+      reject('FAIL', 'MANIFEST-SCHEMA', `${MANIFEST_PATH} has a missing, malformed or below-oldest formatVersion`,
+        { path: MANIFEST_PATH, remedy: 'regenerate the artifact' });
+      return report();
+    }
+    if (major > SUPPORTED_FORMAT_MAJOR) {
       reject('INCOMPLETE', 'FORMAT-UNSUPPORTED',
         `this package declares format version ${version || '(none)'}; this validator reads majors ${OLDEST_FORMAT_MAJOR} to ${SUPPORTED_FORMAT_MAJOR}`,
         { path: MANIFEST_PATH, remedy: `upgrade Research-Kit to a version that reads format ${major || '?'}.x` });
@@ -215,6 +223,7 @@ export function validateArtifact({
       checkAuthorization();
       return report();
     }
+    manifestSchemaValid = true;
 
     // Each major carries its own names (ADR-0107). The schema lists both eras' values, so the
     // pairing is checked here, where the message can say which name belongs to which format.
@@ -345,11 +354,13 @@ export function validateArtifact({
     // package shape whose entire purpose is to carry a diagnosis home, and would do it
     // with a message implying evidence went missing when none was ever fetched.
     //
-    // So the trigger is a claim: a declared RAW_CAPTURE, or a manifest asserting captures.
-    // Either of those says "there is evidence in here", and evidence without its chain is
-    // exactly what this format refuses to let travel.
+    // The contents are also evidence: a producer cannot disable the chain check by
+    // relabelling captures or declaring their count as zero.
+    const packagedEvidence = bodies.get('project/research/EVIDENCE.md');
     const claimsEvidence = declaredFiles.some((f) => f.role === 'RAW_CAPTURE')
-      || (manifest.collection?.captures ?? 0) > 0;
+      || (manifest.collection?.captures ?? 0) > 0
+      || zip.names.some((name) => name.startsWith('project/research/raw/') && name !== LEDGER_PATH && !name.endsWith('/'))
+      || (packagedEvidence && parseTable(packagedEvidence.toString('utf8'), HEADERS.evidence).rows.length > 0);
     if (claimsEvidence) {
       if (!zip.has(LEDGER_PATH)) {
         reject('FAIL', 'LEDGER-MISSING', `${LEDGER_PATH} is not in the package, but the package claims collected evidence - a corpus without its chain proves nothing`,
@@ -361,6 +372,23 @@ export function validateArtifact({
         workdir = fs.mkdtempSync(path.join(tempRoot, 'rk-artifact-'));
         const projectRoot = materializeProject(workdir, bodies);
         for (const finding of provenanceProblems(projectRoot)) reject('FAIL', finding.code, finding.message, finding);
+      }
+    }
+
+    if (manifest.buildAuthorized === true && status === 'PASS') {
+      if (!workdir) workdir = fs.mkdtempSync(path.join(tempRoot, 'rk-artifact-'));
+      const projectRoot = materializeProject(workdir, bodies);
+      const derived = derivePortableState(projectRoot, { formatMajor: major });
+      if (!derived.buildAuthorized) {
+        reject('FAIL', 'AUTHORIZATION-INCONSISTENT',
+          `the package claims APPROVED_BRIEF, but its corpus derives ${derived.state}`,
+          { path: MANIFEST_PATH, remedy: 'complete the packaged corpus gate and review steps, then regenerate the artifact' });
+      } else {
+        warnings.push(problem('PORTABLE-BASELINE', 'approval was re-derived with unpromoted portable findings and the shared 180-day freshness default; producer or consumer policy and hooks were not used'));
+        if (derived.legacyBriefCompatible) warnings.push(problem('BRIEF-LEGACY-COMPATIBLE', 'the format-1 brief has no gate field and its covered inputs match the pre-0069 hash; current gate and review checks also pass'));
+        for (const finding of derived.verdict?.warnings ?? []) warnings.push(problem(
+          `PREFLIGHT-${finding.rule}`, String(finding.detail ?? finding.rule), { remedy: finding.fix ?? null },
+        ));
       }
     }
 
@@ -391,14 +419,17 @@ export function validateArtifact({
     return {
       status,
       buildAuthorized: status === 'PASS' && claimed,
-      packageId: manifest?.packageId ?? null,
-      clientRef: manifest?.clientRef ?? null,
-      workflowRunId: manifest?.source?.workflowRunId ?? null,
+      // Manifest strings are display metadata only after the schema has established their
+      // type and alphabet. Do not echo malformed values through text or JSON consumers.
+      packageId: manifestSchemaValid ? manifest.packageId : null,
+      clientRef: manifestSchemaValid ? manifest.clientRef : null,
+      workflowRunId: manifestSchemaValid ? manifest.source?.workflowRunId ?? null : null,
       // A 1.x package's HUMAN_REVIEW_REQUIRED is reported under its 2.0.0 name, so a consumer
       // switches on one state whichever format it was handed (ADR-0107).
-      state: manifest?.state === 'HUMAN_REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : (manifest?.state ?? null),
+      state: !manifestSchemaValid ? null
+        : manifest.state === 'HUMAN_REVIEW_REQUIRED' ? 'REVIEW_REQUIRED' : manifest.state,
       // The reviewer's own declaration (format 1.1.0, ADR-0074); a 1.0.0 package has none.
-      reviewedBy: manifest?.review?.by ?? 'undeclared',
+      reviewedBy: manifestSchemaValid ? manifest.review?.by ?? 'undeclared' : 'undeclared',
       errors,
       warnings,
     };

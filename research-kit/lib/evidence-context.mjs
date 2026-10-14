@@ -10,7 +10,7 @@
 // evidence closes the unknown stays a person's call — that is the whole protocol, and a
 // tool that quietly rendered a verdict here would be the most dangerous thing in the kit.
 
-import { PATHS, resolve, readText, realInside } from './core.mjs';
+import { PATHS, resolve, relative, readText, projectFile, isDirectory } from './core.mjs';
 import { captureOf, traceOf, parseCapture } from './corpus.mjs';
 import { supersededRows } from './checks.mjs';
 import { findingWithContext } from './finding.mjs';
@@ -106,14 +106,24 @@ export function evidenceContext(corpus, unknownId, { limit = 420 } = {}) {
     let excerpt = '';
     let excerptProblem = '';
     let extractor = null;
-    const rawOutside = row.raw && !realInside(corpus.root, resolve(corpus.root, row.raw));
-    if (rawOutside && readText(resolve(corpus.root, row.raw)) !== null) {
+    const named = row.raw ? projectFile(corpus.root, row.raw) : null;
+    const rawRoot = resolve(corpus.root, PATHS.raw);
+    const raw = named ? projectFile(rawRoot, relative(rawRoot, named.abs)) : null;
+    if (named?.problem === 'outside') {
       // Never read: this output lands in an agent's context (ADR-0076, 2026-09-28).
       excerptProblem = `${row.raw} is outside the project, so it is not read`;
+    } else if (raw?.problem === 'outside') {
+      excerptProblem = `${row.raw} names a file outside research/raw, so it is not read`;
+    } else if (raw?.problem === 'missing') {
+      excerptProblem = `${row.raw} is named by the row and is not on disk`;
+    } else if (raw?.problem === 'not-file') {
+      excerptProblem = isDirectory(raw.abs)
+        ? `${row.raw} is a directory, not a capture`
+        : `${row.raw} is not a regular file, not a capture`;
     } else if (row.raw) {
-      const text = readText(resolve(corpus.root, row.raw));
+      const text = readText(raw.abs);
       if (text === null) {
-        excerptProblem = `${row.raw} is named by the row and is not on disk`;
+        excerptProblem = `${row.raw} could not be read - check its permissions`;
       } else {
         const body = parseCapture(text).body;
         excerpt = excerptFor(body, row.finding, { limit });

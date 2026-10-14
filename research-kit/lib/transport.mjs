@@ -194,7 +194,7 @@ export function selectSearch({ explicit = '', env = process.env, config = null, 
     : side.name === firecrawl.ANONYMOUS_NAME ? `${side.name} cannot search without a key` : '';
 
   if (asked) {
-    const adapter = SEARCH_PROVIDERS[asked];
+    const adapter = Object.hasOwn(SEARCH_PROVIDERS, asked) ? SEARCH_PROVIDERS[asked] : undefined;
     if (!adapter) {
       const err = new Error(`unknown search provider "${asked}". Known search providers: ${SEARCH_PROVIDER_NAMES.join(', ')}`);
       err.code = 'UNKNOWN_SEARCH_PROVIDER';
@@ -279,7 +279,7 @@ export function selectSearch({ explicit = '', env = process.env, config = null, 
 function selectFetch({ explicit = '', env = process.env, probe = probeFirecrawl, config = null } = {}) {
   const asked = explicit || env.RESEARCH_KIT_TRANSPORT || (config ?? loadConfig(env)).transport || '';
   if (asked) {
-    const adapter = TRANSPORTS[asked];
+    const adapter = Object.hasOwn(TRANSPORTS, asked) ? TRANSPORTS[asked] : undefined;
     if (!adapter) {
       const err = new Error(`unknown transport "${asked}". Known transports: ${TRANSPORT_NAMES.join(', ')}`);
       err.code = 'UNKNOWN_TRANSPORT';

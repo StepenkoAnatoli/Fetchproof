@@ -258,6 +258,29 @@ test('an unknown or mistyped argument is refused, not ignored', () => {
 
 // ---------------------------------------------------------------- collecting
 
+test('collect refuses unsafe client references before token lookup or dispatch', async () => {
+  const bad = ['job 1', 'x'.repeat(65), 'a/b', '..', 'ünï', '-lead', 'job\n', 'job\r'];
+  for (const client_ref of bad) {
+    for (const env of [TOKEN_ENV, {}]) {
+      const d = deps({ env });
+      const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref }), d);
+      assert.equal(r.error, undefined);
+      assert.equal(r.result.isError, true, JSON.stringify(client_ref));
+      assert.match(r.result.content[0].text, /client_ref.*refusing rather than rewriting/);
+      assert.equal(d.seen.dispatch, undefined);
+    }
+  }
+  for (const client_ref of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+    const d = deps();
+    const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref }), d);
+    assert.equal(r.result.isError, undefined);
+    assert.equal(d.seen.dispatch.inputs.client_ref, client_ref);
+  }
+  const secret = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
+  const r = await handle(call('collect', { repository: 'o/r', topic: 'x', client_ref: `${secret}/bad` }), deps());
+  assert.ok(!JSON.stringify(r).includes(secret), 'the refusal leaked a caller credential');
+});
+
 test('collect refuses non-array query and URL arguments before dispatch', async () => {
   const cases = [
     ['queries', 42], ['queries', 'q'], ['queries', {}], ['queries', null],
@@ -383,6 +406,23 @@ test('a Windows path becomes a usable file URI', () => {
     'backslashes are not path separators in a URI, and a client given one cannot open the file');
 });
 
+test('a relative output folder gives a link to the actual absolute download path', async () => {
+  const root = tempDir('rk-mcp-relative-out-');
+  try {
+    const out_dir = path.relative(process.cwd(), path.join(root, 'nested', 'out'));
+    const expected = path.join(path.resolve(out_dir), 'corpus.zip');
+    const d = deps({ corpus: async ({ outDir }) => {
+      fs.writeFileSync(path.join(outDir, 'corpus.zip'), 'download');
+      return { file: path.join(outDir, 'corpus.zip'), validation: { status: 'PASS', buildAuthorized: false, state: 'REVIEW_REQUIRED', errors: [] } };
+    } });
+    const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42, out_dir }), d);
+    assert.equal(r.result.isError, false);
+    assert.equal(r.result.content.find((c) => c.type === 'resource_link').uri,
+      resourceLink(expected, { name: 'corpus.zip', description: 'd' }).uri);
+    assert.equal(fs.readFileSync(expected, 'utf8'), 'download');
+  } finally { cleanup(root); }
+});
+
 test('buildAuthorized reaches the caller in structured form and in words', async () => {
   const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), deps());
   assert.equal(r.result.structuredContent.buildAuthorized, false);
@@ -404,13 +444,29 @@ test('an approved corpus says so instead, and the two texts cannot both appear',
 });
 
 test('an invalid package is flagged isError even though the call succeeded', async () => {
-  const d = deps({ corpus: async () => ({
-    file: '/tmp/x.zip',
-    validation: { status: 'FAIL', buildAuthorized: false, state: 'REVIEW_REQUIRED', packageId: null, errors: [{ code: 'FILE-HASH-MISMATCH', message: 'x' }] },
-  }) });
-  const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), d);
-  assert.equal(r.result.isError, true);
-  assert.equal(r.result.structuredContent.errors.length, 1);
+  for (const [status, code, state, buildAuthorized] of [
+    ['FAIL', 'FILE-HASH-MISMATCH', 'REVIEW_REQUIRED', false],
+    ['FAIL', 'ZIP-READ', null, false],
+    ['BLOCKED', 'ZIP-READ', null, false],
+    ['INCOMPLETE', 'FORMAT-VERSION', 'APPROVED_BRIEF', true],
+  ]) {
+    const diagnostic = { code, message: 'the download could not be validated', remedy: 'download the artifact again' };
+    const d = deps({ corpus: async () => ({
+      file: '/tmp/x.zip', validation: { status, buildAuthorized, state, packageId: null, errors: [diagnostic] },
+    }) });
+    const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42 }), d);
+    assert.equal(r.result.isError, true);
+    assert.equal(r.result.structuredContent.buildAuthorized, false);
+    assert.deepEqual(r.result.structuredContent.errors, [diagnostic]);
+    const content = r.result.content;
+    assert.ok(content.every((item) => item.type === 'text'), 'an invalid download was linked as a corpus ZIP');
+    const message = content.map((item) => item.text).join('\n');
+    assert.ok(message.includes(status));
+    assert.ok(message.includes(code));
+    assert.match(message, /the download could not be validated/);
+    assert.match(message, /download the artifact again/);
+    assert.doesNotMatch(message, /COLLECTED CORPUS|APPROVED brief|review steps remain|README-FIRST/);
+  }
 });
 
 test('a thrown transport failure never leaks the token', async () => {
@@ -724,4 +780,29 @@ test('the server installs the closed-stdout guard before it writes its first byt
   const firstWrite = source.indexOf('process.stdout.write');
   assert.ok(call !== -1, 'mcp-server.mjs no longer tolerates a closed stdout (2026-09-30)');
   assert.ok(call < firstWrite, `the guard is installed after the first write (write at ${firstWrite}, guard at ${call})`);
+});
+
+test('collect refuses line breaks inside a query or URL before dispatch', async () => {
+  for (const key of ['queries', 'urls']) {
+    for (const value of ['https://a.example/x\nsecond', 'https://a.example/x\rsecond']) {
+      const d = deps();
+      const r = await handle(call('collect', { repository: 'o/r', topic: 'x', [key]: [value] }), d);
+      assert.equal(r.result.isError, true);
+      assert.match(r.result.content[0].text, /must be one line/);
+      assert.equal(d.seen.dispatch, undefined, 'a line break must not start a run');
+    }
+  }
+});
+
+test('refused URLs never echo caller credentials in a tool result', async () => {
+  const credentials = [`ghp_${'z'.repeat(36)}`, `github_pat_${'B2'.repeat(20)}`];
+  const d = deps();
+  const r = await handle(call('collect', { repository: 'o/r', topic: 'x', urls: [
+    `ftp://user:${credentials[0]}@a.example/`, `ftp://a.example/?token=${credentials[1]}`,
+  ] }), d);
+  assert.equal(r.result.isError, true);
+  for (const credential of credentials) assert.ok(!JSON.stringify(r).includes(credential), 'a caller credential leaked');
+  assert.match(r.result.content[0].text, /redacted/);
+  assert.match(r.result.content[0].text, /not an http\(s\) URL/);
+  assert.equal(d.seen.dispatch, undefined, 'a refused URL must not start a run');
 });

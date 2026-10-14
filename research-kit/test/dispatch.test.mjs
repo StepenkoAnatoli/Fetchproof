@@ -5,15 +5,82 @@
 // sent, that a token never appears in an error, that a 204 is diagnosed rather than
 // swallowed. The live path is verified separately, by running it.
 
-import { test, describe, assert, tempDir, cleanup, fs, path } from './harness.mjs';
+import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink } from './harness.mjs';
+import { tempBase } from '../lib/core.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
-  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus,
+  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir,
 } from '../lib/dispatch.mjs';
 import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
 
 describe('dispatch');
+
+test('relative output folders resolve once and downloads report the actual absolute file', async () => {
+  const root = tempDir('rk-relative-out-');
+  try {
+    const relative = path.relative(process.cwd(), path.join(root, 'nested', 'out'));
+    const absolute = path.resolve(relative);
+    assert.equal(usableOutDir(relative), absolute);
+    const bytes = Buffer.from('not a zip');
+    const doFetch = stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 1, name: 'research-kit-corpus-v1-job-1', expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
+    ]);
+    const r = await fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: relative, fetch: doFetch });
+    assert.equal(r.file, path.join(absolute, 'research-kit-corpus-v1-job-1.zip'));
+    assert.equal(path.isAbsolute(r.file), true);
+    assert.deepEqual(fs.readFileSync(r.file), bytes);
+  } finally { cleanup(root); }
+});
+
+test('default corpus downloads use different private directories even for the same artifact name', async () => {
+  const name = `research-kit-corpus-v1-private-${process.pid}`;
+  const downloads = [];
+  const fetch = () => stubFetch([
+    jsonResponse(200, { artifacts: [{ id: 7, name, expired: false }] }),
+    { ok: true, status: 200, arrayBuffer: async () => Buffer.from('package bytes') },
+  ]);
+  try {
+    for (let runId = 1; runId <= 2; runId++) downloads.push(await fetchCorpus({ repository: REPO, runId, token: TOKEN, fetch: fetch() }));
+    const folders = downloads.map((download) => path.dirname(download.file));
+    assert.notEqual(folders[0], folders[1]);
+    for (const download of downloads) {
+      const folder = path.dirname(download.file);
+      assert.equal(path.dirname(folder), tempBase());
+      assert.match(path.basename(folder), /^research-kit-corpus-/);
+      assert.equal(fs.readFileSync(download.file, 'utf8'), 'package bytes');
+      if (process.platform !== 'win32') assert.equal(fs.statSync(folder).mode & 0o077, 0);
+    }
+  } finally {
+    for (const download of downloads) {
+      const folder = path.dirname(download.file);
+      if (folder === tempBase()) fs.rmSync(download.file, { force: true });
+      else cleanup(folder);
+    }
+  }
+});
+
+test('an existing or dangling package symlink is refused without writing its target', async () => {
+  const dir = tempDir('rk-download-link-');
+  const name = 'research-kit-corpus-v1-link';
+  const target = path.join(dir, 'victim.txt');
+  const output = path.join(dir, `${name}.zip`);
+  for (const dangling of [false, true]) {
+    if (!dangling) fs.writeFileSync(target, 'precious');
+    requireSymlink(target, output, 'a package symlink must not redirect a download');
+    const fetch = stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 7, name, expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => Buffer.from('replacement') },
+    ]);
+    await assert.rejects(() => fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: dir, fetch }),
+      (error) => error.code === 'OUT_DIR' && /symbolic link/.test(error.message));
+    if (dangling) assert.equal(fs.existsSync(target), false);
+    else assert.equal(fs.readFileSync(target, 'utf8'), 'precious');
+    fs.unlinkSync(output);
+    if (!dangling) fs.unlinkSync(target);
+  }
+});
 
 const TOKEN = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
 const REPO = 'example-org/example-project';
@@ -152,6 +219,29 @@ test('404 and 403 get remedies that name the real cause', async () => {
     (err) => err.code === 'FORBIDDEN' && /Actions/.test(err.remedy));
 });
 
+test('rate-limited 403 responses name the wait instead of token permissions', async () => {
+  const cases = [
+    [{ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '2000000000' }, 'Forbidden', /2000000000/],
+    [{ 'retry-after': '60' }, 'Forbidden', /60 seconds/],
+    [{}, 'You have exceeded a secondary rate limit.', /at least (?:one minute|60 seconds)/],
+  ];
+  for (const [headerValues, message, wait] of cases) {
+    for (const call of [
+      (fetch) => dispatchCollection({ repository: REPO, token: TOKEN, fetch }),
+      (fetch) => getRun({ repository: REPO, runId: 7, token: TOKEN, fetch }),
+    ]) {
+      const fetch = stubFetch([jsonResponse(403, { message }, { headers: new Headers(headerValues) })]);
+      await assert.rejects(() => call(fetch), (error) => {
+        assert.equal(error.code, 'RATE_LIMITED');
+        assert.equal(error.status, 403);
+        assert.match(error.remedy, wait);
+        assert.doesNotMatch(error.remedy, /permission|Actions/);
+        return true;
+      });
+    }
+  }
+});
+
 test('no error message ever carries the token, whatever the server said', async () => {
   // The server echoing the credential back is the case a hand-written message forgets.
   const leaky = stubFetch([jsonResponse(500, { message: `bad credentials for ${TOKEN}` })]);
@@ -206,6 +296,7 @@ test('a 200 whose body is not JSON is a dispatch error, not a SyntaxError', asyn
     json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); },
   });
   for (const [name, call] of [
+    ['dispatchCollection', () => dispatchCollection({ repository: REPO, token: TOKEN, fetch: html })],
     ['getRun', () => getRun({ repository: REPO, runId: 1, token: TOKEN, fetch: html })],
     ['listArtifacts', () => listArtifacts({ repository: REPO, runId: 1, token: TOKEN, fetch: html })],
   ]) {
@@ -225,9 +316,12 @@ test('a 200 whose body is not JSON is a dispatch error, not a SyntaxError', asyn
 
 test('a malformed repository is refused before any request is made', async () => {
   const doFetch = stubFetch([jsonResponse(200, { workflow_run_id: 1 })]);
-  for (const bad of ['no-slash', '/leading', 'trailing/', 'a/b/c']) {
-    await assert.rejects(() => dispatchCollection({ repository: bad, token: TOKEN, fetch: doFetch }),
-      (err) => err.code === 'REPOSITORY');
+  for (const bad of ['no-slash', '/leading', 'trailing/', 'a/b/c', '../x', 'o/..', './r', 'o/.',
+    'o/r?x=1', 'o/r#f', 'o/r%2fother', 'o/r\\other', 'o/r name', 'o/r\nname', 'o/r\n', 'o/r\r', 'o/répo']) {
+    for (const request of [dispatchCollection, getRun, listArtifacts, downloadArtifact]) {
+      await assert.rejects(() => request({ repository: bad, token: TOKEN, runId: 1, artifactId: 1, fetch: doFetch }),
+        (err) => err.code === 'REPOSITORY', `${request.name} accepted ${JSON.stringify(bad)}`);
+    }
   }
   assert.equal(doFetch.calls.length, 0, 'a bad repository must not produce a request');
 });
@@ -521,3 +615,20 @@ function require_read(bytes) {
   // openZip is what unwrapArtifact uses; reading the one entry is where the throw came from.
   return importedOpenZip(bytes).read('package.zip');
 }
+
+test('repository names with dots, underscores and hyphens retain their API path', async () => {
+  const doFetch = stubFetch([jsonResponse(200, { workflow_run_id: 1 })]);
+  await dispatchCollection({ repository: 'Example-org/project.name_v2-1', token: TOKEN, fetch: doFetch });
+  assert.match(doFetch.calls[0].url, /\/repos\/Example-org\/project\.name_v2-1\/actions\//);
+});
+
+test('each query and URL must be one line before workflow input serialization', () => {
+  for (const key of ['queries', 'urls']) {
+    for (const value of ['https://a.example/x\ninjected', 'https://a.example/x\rinjected',
+      'https://a.example/x\r\ninjected', '\nhttps://a.example/x', 'https://a.example/x\n', '\r\n']) {
+      const r = queriesInput({ [key]: [value] });
+      assert.equal(r.value, undefined, `${key}: ${JSON.stringify(value)} was serialized`);
+      assert.match(r.error, /must be one line/);
+    }
+  }
+});

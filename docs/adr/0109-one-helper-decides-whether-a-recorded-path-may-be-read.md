@@ -35,6 +35,11 @@ its own tests. Moving them is a refactor of working, tested code with no defect 
 **Trigger that ends the deferral:** a new reader of recorded paths, or a defect in any of
 those three, is written against `projectFile`, and the other two move with it.
 
+Implementation (2026-10-13, #351): the evidence-context private-file defect fired the
+deferral's trigger. Its Raw reader, corpus capture/Raw checks, and the artifact Raw/ledger
+readers now use `projectFile`. Capture reads also stay inside the capture folder by real
+path, and missing or non-file inputs are named before any content read.
+
 ## Rejected alternatives
 
 - **Move every reader now.** Three working readers rewritten in one change, with no defect

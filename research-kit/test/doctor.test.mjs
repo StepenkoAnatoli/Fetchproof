@@ -7,7 +7,7 @@ import { TESTED_CLI_VERSION } from '../lib/firecrawl.mjs';
 import { PATHS, resolve, readText, writeText, readJson } from '../lib/core.mjs';
 import { runDoctor, machineHealth, gateHealth, editGateState, scanForSecrets } from '../lib/doctor.mjs';
 import { installEditGate, removeEditGate, installCommitGate, removeCommitGate, settingsState, retiredRepairNote, MATCHER } from '../lib/installer.mjs';
-import { EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS } from '../lib/machine.mjs';
+import { EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS, hooksPath, previousHooksPath } from '../lib/machine.mjs';
 
 describe('doctor');
 
@@ -25,6 +25,65 @@ function machine({ config = {}, settings = undefined } = {}) {
 }
 
 const find = (findings, name) => findings.find((f) => f.name === name);
+
+test('included global hooks are recorded, preserved and restored by the commit-gate install', () => {
+  requireGit('global include-based hooks');
+  for (const conditional of [false, true]) {
+    const { dir, env } = machine();
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    const globalFile = path.join(dir, 'gitconfig');
+    const gitPaths = { cwd: repo, env: { ...env, GIT_CONFIG_GLOBAL: globalFile, GIT_CONFIG_NOSYSTEM: '1' } };
+    const initialized = spawnSync('git', fixtureInitArgs(repo), { env: gitPaths.env, encoding: 'utf8', windowsHide: true });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    const old = path.join(dir, 'included-hooks');
+    writeText(path.join(old, 'pre-commit'), '#!/bin/sh\n# somebody else\n');
+    const included = path.join(dir, 'included.gitconfig');
+    writeText(included, `[core]\n hooksPath = ${JSON.stringify(old.replace(/\\/g, '/'))}\n`);
+    const gitTopLevel = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: repo, env: gitPaths.env, encoding: 'utf8', windowsHide: true,
+    });
+    assert.equal(gitTopLevel.status, 0, gitTopLevel.stderr);
+    const heading = conditional
+      ? `[includeIf "gitdir:${gitTopLevel.stdout.trim().replace(/\\/g, '/')}/"]`
+      : '[include]';
+    writeText(globalFile, `${heading}\n path = ${JSON.stringify(included.replace(/\\/g, '/'))}\n`);
+    assert.equal(hooksPath('global', gitPaths), old.replace(/\\/g, '/'), conditional ? 'conditional include at Git’s resolved worktree path' : 'ordinary include');
+    const preview = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: repo, dryRun: true });
+    assert.equal(preview.previous, old.replace(/\\/g, '/'));
+    const installed = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: repo });
+    assert.equal(installed.ok, true);
+    assert.equal(installed.previous, old.replace(/\\/g, '/'));
+    assert.equal(previousHooksPath(gitPaths), old.replace(/\\/g, '/'));
+    const state = readJson(env.RESEARCH_KIT_INSTALL_STATE);
+    assert.equal(state.previousHooksPath, old.replace(/\\/g, '/'));
+    const removed = removeCommitGate({ env, gitPaths });
+    assert.equal(removed.restored, old.replace(/\\/g, '/'));
+    assert.equal(hooksPath('global', gitPaths), old.replace(/\\/g, '/'));
+  }
+});
+
+test('malformed install records produce a named deploy warning and valid CLI JSON', () => {
+  const root = makePassingProject();
+  const { dir, env } = machine({});
+  const gitEnv = { ...env, GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  writeText(gitEnv.GIT_CONFIG_GLOBAL, `[core]\n hooksPath = ${JSON.stringify(path.join(KIT_ROOT, 'githooks').replace(/\\/g, '/'))}\n`);
+  for (const record of [{ kitHome: 42 }, { kitHome: {} }, { kitHome: true }, { kitHome: ['/x'] }, { kitHome: '' }, [], 'str']) {
+    writeText(env.RESEARCH_KIT_INSTALL_STATE, JSON.stringify(record));
+    const report = runDoctor(root, { env: gitEnv, gitPaths: { env: gitEnv }, probe: READY, record: false });
+    const warning = find(report.findings, 'deploy');
+    assert.equal(warning.severity, 'warn');
+    assert.ok(warning.detail.includes(env.RESEARCH_KIT_INSTALL_STATE));
+    assert.match(warning.detail, /not readable/);
+  }
+  writeText(env.RESEARCH_KIT_INSTALL_STATE, '{"kitHome":42}');
+  const result = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'doctor.mjs'), '--json'], {
+    cwd: root, env: gitEnv, encoding: 'utf8', windowsHide: true,
+  });
+  assert.doesNotMatch(result.stderr, /ERR_INVALID_ARG_TYPE|TypeError/);
+  const report = JSON.parse(result.stdout);
+  assert.ok(report.findings.some((finding) => finding.name === 'deploy' && finding.severity === 'warn'));
+});
 
 // A no-hit result describes inspected files. Reaching the count at the final file is
 // different from returning at that count while another path remains uninspected.
@@ -149,6 +208,22 @@ test('an unreadable machine config is a blocking CRITICAL that names the resolve
   assert.equal(finding.severity, 'critical');
   assert.match(finding.detail, /does not parse/);
   assert.match(finding.detail, /fail-CLOSED/);
+});
+
+test('a held config names the broken file and distinguishes its snapshot from fallback', () => {
+  for (const failOpen of [false, true]) {
+    const { env, configFile } = machine({ config: { failOpen, role: 'builder' } });
+    machineHealth({ env, probe: READY }); // Save the last readable config.
+    writeText(configFile, '{broken');
+    const finding = find(machineHealth({ env, probe: READY }), 'machine-config');
+    assert.equal(finding.severity, 'critical');
+    assert.ok(finding.detail.startsWith(`${configFile} exists and does not parse`));
+    assert.ok(finding.detail.includes(`${configFile}.last-good`));
+    assert.match(finding.detail, /held from/);
+    assert.match(finding.detail, failOpen ? /fail-open/ : /fail-CLOSED/);
+    assert.match(finding.detail, /builder/);
+    assert.doesNotMatch(finding.detail, /nothing to hold|no last-good snapshot/);
+  }
 });
 
 test('a retired config key and a retired env var are both reported', () => {
@@ -983,12 +1058,28 @@ test('registeredPath reads the path out of a command, quoted or bare', async () 
 // 22.20.0 the fetch went around the proxy and got HTTP 403. Nothing told the operator; the
 // error named no proxy.
 
-const nodeFindings = (nodeVersion, extraEnv = {}) => {
+const nodeFindings = (nodeVersion, extraEnv = {}, execArgv = []) => {
   const { env } = machine({ config: { role: 'collector' } });
   const scrubbed = { ...env };
   for (const key of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete scrubbed[key];
-  return machineHealth({ env: { ...scrubbed, ...extraEnv }, probe: READY, nodeVersion });
+  return machineHealth({ env: { ...scrubbed, ...extraEnv }, probe: READY, nodeVersion, execArgv });
 };
+
+test('doctor warns when an explicit startup choice leaves the configured proxy off', () => {
+  const configured = { HTTPS_PROXY: 'http://proxy.example:8080' };
+  const proxyFinding = (env, execArgv = []) => find(nodeFindings('24.21.0', { ...configured, ...env }, execArgv), 'proxy');
+  for (const value of ['0', 'true', 'yes', '', 'garbage']) {
+    const finding = proxyFinding({ NODE_USE_ENV_PROXY: value });
+    assert.equal(finding.severity, 'warn');
+    assert.match(finding.detail, /NODE_USE_ENV_PROXY.*requests go direct/);
+    assert.match(finding.fix, /unset NODE_USE_ENV_PROXY or set it to 1/);
+  }
+  assert.equal(proxyFinding({ NODE_USE_ENV_PROXY: '1' }).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--use-env-proxy' }).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_USE_ENV_PROXY: '1', NODE_OPTIONS: '--no-use-env-proxy' }).severity, 'warn');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--no-use-env-proxy' }, ['--use-env-proxy']).severity, 'pass');
+  assert.equal(proxyFinding({ NODE_OPTIONS: '--use-env-proxy' }, ['--no-use-env-proxy']).severity, 'warn');
+});
 
 test('behind a proxy, a Node that cannot use it is named, with the version to move to', () => {
   const old = find(nodeFindings('22.20.0', { HTTPS_PROXY: 'http://proxy.example:8080' }), 'proxy');
@@ -1013,6 +1104,12 @@ test('behind a proxy, a Node that cannot use it is named, with the version to mo
     'the lowercase variable wins when both are set (E-03), so the malformed one is never read');
   const secret = find(nodeFindings('24.21.0', { HTTPS_PROXY: 'user:hunter2@proxy.example:8080' }), 'proxy');
   assert.equal(`${secret.detail} ${secret.fix}`.includes('hunter2'), false, 'doctor printed a proxy password');
+  for (const value of ['http://proxy.example:8080/path', 'http://proxy.example:8080?x=1', 'http://proxy.example:8080#fragment']) {
+    const finding = find(nodeFindings('24.21.0', { HTTPS_PROXY: value }), 'proxy');
+    assert.equal(finding.severity, 'warn', 'a non-origin proxy URL was reported as working');
+    assert.match(finding.detail, /cannot use.*direct/);
+    assert.match(finding.fix, /http:\/\/host:port/);
+  }
 });
 
 test('doctor reports the Node line: supported, odd and short-lived, or below the floor', () => {

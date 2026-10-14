@@ -259,6 +259,18 @@ test('the ADR log has one file per number, and the index names them all', () => 
   assert.deepEqual(unlisted, [], 'these ADRs exist but are absent from docs/adr/README.md:\n  ' + unlisted.join('\n  '));
   const dangling = [...links].filter((f) => !fs.existsSync(path.join(dir, f)));
   assert.deepEqual(dangling, [], 'the index links ADRs that do not exist:\n  ' + dangling.join('\n  '));
+
+  const brokenBodyLinks = [];
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(dir, file), 'utf8');
+    for (const [, href] of source.matchAll(/\]\(([^)]+)\)/g)) {
+      const target = href.trim().replace(/^<|>$/g, '').split('#', 1)[0];
+      if (!target || target.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(target)) continue;
+      const decoded = decodeURIComponent(target);
+      if (!fs.existsSync(path.resolve(dir, decoded))) brokenBodyLinks.push(`${file}: ${href}`);
+    }
+  }
+  assert.deepEqual(brokenBodyLinks, [], 'the ADRs link files that do not exist:\n  ' + brokenBodyLinks.join('\n  '));
 });
 
 test('the ledger is still not swept up by the broader rules', () => {

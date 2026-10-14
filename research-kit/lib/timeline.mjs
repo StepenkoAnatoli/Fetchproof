@@ -71,7 +71,7 @@ export function renderTimeline(root, { corpus = null } = {}) {
     '',
     '| When | What | Detail |',
     '|---|---|---|',
-    ...events.map((e) => `| ${when(e.at)} | ${e.kind} | ${String(e.detail).replace(/\|/g, '\\|')} |`),
+    ...events.map((e) => `| ${when(e.at)} | ${e.kind} | ${String(e.detail).replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|')} |`),
     '',
   ];
   writeText(resolve(root, PATHS.timeline), `${lines.join('\n')}\n`);

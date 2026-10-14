@@ -7,13 +7,74 @@
 // concludes nothing.
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, fs, path, os, KIT_ROOT, tempDir, cleanup, makePassingProject } from './harness.mjs';
+import { test, describe, assert, assertEqual, fs, path, os, KIT_ROOT, tempDir, cleanup, makePassingProject, requireSymlink } from './harness.mjs';
+import { findingsReviewState } from '../lib/artifact.mjs';
 import { resolve, PATHS } from '../lib/core.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { evidenceContext, renderContext, excerptFor } from '../lib/evidence-context.mjs';
 
 describe('evidence-context');
+
+test('Raw cells cannot read or print a private project file directly or by traversal', () => {
+  const root = fixture();
+  const privateFile = path.join(root, '.env');
+  const sentinel = 'PRIVATE_SENTINEL_FROM_ENV';
+  fs.writeFileSync(privateFile, sentinel);
+  const evidenceFile = path.join(root, PATHS.evidence);
+  const original = fs.readFileSync(evidenceFile, 'utf8');
+  for (const raw of ['.env', 'research/raw/../../.env']) {
+    fs.writeFileSync(evidenceFile, original.replace('research/raw/page.md', raw));
+    const corpus = readCorpus(root);
+    const real = fs.readFileSync;
+    let privateReads = 0;
+    fs.readFileSync = (file, ...args) => { if (String(file) === privateFile) privateReads++; return real(file, ...args); };
+    let context;
+    try { context = evidenceContext(corpus, 'U-1'); findingsReviewState(root, corpus); }
+    finally { fs.readFileSync = real; }
+    assert.equal(privateReads, 0);
+    assert.equal(context.cited[0].excerpt, '');
+    assert.equal(context.cited[0].extractor, null);
+    assert.match(context.cited[0].excerptProblem, /outside research\/raw/);
+    for (const args of [[], ['--json']]) {
+      const result = spawnSync(process.execPath, [CLI, 'U-1', ...args], { cwd: root, encoding: 'utf8', windowsHide: true });
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(!result.stdout.includes(sentinel));
+      if (args.length) JSON.parse(result.stdout);
+    }
+  }
+});
+
+test('a directory Raw cell is named as a directory instead of a missing capture', () => {
+  const root = fixture();
+  fs.mkdirSync(path.join(root, PATHS.raw, 'folder'));
+  const corpus = readCorpus(root);
+  corpus.evidence[0].raw = `${PATHS.raw}/folder`;
+  const row = evidenceContext(corpus, 'U-1').cited[0];
+  assert.equal(row.excerpt, '');
+  assert.match(row.excerptProblem, /directory.*not a capture/);
+  assert.doesNotMatch(row.excerptProblem, /not on disk/);
+});
+
+test('a capture link to a private file inside the project is unread by all capture consumers', () => {
+  const root = fixture();
+  const privateFile = path.join(root, '.env');
+  fs.writeFileSync(privateFile, 'PRIVATE_SENTINEL_FROM_LINK');
+  const link = path.join(root, PATHS.raw, 'link.md');
+  requireSymlink(privateFile, link, 'a capture link to a private project file');
+  const real = fs.readFileSync;
+  let privateReads = 0;
+  fs.readFileSync = (file, ...args) => { if ([link, privateFile].includes(String(file))) privateReads++; return real(file, ...args); };
+  try {
+    const corpus = readCorpus(root);
+    corpus.evidence[0].raw = `${PATHS.raw}/link.md`;
+    const context = evidenceContext(corpus, 'U-1');
+    findingsReviewState(root, corpus);
+    assert.equal(context.cited[0].excerpt, '');
+    assert.match(context.cited[0].excerptProblem, /outside research\/raw/);
+  } finally { fs.readFileSync = real; }
+  assert.equal(privateReads, 0);
+});
 
 const REPO = path.resolve(KIT_ROOT, '..');
 const CLI = path.join(KIT_ROOT, 'bin', 'evidence-context.mjs');

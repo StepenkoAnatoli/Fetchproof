@@ -8,6 +8,8 @@
 import { test, describe, assert, fs, path, os, cleanup, tempDir } from './harness.mjs';
 import { sha256, canonicalJson } from '../lib/core.mjs';
 import { validateArtifact, authorizationProblems, SUPPORTED_FORMAT_MAJOR } from '../lib/artifact-validator.mjs';
+import { legacyBriefInputsHash } from '../lib/artifact-state.mjs';
+import { readCorpus } from '../lib/corpus.mjs';
 import { ZIP_LIMITS, openZip, checkEntryName } from '../lib/artifact-zip.mjs';
 import {
   rawZip, seal, basePackage, collectedProject, approvedProject, writeFixture,
@@ -18,13 +20,151 @@ describe('artifact-validator');
 const scratch = tempDir('rk-fixtures-');
 
 const collected = basePackage(collectedProject());
-const approved = basePackage(approvedProject());
+const approvedRoot = approvedProject();
+const approved = basePackage(approvedRoot);
 
 /** Deep clone through canonical JSON, so a mutation cannot leak into the next fixture. */
 const clone = (value) => JSON.parse(canonicalJson(value));
 const copyPayload = (payload) => payload.map((e) => ({ name: e.name, data: Buffer.from(e.data) }));
 
 const text = (s) => Buffer.from(s, 'utf8');
+
+test('relabelled evidence still requires and verifies its ledger from package contents', () => {
+  for (const variant of ['missing-ledger', 'invalid-ledger', 'rows-without-captures']) {
+    const manifest = clone(collected.manifest);
+    let payload = copyPayload(collected.payload);
+    manifest.collection.captures = 0;
+    manifest.files = manifest.files.map((entry) => entry.role === 'RAW_CAPTURE' ? { ...entry, role: 'OTHER' } : entry);
+    if (variant === 'invalid-ledger') {
+      const ledger = payload.find((entry) => entry.name.endsWith('.fetches.jsonl'));
+      ledger.data = text('{"garbage":true}\n');
+      const declared = manifest.files.find((entry) => entry.path === ledger.name);
+      declared.byteLength = ledger.data.length;
+      declared.sha256 = sha256(ledger.data);
+    } else {
+      const removed = new Set(payload.filter((entry) => entry.name.endsWith('.fetches.jsonl')
+        || (variant === 'rows-without-captures' && entry.name.startsWith('project/research/raw/'))).map((entry) => entry.name));
+      payload = payload.filter((entry) => !removed.has(entry.name));
+      manifest.files = manifest.files.filter((entry) => !removed.has(entry.path));
+    }
+    const file = writeFixture(scratch, variant, seal(payload, manifest, { recomputeFiles: false }));
+    const report = validateArtifact({ file, tempRoot: scratch });
+    assert.equal(report.status, 'FAIL', variant);
+    assert.equal(report.buildAuthorized, false);
+    const code = variant === 'invalid-ledger' ? 'LEDGER-INVALID' : 'LEDGER-MISSING';
+    assert.ok(report.errors.some((error) => error.code === code), JSON.stringify(report.errors));
+  }
+});
+
+function legacyApproved({ formatVersion = '1.0.0', explicitUnknown = false, changedInput = false, unstamped = false } = {}) {
+  const manifest = clone(approved.manifest);
+  manifest.formatVersion = formatVersion;
+  const payload = copyPayload(approved.payload);
+  const brief = payload.find((entry) => entry.name === 'project/research/BRIEF.md');
+  if (unstamped) {
+    brief.data = text(brief.data.toString('utf8').replace(/\n?<!-- research-kit:brief-draft[^>]*-->\s*/g, '\n'));
+  } else {
+    const marker = brief.data.toString('utf8').match(/<!-- research-kit:brief-draft body=([0-9a-f]{16}) inputs=[0-9a-f]{16}(?: gate=(?:pass|fail|unknown))? -->/);
+    assert.ok(marker, 'approved fixture has a current draft marker');
+    const inputs = legacyBriefInputsHash(readCorpus(approvedRoot));
+    brief.data = text(brief.data.toString('utf8').replace(marker[0],
+      `<!-- research-kit:brief-draft body=${marker[1]} inputs=${inputs}${explicitUnknown ? ' gate=unknown' : ''} -->`));
+  }
+  if (changedInput) {
+    const evidence = payload.find((entry) => entry.name === 'project/research/EVIDENCE.md');
+    evidence.data = text(evidence.data.toString('utf8').replace('1,000 included credits', '1,001 included credits'));
+  }
+  return { payload, manifest };
+}
+
+test('claimed approval is refused when the packaged corpus has not earned it', () => {
+  for (const variant of ['unreviewed-corpus', 'opened-contract', 'blank-raw-extractor-finding']) {
+    const base = variant === 'unreviewed-corpus' ? collected : approved;
+    const manifest = clone(base.manifest);
+    const payload = copyPayload(base.payload);
+    manifest.state = 'APPROVED_BRIEF';
+    manifest.kind = 'APPROVED_RESEARCH';
+    manifest.buildAuthorized = true;
+    manifest.review = { ...manifest.review, mapClassified: true, findingsReviewed: true, briefReviewed: true, by: 'agent' };
+    manifest.gate = { ...manifest.gate, verdict: 'PASS', buildAuthorized: true, blockingFindings: [] };
+    if (variant === 'opened-contract') {
+      const entry = payload.find((file) => file.name === 'project/research/DISCOVERY.md');
+      entry.data = text(entry.data.toString('utf8').replace('CLOSED', 'OPEN'));
+    } else if (variant === 'blank-raw-extractor-finding') {
+      const entry = payload.find((file) => file.name === 'project/research/EVIDENCE.md');
+      const auto = collected.payload.find((file) => file.name === entry.name).data.toString('utf8');
+      entry.data = text(auto.replace(/\| research\/raw\/[^|\r\n]+ \|/g, '|  |'));
+      const brief = payload.find((file) => file.name === 'project/research/BRIEF.md');
+      brief.data = text(brief.data.toString('utf8').replace(/\n?<!-- research-kit:brief-draft[^>]*-->\s*/g, '\n'));
+    }
+    const file = writeFixture(scratch, `forged-${variant}`, seal(payload, manifest));
+    const result = validateArtifact({ file, tempRoot: scratch });
+    assert.equal(result.status, 'FAIL', variant);
+    assert.equal(result.buildAuthorized, false, variant);
+    assert.ok(result.errors.some((error) => error.code === 'AUTHORIZATION-INCONSISTENT'), JSON.stringify(result.errors));
+  }
+});
+
+test('a true approval is re-derived from packaged bytes and reports its portable baseline', () => {
+  const file = writeFixture(scratch, 'portable-approved', seal(copyPayload(approved.payload), clone(approved.manifest)));
+  const result = validateArtifact({ file, tempRoot: scratch });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.buildAuthorized, true);
+  assert.ok(result.warnings.some((warning) => warning.code === 'PORTABLE-BASELINE'), JSON.stringify(result.warnings));
+});
+
+test('a conservative false approval is never upgraded from a package the corpus could authorize', () => {
+  const manifest = clone(approved.manifest);
+  manifest.state = 'REVIEW_REQUIRED';
+  manifest.kind = 'COLLECTED_CORPUS';
+  manifest.buildAuthorized = false;
+  manifest.review = { ...manifest.review, mapClassified: false, findingsReviewed: false, briefReviewed: false };
+  manifest.gate = { ...manifest.gate, verdict: 'NOT_RUN', buildAuthorized: false };
+  const file = writeFixture(scratch, 'conservative-not-upgraded', seal(copyPayload(approved.payload), manifest));
+  const result = validateArtifact({ file, tempRoot: scratch });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.buildAuthorized, false);
+  assert.ok(!result.warnings.some((warning) => warning.code === 'PORTABLE-BASELINE'));
+});
+
+test('a format-1 unstamped approved brief retains ADR-0138 compatibility with unknown currency', () => {
+  const { payload, manifest } = legacyApproved({ unstamped: true });
+  const file = writeFixture(scratch, 'legacy-unstamped', seal(payload, manifest));
+  const result = validateArtifact({ file, tempRoot: scratch });
+  assert.equal(result.status, 'PASS', JSON.stringify(result.errors));
+  assert.equal(result.buildAuthorized, true);
+  assert.ok(result.warnings.some((warning) => warning.code === 'PORTABLE-BASELINE'));
+  assert.ok(!result.warnings.some((warning) => warning.code === 'BRIEF-LEGACY-COMPATIBLE'));
+});
+
+test('a pre-0069 format-1 stamp is accepted only with its exact covered-input hash', () => {
+  // The recorded writer probe used October 13 inputs. Keep that reference sample
+  // fixed while the packages below use today's inputs and remain fresh.
+  const probedCorpus = readCorpus(approvedProject('2026-10-13'));
+  assert.equal(legacyBriefInputsHash(probedCorpus), 'e0babc86cec671c9',
+    'the dated synthetic corpus matches the actual pre-0069 writer probe');
+  const { payload, manifest } = legacyApproved();
+  const file = writeFixture(scratch, 'legacy-stamp', seal(payload, manifest));
+  const result = validateArtifact({ file, tempRoot: scratch });
+  assert.equal(result.status, 'PASS', JSON.stringify(result.errors));
+  assert.equal(result.buildAuthorized, true);
+  assert.ok(result.warnings.some((warning) => warning.code === 'BRIEF-LEGACY-COMPATIBLE'), JSON.stringify(result.warnings));
+
+  for (const variant of [
+    ['changed-covered-input', { changedInput: true, formatVersion: '1.0.0' }],
+    ['explicit-unknown-is-not-legacy', { explicitUnknown: true, formatVersion: '1.0.0' }],
+    ['legacy-stamp-is-format-1-only', { formatVersion: '2.0.0' }],
+  ]) {
+    const [name, options] = variant;
+    const altered = legacyApproved(options);
+    const invalidFile = writeFixture(scratch, name, seal(altered.payload, altered.manifest));
+    const refused = validateArtifact({ file: invalidFile, tempRoot: scratch });
+    assert.equal(refused.status, 'FAIL', name);
+    assert.equal(refused.buildAuthorized, false, name);
+    assert.ok(refused.errors.some((error) => error.code === 'AUTHORIZATION-INCONSISTENT'), JSON.stringify(refused.errors));
+    assert.ok(!refused.warnings.some((warning) => warning.code === 'BRIEF-LEGACY-COMPATIBLE'), name);
+  }
+});
 
 /**
  * name -> { build, expect }. `expect.code` means "this code must be among the errors",
@@ -46,6 +186,11 @@ const FIXTURES = {
     build: () => {
       const payload = copyPayload(collected.payload)
         .filter((e) => !e.name.startsWith('project/research/raw/'));
+      // A genuinely uncollected scaffold has no evidence rows either. Leaving the
+      // collected fixture's table here falsely claimed evidence with no chain.
+      payload.find((entry) => entry.name === 'project/research/EVIDENCE.md').data = text(
+        '# Evidence\n\n| ID | Retrieved | Type | URL | Finding | Raw |\n|---|---|---|---|---|---|\n',
+      );
       const manifest = clone(collected.manifest);
       manifest.state = 'COLLECTION_FAILED';
       manifest.kind = 'COLLECTED_CORPUS';
@@ -151,6 +296,24 @@ const FIXTURES = {
       return seal(payload, clone(collected.manifest), { recomputeFiles: false });
     },
     expect: { status: 'FAIL', code: 'ZIP-CASE-COLLISION' },
+  },
+  '30-file-directory-collision-file-first': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/a', data: text('file') });
+      payload.push({ name: 'project/docs/a/b.md', data: text('child') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
+  },
+  '31-file-directory-collision-child-first': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/a/b.md', data: text('child') });
+      payload.push({ name: 'project/docs/a', data: text('file') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
   },
   '18-unsupported-major-version': {
     build: () => {
@@ -300,6 +463,11 @@ for (const [name, fixture] of Object.entries(FIXTURES)) {
       assert.ok(codes.includes(fixture.expect.code),
         `${name}: expected error ${fixture.expect.code}, got ${codes.join(', ') || '(none)'}`);
     }
+    if (fixture.expect.noTempPath) {
+      const diagnostics = result.errors.map((error) => `${error.message} ${error.remedy ?? ''}`).join('\n');
+      assert.ok(!diagnostics.includes(scratch) && !/rk-artifact-|EEXIST|ENOTDIR/.test(diagnostics),
+        `${name}: structural ZIP error must not expose a materialization temp path`);
+    }
     if ('buildAuthorized' in fixture.expect) {
       assert.equal(result.buildAuthorized, fixture.expect.buildAuthorized,
         `${name}: buildAuthorized should be ${fixture.expect.buildAuthorized}`);
@@ -429,6 +597,25 @@ test('SUPPORTED_FORMAT_MAJOR is 2, and a 3.x package is INCOMPLETE rather than i
   const result = validateArtifact({ file, tempRoot: scratch });
   assert.equal(result.status, 'INCOMPLETE',
     'a newer package is probably correct and merely unreadable here; calling it invalid sends somebody hunting a corruption that is not there');
+});
+
+test('malformed and below-oldest format versions are invalid manifests, not newer formats', () => {
+  for (const [index, version] of [undefined, null, 3, ['3.0'], '', 'abc', '0.9.0', '1e2.0', '3.nope'].entries()) {
+    const manifest = clone(collected.manifest);
+    if (version === undefined) delete manifest.formatVersion;
+    else manifest.formatVersion = version;
+    const file = writeFixture(scratch, `invalid-version-${index}`, seal(copyPayload(collected.payload), manifest));
+    const result = validateArtifact({ file, tempRoot: scratch });
+    assert.equal(result.status, 'FAIL', JSON.stringify(version));
+    assert.equal(result.buildAuthorized, false);
+    assert.ok(result.errors.some((error) => error.code === 'MANIFEST-SCHEMA' && /regenerate/.test(error.remedy)));
+    assert.ok(result.errors.every((error) => error.code !== 'FORMAT-UNSUPPORTED'));
+  }
+  const manifest = clone(collected.manifest);
+  manifest.formatVersion = '3.0';
+  const result = validateArtifact({ file: writeFixture(scratch, 'future-version-short', seal(copyPayload(collected.payload), manifest)), tempRoot: scratch });
+  assert.equal(result.status, 'INCOMPLETE');
+  assert.ok(result.errors.some((error) => error.code === 'FORMAT-UNSUPPORTED' && /3\.x/.test(error.remedy)));
 });
 
 // ADR-0107: format 2.0.0 renames HUMAN_REVIEW_REQUIRED to REVIEW_REQUIRED and retires the
