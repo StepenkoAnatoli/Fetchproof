@@ -88,3 +88,39 @@ test('property-replay CLI documents its read-only replay modes', () => {
   assert(readme.includes('--case <property-regression.json> [--json]'), 'README documents --case');
   assert(readme.includes('--all [--directory <property-regressions>] [--json]'), 'README documents --all');
 });
+
+test('property-replay names missing directories and makes an empty replay explicit', () => {
+  const directory = tempDirectory();
+  const missing = path.join(directory, 'missing');
+  const replay = (folder, json = false) => spawnSync(process.execPath, [
+    path.join(ROOT, 'bin', 'property-replay.mjs'), '--all', '--directory', folder,
+    ...(json ? ['--json'] : []),
+  ], { encoding: 'utf8' });
+  try {
+    const refused = replay(missing);
+    assertEqual(refused.status, 2, refused.stderr || refused.stdout);
+    assert(refused.stderr.includes(`no property-regressions directory at ${missing}`), refused.stderr);
+    assert(!refused.stdout.includes('PASS'), refused.stdout);
+    const refusedJson = replay(missing, true);
+    assertEqual(refusedJson.status, 2, refusedJson.stderr || refusedJson.stdout);
+    const refusal = JSON.parse(refusedJson.stdout);
+    assertEqual(refusal.status, 'INCOMPLETE', refusedJson.stdout);
+    assertEqual(refusal.directory, missing, refusedJson.stdout);
+    assertEqual(refusal.regressionCount, 0, refusedJson.stdout);
+    assertEqual(refusal.errors[0].code, 'PROPERTY-REGRESSION-DIR', refusedJson.stdout);
+    assert(!fs.existsSync(missing), 'replay does not create a missing directory');
+
+    const empty = replay(directory);
+    assertEqual(empty.status, 0, empty.stderr || empty.stdout);
+    assert(empty.stdout.includes(`PASS (0): no regressions captured under ${directory}`), empty.stdout);
+    const emptyJson = replay(directory, true);
+    assertEqual(emptyJson.status, 0, emptyJson.stderr || emptyJson.stdout);
+    const result = JSON.parse(emptyJson.stdout);
+    assertEqual(result.status, 'PASS', emptyJson.stdout);
+    assertEqual(result.regressionCount, 0, emptyJson.stdout);
+    assertEqual(result.directory, directory, emptyJson.stdout);
+    assertEqual(fs.readdirSync(directory).length, 0, 'empty replay remains read-only');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

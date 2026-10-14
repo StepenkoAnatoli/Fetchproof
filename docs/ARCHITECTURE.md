@@ -607,6 +607,10 @@ one only after an assertion failure. `bin/property-replay.mjs` verifies an envel
 the exact synthetic input, and reports that one case (or a lexically ordered directory) without
 rerunning the suite or mutating inputs. Profile, envelope, or generator-input-hash drift fails
 closed, so a changed generator cannot claim to reproduce an older failure.
+For `--all`, the CLI refuses a missing directory as `INCOMPLETE` (exit 2), naming
+the path and `--directory` remedy. An existing empty directory explicitly reports
+that no regressions were captured; directory results in JSON carry their path and
+regression count. These checks remain read-only; library listing behavior is unchanged.
 
 `schemas/r29-workbook-linkage.schema.json` is the strict 24-row R29 workbook-linkage
 envelope; `lib/r29-workbook-linkage-validator.mjs` resolves each declared link only against
