@@ -64,6 +64,12 @@ about defects that were already fixed. Nothing was deleted; it was moved and lin
 
 ## Search and collection invocation
 
+`bin/collect-remote.mjs` applies the existing value checker to `--repository`, `--topic`,
+`--client-ref`, `--prior` and `--prefer`, as well as its workflow and budget flags.
+An empty equals/separate value or bare optional value flag is refused by name with
+exit 3 before output-directory creation, token lookup or dispatch (#287). Absent
+required flags keep their existing refusal, including the repository-only pickup path.
+
 The CLI chooses providers before invoking its coordinator. `transport.mjs` returns the fetch adapter, search adapter or merged adapters, selection reasons, and selection readiness metadata. Automatic fetch selection may perform a memoized Firecrawl CLI `--status` probe when the executable is present. Selection does not search or fetch a page. The coordinators decide which queries and pages to attempt; the shared search session and collection writer carry out those decisions.
 
 ```mermaid

@@ -5,6 +5,9 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
+  values by name before creating an output directory or reading a token (#287).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos

@@ -33,7 +33,7 @@ test('collect-remote refuses unsafe client references before token lookup or cre
   const bare = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref'], { root });
   assert.equal(bare.status, 3);
   assert.match(bare.err, /--client-ref needs a value/);
-  for (const clientRef of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+  for (const clientRef of ['job-1.a_b', 'a'.repeat(64)]) {
     const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--no-wait'], { root });
     assert.equal(r.status, 3);
     assert.match(r.err, /no GitHub token/, 'valid input must reach the existing missing-token refusal');
@@ -838,6 +838,24 @@ test('collect-remote refuses a bare --out, --workflow or --ref before it creates
     assert.equal(r.status, 3, `${flag}: ${r.all}`);
     assert.match(r.err.split('\n')[0] ?? '', new RegExp(`^${flag} needs a value`), `${flag} was not refused by name first:\n${r.all}`);
     assert.ok(!fs.existsSync(path.join(root, 'true')), `${flag}: a folder named "true" was created in the project`);
+  }
+});
+
+test('collect-remote refuses empty required and optional values before token lookup or creating out', () => {
+  for (const flag of ['repository', 'topic', 'client-ref', 'prior', 'prefer']) {
+    const required = flag === 'repository' ? ['--topic', 't']
+      : flag === 'topic' ? ['--repository', 'o/r'] : ['--repository', 'o/r', '--topic', 't'];
+    const spellings = [[`--${flag}=`], [`--${flag}`, '']];
+    if (!['repository', 'topic'].includes(flag)) spellings.push([`--${flag}`]);
+    for (const spelling of spellings) {
+      const root = project();
+      const out = path.join(root, 'not-created');
+      const r = run('collect-remote.mjs', [...required, '--out', out, ...spelling], { root });
+      assert.equal(r.status, 3, r.all);
+      assert.equal(r.err.split('\n')[0], `--${flag} needs a value`, r.all);
+      assert.doesNotMatch(r.all, /no GitHub token/);
+      assert.equal(fs.existsSync(out), false, 'invalid flags must not create the output directory');
+    }
   }
 });
 

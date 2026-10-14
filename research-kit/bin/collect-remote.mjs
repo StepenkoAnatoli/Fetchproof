@@ -150,12 +150,9 @@ checkFlagValues(flags, {
   'search-transport': { choices: ['auto', 'serpapi', 'firecrawl-cli'] },
   timeout: { int: true, min: 1 },
   out: {}, workflow: {}, ref: {},
+  repository: {}, topic: {}, 'client-ref': {}, prior: {}, prefer: {},
 }, { exit: EXIT.CANNOT_START });
 
-if (flags['client-ref'] === true) {
-  process.stderr.write('--client-ref needs a value\n');
-  process.exit(EXIT.CANNOT_START);
-}
 const clientReference = checkClientRef(flags['client-ref']);
 if (!clientReference.ok) {
   process.stderr.write(`${redact(clientReference.detail)}\n`);
