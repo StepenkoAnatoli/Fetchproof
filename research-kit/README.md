@@ -503,6 +503,11 @@ Status maps to exit code — `PASS` 0, `FAIL`/`REOPEN` 1, `INCOMPLETE` 2, `BLOCK
 `--json` output is byte-deterministic across runs. The only command that writes anything
 is `fi-validate --report <file>`, and only when you name the file.
 
+`property-replay --all` requires the regression directory to exist; a missing
+directory is `INCOMPLETE` (exit 2), with its path and a `--directory` remedy. An
+existing empty directory reports `PASS (0): no regressions captured under <path>`.
+JSON directory results include `directory` and `regressionCount`.
+
 **`validate` checks a package, not a file, so start from the worked example** rather than
 from the schemas — the schemas give you the shape of each file but not how they refer to
 each other:
@@ -563,7 +568,7 @@ node research-kit/bin/selftest.mjs            # all of it
 node research-kit/bin/selftest.mjs gate hook  # just these files
 ```
 
-1835 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
+1836 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
 the assertions settled (ADR-0021), and each test is raced against a watchdog
 (`RESEARCH_KIT_TEST_TIMEOUT`, default 60s).
 

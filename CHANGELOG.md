@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `property-replay --all` refuses a missing regression directory with exit 2 and
+  names it; an existing empty directory explicitly reports no captured regressions.
+  JSON results identify the directory and zero count (#307).
+
 - The legacy approval compatibility regression keeps its historical hash reference
   on the recorded probe date while exercising fresh approval packages, so crossing
   midnight does not invalidate the test's reference assertion.
