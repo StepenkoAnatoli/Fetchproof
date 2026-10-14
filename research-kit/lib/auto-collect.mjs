@@ -114,6 +114,11 @@ const tail = (s, n = RUN_OUTPUT_BYTES) => {
   return bytes.length > n ? `[... earlier output truncated ...]\n${bytes.subarray(-n).toString('utf8')}` : text;
 };
 const lastLine = (s) => tail(String(s ?? '').trim().split(/\r?\n/).filter(Boolean).pop() ?? '', 1000);
+// Git puts the cause before multi-line advice; kit run summaries still use lastLine.
+const gitReason = (output) => {
+  const cause = String(output ?? '').split(/\r?\n/).find((line) => /^(fatal|error):/.test(line));
+  return cause === undefined ? lastLine(output) : tail(cause, 1000);
+};
 const posix = (p) => p.split(path.sep).join('/');
 
 /** Legacy diagnostic parser. Collection accounting never trusts human-readable logs. */
@@ -182,7 +187,7 @@ export function createAutoCollect({
       const ahead = await git(['rev-list', '--count', '@{u}..HEAD'], top);
       if (ahead.truncated) return 'could not inspect local commits: Git output was truncated; deliver manually';
       const count = Number(ahead.output.trim());
-      if (ahead.code !== 0) return `could not inspect local commits: ${lastLine(ahead.output)}`;
+      if (ahead.code !== 0) return `could not inspect local commits: ${gitReason(ahead.output)}`;
       if (!/^\d+$/.test(ahead.output.trim()) || !Number.isSafeInteger(count)) {
         return 'could not inspect local commits: invalid Git ahead count; deliver manually';
       }
@@ -195,13 +200,13 @@ export function createAutoCollect({
         }
         const changed = await git(['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD'], top);
         if (changed.truncated) return 'could not inspect pending commit paths: Git output was truncated; deliver manually';
-        if (changed.code !== 0) return `could not inspect pending delivery commit: ${lastLine(changed.output)}`;
+        if (changed.code !== 0) return `could not inspect pending delivery commit: ${gitReason(changed.output)}`;
         const allowed = changed.output.split('\0').filter(Boolean).every((file) => paths.some((base) => (
           file === base || file.startsWith(`${base.replace(/\/$/, '')}/`)
         )));
         if (!allowed) return 'the pending auto-collect commit contains paths outside this request; push it manually';
         const pushed = await git(['push'], top);
-        return pushed.code === 0 ? 'pushed' : `push failed: ${lastLine(pushed.output)}`;
+        return pushed.code === 0 ? 'pushed' : `push failed: ${gitReason(pushed.output)}`;
       }
     }
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'research-kit-autocollect-index-'));
@@ -209,33 +214,33 @@ export function createAutoCollect({
     const isolatedGit = (args) => exec('git', args, { cwd: top, env: indexEnv });
     try {
       const initialized = await isolatedGit(['read-tree', 'HEAD']);
-      if (initialized.code !== 0) return `could not initialize isolated git index: ${lastLine(initialized.output)}`;
+      if (initialized.code !== 0) return `could not initialize isolated git index: ${gitReason(initialized.output)}`;
       for (const p of paths) {
         const r = await isolatedGit(['add', '--', p]);
-        if (r.code !== 0) return `git add ${p} failed: ${lastLine(r.output)}`;
+        if (r.code !== 0) return `git add ${p} failed: ${gitReason(r.output)}`;
       }
       for (const p of paths) {
         if (!(p === 'research' || p.endsWith('/research'))) continue;
         const ledger = path.posix.join(p.slice(0, -'research'.length) || '.', LEDGER);
         if (fs.existsSync(path.join(top, ledger))) {
           const r = await isolatedGit(['add', '-f', '--', ledger]);
-          if (r.code !== 0) return `git add -f ${ledger} failed: ${lastLine(r.output)}`;
+          if (r.code !== 0) return `git add -f ${ledger} failed: ${gitReason(r.output)}`;
         }
       }
       const staged = await isolatedGit(['diff', '--cached', '--quiet']);
-      if (staged.code !== 0 && staged.code !== 1) return `could not inspect isolated git index: ${lastLine(staged.output)}`;
+      if (staged.code !== 0 && staged.code !== 1) return `could not inspect isolated git index: ${gitReason(staged.output)}`;
       const hasChanges = staged.code !== 0;
       if (hasChanges) {
         const c = await isolatedGit(['commit', '-m', report.subject, '-m', report.body]);
-        if (c.code !== 0) return `commit refused: ${lastLine(c.output)}`;
+        if (c.code !== 0) return `commit refused: ${gitReason(c.output)}`;
         const reset = await git(['reset', '--quiet', 'HEAD', '--', ...paths], top);
-        if (reset.code !== 0) return `committed; could not refresh staged paths: ${lastLine(reset.output)}`;
+        if (reset.code !== 0) return `committed; could not refresh staged paths: ${gitReason(reset.output)}`;
       }
       const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], top);
       if (upstream.truncated) return `${hasChanges ? 'committed; ' : ''}could not inspect upstream: Git output was truncated; deliver manually`;
       if (upstream.code !== 0) return hasChanges ? 'committed; no upstream to push to' : 'no upstream to push to';
       const pushed = await git(['push'], top);
-      if (pushed.code !== 0) return hasChanges ? `committed; push failed: ${lastLine(pushed.output)}` : `push failed: ${lastLine(pushed.output)}`;
+      if (pushed.code !== 0) return hasChanges ? `committed; push failed: ${gitReason(pushed.output)}` : `push failed: ${gitReason(pushed.output)}`;
       return hasChanges ? 'committed and pushed' : 'pushed';
     } finally {
       fs.rmSync(scratch, { recursive: true, force: true });
@@ -290,7 +295,7 @@ export function createAutoCollect({
     if (!inside(canonical(top), physical)) return { problem: 'the approved topics folder resolves outside the repository' };
     const gitDir = await git(['rev-parse', '--absolute-git-dir'], top);
     if (gitDir.truncated) return { problem: 'could not inspect Git metadata: Git output was truncated; inspect the target manually' };
-    if (gitDir.code !== 0) return { problem: `could not inspect Git metadata: ${lastLine(gitDir.output)}` };
+    if (gitDir.code !== 0) return { problem: `could not inspect Git metadata: ${gitReason(gitDir.output)}` };
     if (gitDir.code === 0 && inside(canonical(gitDir.output.trim()), physical)) {
       return { problem: 'new topics cannot be created in Git metadata' };
     }
@@ -327,12 +332,12 @@ export function createAutoCollect({
     const pathspecs = [...paths, `:(exclude)${excludedPath}`];
     const status = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...pathspecs], top);
     if (status.truncated) throw new Error('could not inspect pending delivery: Git output was truncated; deliver manually');
-    if (status.code !== 0) throw new Error(`could not inspect pending delivery: ${lastLine(status.output)}`);
+    if (status.code !== 0) throw new Error(`could not inspect pending delivery: ${gitReason(status.output)}`);
     const hash = crypto.createHash('sha256');
     hash.update(status.output);
     const diff = await git(['diff', '--binary', 'HEAD', '--', ...pathspecs], top);
     if (diff.truncated) throw new Error('could not fingerprint pending delivery: Git output was truncated; deliver manually');
-    if (diff.code !== 0) throw new Error(`could not fingerprint pending delivery: ${lastLine(diff.output)}`);
+    if (diff.code !== 0) throw new Error(`could not fingerprint pending delivery: ${gitReason(diff.output)}`);
     hash.update(diff.output);
     for (const record of status.output.split('\0')) {
       if (!record.startsWith('?? ')) continue;
@@ -563,7 +568,7 @@ export function createAutoCollect({
       const top = await repoTop(dir);
       if (!top) { note(`${dir} is not in a git repository; requests travel by git`); return status(); }
       const pulled = await git(['pull', '--ff-only'], top);
-      if (pulled.code !== 0) note(`git pull did not run cleanly (${lastLine(pulled.output)}); collection blocked until synchronization succeeds`);
+      if (pulled.code !== 0) note(`git pull did not run cleanly (${gitReason(pulled.output)}); collection blocked until synchronization succeeds`);
       const requests = pulled.code === 0 ? listRequests(dir) : [];
 
       for (const item of requests) {
