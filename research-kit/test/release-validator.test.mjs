@@ -188,6 +188,23 @@ test('researcher-release validate emits the contract status and exit code withou
   }
 });
 
+test('researcher-release names a missing value before resolving paths', () => {
+  for (const flag of ['--file', '--schema', '--root']) {
+    for (const tail of [[], ['--json']]) {
+      const args = [
+        'research-kit/bin/researcher-release.mjs', 'conform', '--schema', 'missing-schema.json',
+        '--file', 'missing-record.json', flag, ...tail,
+      ];
+      const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      const output = `${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, `${args.join(' ')}: ${output}`);
+      assert(run.stderr.includes(`${flag} needs a value`), output);
+      assert(run.stderr.includes('Usage:'), output);
+      assert(!/TypeError|paths\[0\]|ERR_INVALID_ARG_TYPE/.test(output), output);
+    }
+  }
+});
+
 test('researcher-release conform validates explicit files and maps schema failure to exit 1', async () => {
   const root = tempRoot();
   try {

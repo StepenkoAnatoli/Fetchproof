@@ -5,6 +5,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `path-authority` and `researcher-release` name a value flag with no value and print usage with exit 2 before resolving paths, including when another flag follows (#288).
+
 - `property-replay --all` refuses a missing regression directory with exit 2 and
   names it; an existing empty directory explicitly reports no captured regressions.
   JSON results identify the directory and zero count (#307).

@@ -277,7 +277,8 @@ markers - they wrote `research/` into any folder until 2026-09-28, `prior` a PRI
 `doctor --fix-arity` and `install` name a write the system refused - `could not write <file>:
 <CODE> (why)`, exit 2, via `writeFailure` - where they printed a stack trace, 2026-09-28),
 `path-authority.mjs` (offline Git-origin/path-authority snapshot validation and
-schema conformance),
+schema conformance; refuses a missing value for `--file`, `--schema` or `--root` by
+name before reading any input, as a usage error with exit 2),
 `researcher-release.mjs` (ported 2026-09-20, ADR-0029 — three subcommands over the two
 validators: `validate` for R28–R32 release evidence, `conform` for schema-only checking,
 `fi-validate` for an FI bundle. It **duplicates no validation**: every check comes from
@@ -285,6 +286,8 @@ validators: `validate` for R28–R32 release evidence, `conform` for schema-only
 environment variable at all**, so it cannot depend on a credential or a config. Status
 maps to exit code — `PASS` 0, `FAIL`/`REOPEN` 1, `INCOMPLETE` 2, `BLOCKED` 3, unknown 4 —
 and a **usage error exits 2 from every subcommand**, printing the usage block to stderr;
+its argument parser names a value flag without a value before resolving any path,
+including when the next token is another flag;
 `test/support-policy.test.mjs` pins that by running the CLI. It writes exactly one thing,
 only when asked: `fi-validate --report <file>`),
 `selftest.mjs` (every requested group must match a test file before any test starts; an unmatched group is named and refused with exit 2, including beside a valid group; #332. CLI regressions isolate child report paths from the parent suite; the whole suite, queued by the harness — which **awaits** every test,

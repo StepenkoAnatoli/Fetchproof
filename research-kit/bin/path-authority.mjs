@@ -22,6 +22,10 @@ function parse(argv) {
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--json') { result.json = true; continue; }
+    if (['--file', '--schema', '--root'].includes(arg)
+      && (argv[i + 1] === undefined || argv[i + 1] === '' || argv[i + 1].startsWith('--'))) {
+      return { error: `${arg} needs a value` };
+    }
     if (arg === '--file') { result.files.push(argv[++i]); continue; }
     if (arg === '--schema') { result.schema = argv[++i]; continue; }
     if (arg === '--root') { result.root = argv[++i]; continue; }
