@@ -5,6 +5,8 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
+
 - Machine config saves preserve unpatched raw role and posture values, including typos
   that diagnostics must still report. An unreadable config without a usable last-good
   snapshot refuses an unrelated save rather than persisting the restrictive fallback;

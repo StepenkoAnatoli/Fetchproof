@@ -129,7 +129,7 @@ function readZip(bytes) {
 
     assert.equal(data.length, uncompressed, `${name}: size disagrees with the directory`);
     assert.equal(crc32(data), sum, `${name}: CRC disagrees with the directory`);
-    out.push({ name, text: data.toString('utf8'), method });
+    out.push({ name, text: data.toString('utf8'), method, flags: bytes.readUInt16LE(at + 8), localFlags: bytes.readUInt16LE(offset + 6) });
     at += 46 + nameLen + bytes.readUInt16LE(at + 30) + bytes.readUInt16LE(at + 32);
   }
   return out;
@@ -151,6 +151,16 @@ test('every entry reads back out of the central directory intact', () => {
 test('two runs produce byte-identical archives, so re-zipping is free', () => {
   const entries = [{ name: 'a.md', data: 'same bytes every time' }];
   assert.ok(buildZip(entries).equals(buildZip(entries)));
+});
+
+test('UTF-8 names declare their encoding in both ZIP headers', () => {
+  const names = ['ascii.md', 'docs/über-日本語.md'];
+  const entries = readZip(buildZip(names.map((name) => ({ name, data: 'contents' }))));
+  assert.deepEqual(entries.map((entry) => entry.name), names);
+  for (const entry of entries) {
+    assert.equal(entry.flags & 0x0800, 0x0800, `${entry.name}: central UTF-8 flag`);
+    assert.equal(entry.localFlags & 0x0800, 0x0800, `${entry.name}: local UTF-8 flag`);
+  }
 });
 
 // --- the audit ---------------------------------------------------------------------

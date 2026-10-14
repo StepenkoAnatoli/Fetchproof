@@ -6,7 +6,7 @@
 // because the way this gets lost is somebody adding a convenient option later.
 
 import { execFileSync } from 'node:child_process';
-import { test, describe, assert, fs, path, os, cleanup, tempDir, requireSymlink } from './harness.mjs';
+import { test, describe, assert, fs, path, os, cleanup, tempDir, requireSymlink, requirePython } from './harness.mjs';
 import { sha256, canonicalJson, resolve, readText, writeText, today, PATHS, HEADERS } from '../lib/core.mjs';
 import {
   createArtifact, deriveState, collectProjectFiles, packageName, checkClientRef,
@@ -24,6 +24,23 @@ import { runPreflight } from '../lib/preflight.mjs';
 describe('artifact-producer');
 
 const scratch = tempDir('rk-producer-');
+
+test('Python extracts a Unicode document under the path declared by the manifest', () => {
+  const root = collectedProject();
+  const name = 'docs/über-日本語.md';
+  writeText(path.join(root, name), 'Unicode document\n');
+  const built = build(root);
+  const declared = `project/${name}`;
+  assert.ok(built.manifest.files.some((entry) => entry.path === declared));
+  const dir = tempDir('rk-unicode-zip-');
+  const zipFile = path.join(dir, 'package.zip');
+  const extractDir = path.join(dir, 'extracted');
+  fs.writeFileSync(zipFile, built.bytes);
+  const script = 'import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1]) as z:\n print(json.dumps(z.namelist()))\n z.extractall(sys.argv[2])\n';
+  const names = JSON.parse(execFileSync(requirePython('Unicode ZIP extraction'), ['-I', '-c', script, zipFile, extractDir], { encoding: 'utf8' }));
+  assert.ok(names.includes(declared), JSON.stringify(names));
+  assert.equal(fs.readFileSync(path.join(extractDir, declared), 'utf8'), 'Unicode document\n');
+});
 
 function build(root, overrides = {}) {
   return createArtifact({ root, ...IDENTITY, ...overrides });
