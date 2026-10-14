@@ -102,6 +102,20 @@ test('path-authority validator rejects out-of-root paths, symlink claims, host m
   assert(result.errors.some((error) => error.code === 'SNAP-ORIGIN-UNPROVEN'), JSON.stringify(result.errors));
 });
 
+test('path-authority names a missing value before validating any input', () => {
+  for (const flag of ['--file', '--schema', '--root']) {
+    for (const tail of [[], ['--json']]) {
+      const args = ['research-kit/bin/path-authority.mjs', 'validate', flag, ...tail];
+      const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      const output = `${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, `${args.join(' ')}: ${output}`);
+      assert(run.stderr.includes(`${flag} needs a value`), output);
+      assert(run.stderr.includes('Usage:'), output);
+      assert(!/TypeError|paths\[0\]|ERR_INVALID_ARG_TYPE/.test(output), output);
+    }
+  }
+});
+
 test('path-authority CLI conform and validate are offline, deterministic, and read-only', async () => {
   const root = tempRoot();
   try {

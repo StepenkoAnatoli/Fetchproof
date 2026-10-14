@@ -29,6 +29,10 @@ function argsAfterCommand(argv) {
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--json') { result.json = true; continue; }
+    if (arg.startsWith('--')
+      && (argv[i + 1] === undefined || argv[i + 1] === '' || argv[i + 1].startsWith('--'))) {
+      return { error: `${arg} needs a value` };
+    }
     if (arg === '--file') { result.files ??= []; result.files.push(argv[++i]); continue; }
     if (arg.startsWith('--')) { result[arg.slice(2).replaceAll('-', '')] = argv[++i]; continue; }
     result._.push(arg);
@@ -47,6 +51,7 @@ function exitFor(status) {
 function main(argv = process.argv.slice(2)) {
   if (argv.includes('--help') || argv.includes('-h')) { process.stdout.write(`${usage()}\n`); return 0; }
   const parsed = argsAfterCommand(argv);
+  if (parsed.error) { console.error(`${parsed.error}\n${usage()}`); return 2; }
   let result;
   if (parsed.command === 'validate') {
     if (!parsed.root || !parsed.package || !parsed.registry || !parsed.roles || !parsed.pointers) {
