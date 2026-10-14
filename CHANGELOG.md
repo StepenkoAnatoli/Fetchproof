@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers
+  receive `INPUT-SNAPSHOT-MAX-AGE` / `INCOMPLETE` rather than a false stale-snapshot
+  verdict; finite non-negative allowances, including zero, retain their meaning (#343).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos

@@ -287,7 +287,11 @@ environment variable at all**, so it cannot depend on a credential or a config. 
 maps to exit code — `PASS` 0, `FAIL`/`REOPEN` 1, `INCOMPLETE` 2, `BLOCKED` 3, unknown 4 —
 and a **usage error exits 2 from every subcommand**, printing the usage block to stderr;
 its argument parser names a value flag without a value before resolving any path,
-including when the next token is another flag;
+including when the next token is another flag. `validate` refuses blank, non-finite or
+negative `--snapshot-max-age-ms` values as usage errors before judging evidence (#343).
+The `validateRelease` and `validateSnapshotEvidence` library boundaries report an invalid
+age allowance as `INPUT-SNAPSHOT-MAX-AGE` / `INCOMPLETE`; `SNAPSHOT-STALE` is reserved for
+an actual snapshot older than a valid allowance;
 `test/support-policy.test.mjs` pins that by running the CLI. It writes exactly one thing,
 only when asked: `fi-validate --report <file>`),
 `selftest.mjs` (every requested group must match a test file before any test starts; an unmatched group is named and refused with exit 2, including beside a valid group; #332. CLI regressions isolate child report paths from the parent suite; the whole suite, queued by the harness — which **awaits** every test,
