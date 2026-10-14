@@ -73,7 +73,7 @@ export function buildZip(entries, { date = new Date(1980, 0, 1, 0, 0, 0) } = {})
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0x0800, 6); // Names are UTF-8 (APPNOTE 4.4.4, bit 11).
     local.writeUInt16LE(method, 8);
     local.writeUInt16LE(time, 10);
     local.writeUInt16LE(day, 12);
@@ -88,7 +88,7 @@ export function buildZip(entries, { date = new Date(1980, 0, 1, 0, 0, 0) } = {})
     dir.writeUInt32LE(0x02014b50, 0);
     dir.writeUInt16LE(20, 4);
     dir.writeUInt16LE(20, 6);
-    dir.writeUInt16LE(0, 8);
+    dir.writeUInt16LE(0x0800, 8);
     dir.writeUInt16LE(method, 10);
     dir.writeUInt16LE(time, 12);
     dir.writeUInt16LE(day, 14);
