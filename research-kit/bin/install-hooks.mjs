@@ -109,7 +109,7 @@ evidencePolicy  ${config.evidencePolicy}
 `);
   process.exit(failed ? 1 : 0);
 } catch (err) {
-  const why = writeFailure(err);
+  const why = err.code === 'CONFIG-UNREADABLE' ? err.message : writeFailure(err);
   if (!why) throw err;
   process.stderr.write(`${why}\n`);
   process.exit(2);

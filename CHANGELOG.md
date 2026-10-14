@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Machine config saves preserve unpatched raw role and posture values, including typos
+  that diagnostics must still report. An unreadable config without a usable last-good
+  snapshot refuses an unrelated save rather than persisting the restrictive fallback;
+  an explicit valid `--role` can repair it. `install-hooks` names the refusal with exit 2
+  and the panel key endpoint returns HTTP 409 without echoing the key (#364).
+
 - `path-authority` and `researcher-release` name a value flag with no value and print usage with exit 2 before resolving paths, including when another flag follows (#288).
 
 - `property-replay --all` refuses a missing regression directory with exit 2 and

@@ -216,6 +216,62 @@ test('saveConfig drops the retired key, so the migration happens through normal 
   assert.equal(written.role, 'builder');
 });
 
+test('an unrelated config save preserves the role the operator actually typed', () => {
+  const { env, file } = envWith('{"role":"Builder","evidencePolicy":"STRICT"}');
+  saveConfig({ failOpen: false }, env);
+  const written = JSON.parse(readText(file));
+  assert.equal(written.role, 'Builder');
+  assert.equal(written.evidencePolicy, 'STRICT');
+  assert.equal(written.failOpen, false);
+  assert.equal(machineRole(env), 'unknown');
+  saveConfig({ role: 'collector' }, env);
+  assert.equal(JSON.parse(readText(file)).role, 'collector');
+});
+
+test('a broken config without a usable snapshot refuses an unrelated save and permits a role repair', () => {
+  for (const snapshot of [null, '[]', 'null']) {
+    const original = '{"role":"bui';
+    const { env, file } = envWith(original, { snapshot });
+    assert.throws(() => saveConfig({ failOpen: true }, env), /does not parse.*--role/);
+    assert.equal(readText(file), original, 'a refusal must keep the operator\'s only copy');
+    if (snapshot === null) assert.equal(fs.existsSync(`${file}.last-good`), false);
+    else assert.equal(readText(`${file}.last-good`), snapshot);
+    saveConfig({ role: 'collector' }, env);
+    assert.equal(JSON.parse(readText(file)).role, 'collector');
+    assert.notEqual(JSON.parse(readText(file)).failOpen, false, 'no fallback-closed setting is persisted');
+  }
+});
+
+test('saving from a last-good snapshot retains its raw role and posture values', () => {
+  const { env, file } = envWith('{"role":"bui', {
+    snapshot: '{"role":"Builder","failOpen":"false","editGate":{"mode":"HARD-BLOCK"}}',
+  });
+  saveConfig({ serpapiKey: 'unit-test-key' }, env);
+  const written = JSON.parse(readText(file));
+  assert.equal(written.role, 'Builder');
+  assert.equal(written.failOpen, 'false');
+  assert.equal(written.editGate.mode, 'HARD-BLOCK');
+  assert.equal(written.serpapiKey, 'unit-test-key');
+});
+
+test('install-hooks names an unreadable config save refusal without replacing it', () => {
+  const original = '{"role":"bui';
+  const { env, file } = envWith(original);
+  const isolated = {
+    ...env, RESEARCH_KIT_HOME: KIT_ROOT,
+    RESEARCH_KIT_INSTALL_STATE: path.join(path.dirname(file), 'install.json'),
+    GIT_CONFIG_GLOBAL: path.join(path.dirname(file), 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+  };
+  const run = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'install-hooks.mjs'), '--fail-closed', '--git-only'], {
+    env: isolated, encoding: 'utf8', timeout: 60_000, windowsHide: true,
+  });
+  assert.equal(run.status, 2, `${run.stdout}${run.stderr}`);
+  assert.match(run.stderr, /does not parse.*--role/);
+  assert.doesNotMatch(run.stderr, /\n\s+at /);
+  assert.equal(readText(file), original);
+  assert.equal(fs.existsSync(isolated.RESEARCH_KIT_INSTALL_STATE), false);
+});
+
 // Found 2026-10-11: the browser transport and its error messages tell the operator to set
 // browserPath (ADR-0088), but the config was read without it and rewritten without it, so
 // `install-hooks --role builder` erased a browserPath the operator had set by hand.
