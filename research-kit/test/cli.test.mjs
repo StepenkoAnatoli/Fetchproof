@@ -1032,7 +1032,9 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
     // Number() makes 1 - so a real run paid for one page nobody asked for.
     ['decompose.mjs', ['--dry-run', '--max-scrapes'], /--max-scrapes needs a value/],
     ['decompose.mjs', ['--dry-run', '--limit'], /--limit needs a value/],
-    ['decompose.mjs', ['--dry-run', '--limit', 'abc'], /--limit must be a whole number of at least 0, not "abc"/],
+    ['decompose.mjs', ['--dry-run', '--limit', 'abc'], /--limit must be a whole number of at least 1, not "abc"/],
+    ['decompose.mjs', ['--dry-run', '--limit', '0'], /--limit must be a whole number of at least 1, not "0"/],
+    ['decompose.mjs', ['--dry-run', '--limit', '-1'], /--limit must be a whole number of at least 1, not "-1"/],
     ['preflight.mjs', ['--check'], /--check needs a value/],
     ['gate.mjs', ['--gate', 'push'], /--gate must be one of/],
     ['prior.mjs', ['--file'], /--file needs a value/],
@@ -1045,6 +1047,13 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
   }
   const only = run('preflight.mjs', ['--only', 'citations'], { root: planned('values') });
   assert.equal(only.status, 2, `preflight --only is accepted and never read:\n${only.all.slice(0, 300)}`);
+});
+
+test('decompose accepts a search limit of one while max-scrapes still accepts zero', () => {
+  const r = run('decompose.mjs', ['--dry-run', '--limit', '1', '--max-scrapes', '0', '--transport', 'http-keyless'], {
+    root: planned('budget-floor'),
+  });
+  assert.equal(r.status, 0, r.all);
 });
 
 // Found 2026-09-27: new-project over an existing project with a different --topic reported

@@ -18,7 +18,7 @@ refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-sc
 // made 1, so `--max-scrapes` with no value quietly paid for one page.
 checkFlagValues(flags, {
   topic: 'value', recipe: 'value', transport: 'value', 'search-transport': 'value',
-  limit: { int: true, min: 0 }, 'max-scrapes': { int: true, min: 0 },
+  limit: { int: true, min: 1 }, 'max-scrapes': { int: true, min: 0 },
 });
 const root = process.cwd();
 

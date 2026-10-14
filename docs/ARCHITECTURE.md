@@ -268,7 +268,7 @@ build approval. The shared verdict library and all gated formatting stay unchang
 (→ evaluate; `--staged-stdin` reads the piped path list; `--posture` answers 0 allow /
 1 fail-closed / 2 unreadable-and-closed, so no shell has to parse JSON), `doctor.mjs` (`--fix-arity`), `install.mjs` (deploy + `--into` per-project
 binding, role-aware next steps; collector keyless instructions name the selected machine config rather than a per-run research flag, builder instructions require complete/current review, and an unresolved role prints diagnostics before role-specific advice (2026-10-08, ADR-0150); `tolerateClosedStdout` before its first write, so a reader that leaves early does not turn a finished deploy into exit 1, 2026-09-30), `install-hooks.mjs` (`--fail-closed`, `--role`; a `CONFIG-UNREADABLE` save refusal is named with exit 2 before the requested config patch is written, #364),
-`new-project.mjs` (its first next step omits `--topic` once the project has one, ADR-0056), `decompose.mjs` (phase 0 CLI, refused on a builder by role),
+`new-project.mjs` (its first next step omits `--topic` once the project has one, ADR-0056), `decompose.mjs` (phase 0 CLI, refused on a builder by role; `--limit` requires at least 1 at the CLI boundary, matching the library's positive search-result limit, while `--max-scrapes` still allows 0, #320),
 `timeline.mjs`, `audit.mjs` (lists and resolves versions through the manifest's
 reader), `brief.mjs` (drafts the handoff with all evaluated warning reasons, remedies and
 row/unknown targets, labeled as whole-corpus observations; it reports the brief's state; it,
