@@ -71,14 +71,22 @@ export function redact(text) {
  * looks exactly like one from before these options existed.
  */
 export function queriesInput({ queries = [], urls = [] } = {}) {
-  const clean = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? '').trim()).filter(Boolean);
-  const pages = clean(urls);
+  const items = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? ''));
+  const searches = items(queries);
+  const addresses = items(urls);
+  // Check before trimming: even a leading/trailing newline changes the caller's item
+  // shape. collect.yml splits this input into lines, and URL parsing discards newlines.
+  if ([...searches, ...addresses].some((item) => /[\r\n]/.test(item))) {
+    return { value: undefined, error: 'a query or URL must be one line' };
+  }
+  const clean = (list) => list.map((item) => item.trim()).filter(Boolean);
+  const pages = clean(addresses);
   const bad = pages.filter((page) => {
     if (!/^https?:\/\/./i.test(page)) return true;
     try { new URL(page); return false; } catch { return true; }
   });
   if (bad.length) return { value: undefined, error: `not an http(s) URL: ${bad.join(', ')}` };
-  const lines = [...clean(queries), ...pages];
+  const lines = [...clean(searches), ...pages];
   return { value: lines.length ? lines.join('\n') : undefined, error: '' };
 }
 
@@ -106,7 +114,7 @@ function headers(token) {
 
 function splitRepository(repository) {
   const parts = String(repository ?? '').split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+  if (parts.length !== 2 || parts.some((part) => !part || /[^A-Za-z0-9._-]/.test(part) || part === '.' || part === '..')) {
     throw new DispatchError('REPOSITORY', `repository must be "owner/name", got ${JSON.stringify(String(repository))}`);
   }
   return parts;
@@ -116,6 +124,24 @@ async function readError(response) {
   let body = '';
   try { body = (await response.text()).slice(0, 400); } catch { /* a body we cannot read is not a body */ }
   return redact(body);
+}
+
+async function rateLimitError(response) {
+  const body = await readError(response);
+  const remaining = response.headers?.get?.('x-ratelimit-remaining');
+  const retry = response.headers?.get?.('retry-after');
+  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body)) return null;
+  const waits = [];
+  if (retry != null && /^\d+$/.test(retry)) waits.push(`wait at least ${retry} seconds (Retry-After) before retrying`);
+  const reset = response.headers?.get?.('x-ratelimit-reset');
+  if (reset != null && /^\d+$/.test(reset)) {
+    const date = new Date(Number(reset) * 1000);
+    if (!Number.isNaN(date.getTime())) waits.push(`do not retry before ${date.toISOString()} (x-ratelimit-reset: ${reset} UTC epoch seconds)`);
+  }
+  return new DispatchError('RATE_LIMITED', `GitHub rate limited the request${body ? `: ${body}` : ''}`, {
+    status: response.status,
+    remedy: waits.length ? waits.join('; ') : 'wait at least one minute before retrying; back off further if the rate limit continues',
+  });
 }
 
 // ---------------------------------------------------------------- dispatch
@@ -192,6 +218,8 @@ export async function dispatchCollection({
     });
   }
   if (response.status === 403) {
+    const limited = await rateLimitError(response);
+    if (limited) throw limited;
     throw new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
       status: 403,
       remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
@@ -201,8 +229,7 @@ export async function dispatchCollection({
     throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${await readError(response)}`, { status: response.status });
   }
 
-  let body;
-  try { body = await response.json(); } catch { body = null; }
+  const body = await readJsonBody(response, 'dispatch');
   const workflowRunId = body?.workflow_run_id;
   if (!Number.isInteger(workflowRunId)) {
     throw new DispatchError('NO_RUN_ID', `the dispatch returned HTTP ${response.status} with no workflow_run_id`, {
@@ -225,7 +252,7 @@ function stringifyInputs(inputs) {
 /**
  * A 200 whose body is not JSON, as a DispatchError rather than a raw SyntaxError.
  *
- * dispatchCollection already guarded its body; getRun and listArtifacts did not. A 200 with
+ * dispatchCollection, getRun and listArtifacts share this parser. A 200 with
  * an HTML body - a maintenance page, a TLS-inspecting proxy, an edge cache under load -
  * threw `SyntaxError: Unexpected token <` straight out, and collect-remote reported it only
  * as UNKNOWN, with no status and no remedy (found 2026-09-30, break-test). The parser's
@@ -255,6 +282,10 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/runs/${runId}`,
     { headers: headers(token) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
   if (!response.ok) {
+    if (response.status === 403) {
+      const limited = await rateLimitError(response);
+      if (limited) throw limited;
+    }
     // A refusal names its own way out; the caller's generic "pick it up again" would send
     // somebody back to a run number that does not exist, with a token that cannot see it.
     const remedy = response.status === 404 ? `no run ${runId} on ${repository}, or the token cannot see it - check the number the dispatch printed`
@@ -382,22 +413,24 @@ export async function getRunSummary({ repository, runId, token, fetch: doFetch =
 }
 
 /**
- * `usableOutDir(dir)` -> `dir`, created if absent, or a named `OUT_DIR` failure.
+ * `usableOutDir(dir)` -> its absolute path, created if absent, or a named `OUT_DIR` failure.
  *
  * Exported because every caller that downloads should check it before it spends
  * anything: `collect-remote` before it dispatches a paid run, the MCP server before it
  * reads the run, and `fetchCorpus` before it downloads.
  */
 export function usableOutDir(dir) {
+  let absolute;
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.accessSync(dir, fs.constants.W_OK);
+    absolute = path.resolve(dir);
+    fs.mkdirSync(absolute, { recursive: true });
+    fs.accessSync(absolute, fs.constants.W_OK);
   } catch (err) {
     throw new DispatchError('OUT_DIR', `${dir} is not a folder this process can write (${err.code ?? err.message})`, {
       remedy: 'pass an existing writable folder, or omit it for the default',
     });
   }
-  return dir;
+  return absolute;
 }
 
 /**
@@ -415,7 +448,17 @@ export async function fetchCorpus({
 } = {}) {
   // The folder is checked first: the download is the slow, rate-limited part, and an
   // unusable folder found after it would waste it and surface as a raw ENOTDIR.
-  const dir = usableOutDir(outDir ?? tempBase());
+  let dir;
+  try {
+    dir = outDir == null
+      ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
+      : usableOutDir(outDir);
+  } catch (err) {
+    if (err instanceof DispatchError) throw err;
+    throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
+      remedy: 'pass an existing writable folder, or repair the system temp directory',
+    });
+  }
 
   const artifacts = await listArtifacts({ repository, runId, token, fetch: doFetch, api });
   const wanted = artifacts.filter((a) => !a.expired && a.name.startsWith('research-kit-corpus-v1-'));
@@ -442,6 +485,16 @@ export async function fetchCorpus({
     });
   }
   const file = path.join(dir, fileName);
+  let target;
+  try { target = fs.lstatSync(file); }
+  catch (err) {
+    if (err.code !== 'ENOENT') throw new DispatchError('OUT_DIR', `could not inspect ${file} (${err.code ?? err.message})`, {
+      remedy: 'choose a writable output folder without a symbolic link at the package name',
+    });
+  }
+  if (target?.isSymbolicLink()) throw new DispatchError('OUT_DIR', `${file} is a symbolic link; the package write must not be redirected`, {
+    remedy: 'remove the link or choose another writable output folder',
+  });
   // Whole or not at all (ADR-0079), as writeArtifact is: a failed write must not empty a
   // package already at this name (Arena break test 10, 2026-09-28).
   writeBytes(file, pkg);

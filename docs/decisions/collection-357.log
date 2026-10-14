@@ -1,0 +1,24 @@
+prior:     none registered. What do you expect to find? node C:\Users\PC\Desktop\gittoken\Research-Kit-issue-357\research-kit\bin\prior.mjs "..." - this is the last moment that answer counts
+transport: http-keyless - RESEARCH_KIT_TRANSPORT
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/preflight.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/checks.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/machine.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/lib/brief.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/brief.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/docs/adr/0069-the-brief-stamp-covers-the-map-the-ledger-and-the-verdict.md - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/lib/artifact.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/artifact-validator.mjs - first capture
+  collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/test/brief.test.mjs - first capture
+
+run
+---
+depth      normal (budget 9 scrapes)
+collected  9
+cached     0
+failed     0
+spent      9 (budget consumed: collected + failed)
+topic      0.55 best of 11 topic terms, 2 capture(s) >= 0.50
+
+
+Next: rewrite each auto-extracted Finding cell into a real claim, then run
+  node C:\Users\PC\Desktop\gittoken\Research-Kit-issue-357\research-kit\bin\preflight.mjs

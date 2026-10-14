@@ -45,8 +45,14 @@ if (!nodeFloor.ok) {
   process.exit(2);
 }
 
-const files = listFiles(dir)
-  .filter((name) => name.endsWith('.test.mjs'))
+const testFiles = listFiles(dir).filter((name) => name.endsWith('.test.mjs'));
+const unmatched = positional.filter((needle) => !testFiles.some((name) => name.includes(needle)));
+if (unmatched.length) {
+  process.stderr.write(`selftest: ${unmatched.map((name) => JSON.stringify(name)).join(', ')} matches no test file in ${dir}; groups are named by file, e.g. warc for warc.test.mjs\n`);
+  process.exit(2);
+}
+
+const files = testFiles
   .filter((name) => !positional.length || positional.some((needle) => name.includes(needle)))
   .sort();
 

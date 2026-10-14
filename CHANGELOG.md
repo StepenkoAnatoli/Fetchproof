@@ -5,6 +5,91 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The legacy approval compatibility regression keeps its historical hash reference
+  on the recorded probe date while exercising fresh approval packages, so crossing
+  midnight does not invalidate the test's reference assertion.
+- FI sidecar conformance accepts array indices after zero in both patch traversal
+  and removal; a synthetic two-entry packet pins Node/Python agreement (#337).
+
+- ADR body links are checked by the existing hygiene test, ADR-0121 links resolve,
+  and a current guide explains unshipped artifacts named by dated plans (#292).
+
+- GitHub request helpers refuse repository components outside `[A-Za-z0-9._-]+`,
+  including `.` and `..`, before any request is made (#379). Query/fragment
+  delimiters, encoded separators, whitespace and control characters cannot alter
+  the API path.
+
+- Each collection query and URL is refused when it contains CR or LF before trimming
+  or joining into workflow input (#376). MCP and `collect-remote` cannot turn one
+  declared item into extra searches or page fetches on the runner.
+
+- Rejected collection URLs pass through the existing credential redactor before
+  MCP tool results or `collect-remote` stderr can echo them (#378). Regression
+  coverage includes caller credentials in URL userinfo and query parameters.
+
+- Dispatch responses with a successful HTTP status and a non-JSON body now report
+  `BAD_BODY`, with the existing proxy/maintenance-page remedy (#377). `NO_RUN_ID`
+  remains reserved for JSON responses without an integer workflow run ID.
+
+- Proxy URLs containing a non-root path, query or fragment take the existing
+  invalid-proxy path rather than enabling Node proxy support and crashing in
+  Undici (#380). Requests remain direct, the existing diagnostic names the
+  variable and accepted spelling, and `doctor` warns. A bare trailing slash stays
+  valid.
+
+- `doctor` warns when an explicit Node startup choice leaves a configured proxy
+  off (#381): `NODE_USE_ENV_PROXY` accepts only `1`, and `--no-use-env-proxy`
+  disables it. The diagnostic shares the runtime choice reader and respects
+  command-line flag precedence over `NODE_OPTIONS` and the environment variable;
+  it never overrules the operator or echoes the variable value.
+
+- Machine config snapshots accept only non-array JSON objects (#368). Scalar or
+  array configs cannot create or replace a good snapshot; unreadable configs with
+  unusable backups fall back to fail-closed and role unknown.
+
+- MCP collect and collect-remote refuse unsafe client references before dispatch
+  (#375), using the existing shared identifier rule. The CLI also refuses a bare
+  --client-ref, and the checker rejects trailing line breaks.
+
+- Corpus download folders resolve to absolute paths before writes and links (#372),
+  so relative MCP out_dir values return a link to the file actually saved.
+
+- MCP fetch_corpus renders non-PASS validation findings and remedies in its text
+  result and omits the resource link instead of describing corrupt or unsupported
+  downloads as a collected corpus awaiting review (#371).
+
+- Fetch and search registries refuse inherited object members as provider names
+  at every precedence level (#349), before a run or doctor can treat them as adapters.
+
+- Timeline details fold multiline errors into one table row before pipe escaping
+  (#354). Regenerated the root timeline without changing its provenance ledger.
+
+- Scoped hooksPath reads expand Git include and includeIf directives, preserving the previous hooks folder through installation and removal (#369).
+
+- selftest refuses each unmatched group before starting tests, including when another requested group matches (#332).
+
+- Default corpus downloads use a fresh private temp folder and refuse symlinks at the package filename, preventing shared-name overwrites and redirected writes (#373).
+
+- Install-state reads reject non-object records and ill-typed paths; doctor reports a named deploy warning instead of a raw path stack (#365).
+
+- Artifact ledger checks follow actual capture entries and evidence rows, even when the manifest relabels captures and declares zero; genuinely empty failed-collection scaffolds remain valid (#358).
+
+- Evidence context refuses Raw cells outside research/raw and names directories before reading; the ADR-0109 trigger also moves corpus and artifact recorded-path readers to projectFile (#351).
+
+- Artifact validation no longer trusts an `APPROVED_BRIEF` manifest by itself (#357, ADR-0160). It re-derives approval from checked package contents with a portable baseline, preserves false claims, and accepts only verified format-1 pre-0069 stamp hashes.
+
+- GitHub rate-limited 403 responses from dispatch and run reads report the wait and reset time instead of a token-permission remedy (#374).
+
+- Broken machine-config diagnostics name the actual config and distinguish settings held by a last-good snapshot from fail-closed fallback (#366).
+
+- Missing, malformed and below-oldest artifact format versions are invalid manifests; only newer numeric majors receive the upgrade remedy (#361).
+
+- The artifact CLI drains stdout and stderr before ending its reports, preserving large piped JSON and text results on POSIX (#359).
+
+- Artifact validation hides malformed manifest metadata and escapes control characters in text diagnostics, so package-supplied strings cannot forge verdict lines (#360).
+
+- `artifact validate` rejects ZIP entries where a file is also an ancestor directory of another entry, before extraction, with a stable `ZIP-PATH-COLLISION` failure (#362).
+
 - The README opens with an accessible workflow preview and linked CI, license,
   last-commit and stars badges. A contributor guide explains setup, verification,
   issue labels and the existing commit/PR protocol.

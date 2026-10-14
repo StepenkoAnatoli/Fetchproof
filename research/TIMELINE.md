@@ -61,12 +61,8 @@ of a gate decision. Regenerate with `node research-kit/bin/timeline.mjs`.
 | 2026-09-26 | scrape | https://serpapi.com/pricing -> research/raw/2026-09-26-serpapi-plans-and-pricing-serpapi-d0c89b50.md (firecrawl-cli) |
 | 2026-09-26 | scrape | https://serpapi.com/account-api -> research/raw/2026-09-26-account-api-serpapi-serpapi-8f9c166b.md (firecrawl-cli) |
 | 2026-09-26 | scrape | https://serpapi.com/faq -> research/raw/2026-09-26-serpapi-faq-serpapi-7dec5bc6.md (firecrawl-cli) |
-| 2026-09-26 21:20 UTC | fetch failed | https://serpapi.com/pricing - Error: Request failed with status code 405
- |
-| 2026-09-26 21:20 UTC | fetch failed | https://serpapi.com/account-api - Error: Request failed with status code 405
- |
-| 2026-09-26 21:20 UTC | fetch failed | https://www.merriam-webster.com/dictionary/search - Error: Request failed with status code 405
- |
-| 2026-09-26 21:20 UTC | fetch failed | https://plan-international.org/ - Error: Request failed with status code 405
- |
+| 2026-09-26 21:20 UTC | fetch failed | https://serpapi.com/pricing - Error: Request failed with status code 405 |
+| 2026-09-26 21:20 UTC | fetch failed | https://serpapi.com/account-api - Error: Request failed with status code 405 |
+| 2026-09-26 21:20 UTC | fetch failed | https://www.merriam-webster.com/dictionary/search - Error: Request failed with status code 405 |
+| 2026-09-26 21:20 UTC | fetch failed | https://plan-international.org/ - Error: Request failed with status code 405 |
 

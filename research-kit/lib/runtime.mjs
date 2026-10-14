@@ -83,11 +83,12 @@ export function proxyVariable(env = process.env) {
   return PROXY_VARIABLES.find((key) => env[key]) ?? null;
 }
 
-// Node takes a proxy as an http: or https: URL with a host (E-03).
+// Node takes an http(s) origin: Undici's parseOrigin refuses paths, queries and fragments.
 function usableProxyUrl(value) {
   try {
     const url = new URL(String(value));
-    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname)
+      && url.pathname === '/' && !url.search && !url.hash;
   } catch {
     return false;
   }
@@ -290,10 +291,16 @@ export function fetchEnv(env = process.env) {
 // on the command line or in NODE_OPTIONS. The flag wins over the variable (E-02). Either
 // way the choice is theirs. Our own restart sets the variable, so it cannot loop.
 function proxyChosen(env, execArgv) {
-  const flag = /(^|\s)--(no-)?use-env-proxy(\s|=|$)/;
-  return env.NODE_USE_ENV_PROXY !== undefined
-    || execArgv.some((arg) => flag.test(arg))
-    || flag.test(env.NODE_OPTIONS ?? '');
+  return envProxyChoice({ env, execArgv }) !== null;
+}
+
+/** The operator's startup choice: true/false when set, null when unspecified. */
+export function envProxyChoice({ env = process.env, execArgv = process.execArgv } = {}) {
+  const flag = /(^|\s)--(no-)?use-env-proxy(?=\s|=|$)/g;
+  // NODE_OPTIONS is read first; command-line flags override it. The final flag wins.
+  const selected = [...`${env.NODE_OPTIONS ?? ''} ${execArgv.join(' ')}`.matchAll(flag)].at(-1);
+  if (selected) return !selected[2];
+  return env.NODE_USE_ENV_PROXY === undefined ? null : env.NODE_USE_ENV_PROXY === '1';
 }
 
 /**

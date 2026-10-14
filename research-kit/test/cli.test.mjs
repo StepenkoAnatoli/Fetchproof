@@ -21,6 +21,29 @@ import { renderTable } from '../lib/render.mjs';
 
 describe('cli');
 
+test('collect-remote refuses unsafe client references before token lookup or creating out', () => {
+  const root = project();
+  const out = path.join(root, 'not-created');
+  for (const clientRef of ['job 1', 'x'.repeat(65), 'a/b', '..', 'ünï', '-lead', 'job\n', 'job\r']) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--out', out], { root });
+    assert.equal(r.status, 3);
+    assert.match(r.err, /client_ref.*refusing rather than rewriting/);
+    assert.equal(fs.existsSync(out), false);
+  }
+  const bare = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref'], { root });
+  assert.equal(bare.status, 3);
+  assert.match(bare.err, /--client-ref needs a value/);
+  for (const clientRef of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+    const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--no-wait'], { root });
+    assert.equal(r.status, 3);
+    assert.match(r.err, /no GitHub token/, 'valid input must reach the existing missing-token refusal');
+  }
+  const secret = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
+  const redacted = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', `${secret}/bad`], { root });
+  assert.ok(!redacted.all.includes(secret));
+  assert.match(redacted.err, /redacted/);
+});
+
 function preflightScopeEnv(evidencePolicy = 'pluralist') {
   const home = tempDir('rk-preflight-scope-home-');
   const config = path.join(home, 'config.json');
@@ -1580,4 +1603,26 @@ test('install-hooks --dry-run answers what the real run answers, deployed or not
   assert.equal(fs.existsSync(path.join(home, '.claude', 'settings.json')), false, 'a dry run wrote the settings file');
   const gitconfig = fs.existsSync(path.join(home, 'gitconfig')) ? fs.readFileSync(path.join(home, 'gitconfig'), 'utf8') : '';
   assert.doesNotMatch(gitconfig, /hooksPath/, 'a dry run set core.hooksPath');
+});
+
+test('collect-remote refuses line breaks in queries and URLs before asking for a token', () => {
+  const root = project();
+  for (const flag of ['--query', '--url']) {
+    for (const value of ['https://a.example/x\nsecond', 'https://a.example/x\rsecond']) {
+      const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', flag, value], { root });
+      assert.equal(r.status, 3);
+      assert.match(r.err.split('\n')[0], /must be one line/);
+      assert.ok(!r.err.includes('no GitHub token'), 'the input refusal must come first');
+    }
+  }
+});
+
+test('collect-remote redacts credentials in refused URLs', () => {
+  const credentials = [`ghp_${'z'.repeat(36)}`, `github_pat_${'B2'.repeat(20)}`];
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't',
+    '--url', `ftp://user:${credentials[0]}@a.example/`, '--url', `ftp://a.example/?token=${credentials[1]}`], { root: project() });
+  assert.equal(r.status, 3);
+  for (const credential of credentials) assert.ok(!r.all.includes(credential), 'a caller credential leaked');
+  assert.match(r.err, /redacted/);
+  assert.match(r.err, /not an http\(s\) URL/);
 });

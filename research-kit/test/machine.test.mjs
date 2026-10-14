@@ -6,12 +6,43 @@ import { pathToFileURL } from 'node:url';
 import { test, describe, assert, tempDir, fs, path, os, KIT_ROOT } from './harness.mjs';
 import { writeText, readText, homeDir } from '../lib/core.mjs';
 import {
-  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy,
+  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy, readInstallState,
   collectionRefusal, evidencePolicy, runtimePaths, skillLocations, retiredEnvNotes,
   RUNTIME_ANCHORS, RETIRED_ENV_VARS, RETIRED_CONFIG_KEYS, DEFAULTS, ROLES,
 } from '../lib/machine.mjs';
 
 describe('machine');
+
+test('install state refuses JSON that is not an object', () => {
+  const file = path.join(tempDir('rk-state-shape-'), 'install.json');
+  const env = { RESEARCH_KIT_INSTALL_STATE: file };
+  for (const value of [null, [], 'str', true, 42]) {
+    writeText(file, JSON.stringify(value));
+    assert.equal(readInstallState(env), null, JSON.stringify(value));
+  }
+});
+
+test('install state keeps typed paths, arrays and skill hashes without changing the file', () => {
+  const file = path.join(tempDir('rk-state-fields-'), 'install.json');
+  const env = { RESEARCH_KIT_INSTALL_STATE: file };
+  const paths = ['kitHome', 'hooksPath', 'previousHooksPath', 'bound', 'deployedFrom'];
+  for (const value of [42, true, {}, ['/x'], '', '   ']) {
+    writeText(file, JSON.stringify(Object.fromEntries(paths.map((key) => [key, value]))));
+    const state = readInstallState(env);
+    for (const key of paths) assert.equal(state[key], undefined, `${key}: ${JSON.stringify(value)}`);
+  }
+  const raw = { ...Object.fromEntries(paths.map((key) => [key, '/valid/path'])), skills: ['/a', 42, '', '/b'],
+    boundSet: ['/c', false, null], skillSetHashes: { '/a': 'hash', '/b': 42 }, at: 'saved-time' };
+  writeText(file, JSON.stringify(raw));
+  const before = readText(file);
+  const state = readInstallState(env);
+  for (const key of paths) assert.equal(state[key], raw[key]);
+  assert.deepEqual(state.skills, ['/a', '/b']);
+  assert.deepEqual(state.boundSet, ['/c']);
+  assert.deepEqual(state.skillSetHashes, { '/a': 'hash' });
+  assert.equal(state.at, 'saved-time');
+  assert.equal(readText(file), before);
+});
 
 function envWith(contents, { snapshot = null, extra = {} } = {}) {
   const dir = tempDir('research-kit-config-');
@@ -64,16 +95,27 @@ test('an ABSENT config still reads as collector - ADR-0010\'s default is untouch
 });
 
 test('unreadable: a truncated config holds the last one that parsed - every knob, not just failOpen', () => {
-  const { env } = envWith('{"failOpen": fal', {
+  const { env, file } = envWith('{"failOpen": fal', {
     snapshot: JSON.stringify({ failOpen: false, role: 'builder', evidencePolicy: 'strict', editGate: { mode: 'hard-block' } }),
   });
   const read = readMachineConfig(env);
   assert.equal(read.state, 'unreadable');
+  assert.equal(read.source, file, 'source names the broken config');
+  assert.equal(read.snapshotSource, `${file}.last-good`);
   assert.equal(read.settings.failOpen, false, 'a hardened machine must not silently revert to fail-open');
   assert.equal(read.settings.role, 'builder', 'a builder must not silently become a collector - that role may spend credits');
   assert.equal(read.settings.evidencePolicy, 'strict');
   assert.equal(read.settings.editGate.mode, 'hard-block');
   assert.ok(read.error, 'the parse error is carried, not swallowed');
+});
+
+test('an unknown role held from a snapshot names its value and actual source', () => {
+  const { env, file } = envWith('{broken', { snapshot: '{"role":"collecter"}' });
+  const policy = collectionPolicy(env);
+  assert.equal(policy.mayCollect, false);
+  assert.ok(policy.reason.includes(`${file}.last-good`));
+  assert.match(policy.reason, /collecter/);
+  assert.doesNotMatch(policy.reason, /no last-good snapshot|does not parse/);
 });
 
 test('unreadable with nothing to hold fails CLOSED, and tightens exactly two knobs', () => {
@@ -84,6 +126,33 @@ test('unreadable with nothing to hold fails CLOSED, and tightens exactly two kno
   assert.equal(read.settings.role, 'unknown', 'the role is the second knob with a safe restrictive answer');
   assert.equal(read.settings.evidencePolicy, DEFAULTS.evidencePolicy, 'the rest have none and are left alone');
   assert.equal(posture(env).exitCode, 2, 'unreadable and resolved to blocking is its own code');
+});
+
+test('a non-object snapshot cannot restore a role or a permissive posture', () => {
+  for (const value of [[], 'x', [{ role: 'builder' }], null, 0, false, true]) {
+    const { env } = envWith('{"role": "buil', { snapshot: JSON.stringify(value) });
+    const read = readMachineConfig(env);
+    assert.equal(read.resolvedFrom, 'fallback-closed', JSON.stringify(value));
+    assert.equal(read.settings.role, 'unknown');
+    assert.equal(read.settings.failOpen, false);
+    assert.equal(collectionPolicy(env).mayCollect, false);
+    assert.equal(posture(env).exitCode, 2);
+  }
+});
+
+test('a parsed non-object config never creates or replaces the last-good snapshot', () => {
+  for (const value of [[], 'x', null, 0, false, true]) {
+    const contents = JSON.stringify(value);
+    const { env, file } = envWith(contents);
+    readMachineConfig(env);
+    assert.equal(fs.existsSync(`${file}.last-good`), false, `${contents} became a snapshot`);
+    const held = JSON.stringify({ role: 'builder', failOpen: false });
+    fs.writeFileSync(`${file}.last-good`, held);
+    readMachineConfig(env);
+    assert.equal(fs.readFileSync(`${file}.last-good`, 'utf8'), held);
+    fs.writeFileSync(file, '{"role": "buil');
+    assert.equal(readMachineConfig(env).settings.role, 'builder');
+  }
 });
 
 // ADR-0121 (2026-10-02, arena break-test #198): a posture key that is PRESENT and not of its

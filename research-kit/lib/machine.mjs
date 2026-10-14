@@ -199,13 +199,15 @@ export function readMachineConfig(env = process.env) {
   try {
     const raw = parseJson(text ?? '');
     const { settings, retired, illTyped } = shape(raw && typeof raw === 'object' ? raw : {});
-    try { writeText(lastGoodPath(file), text); } catch { /* snapshot is best-effort */ }
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      try { writeText(lastGoodPath(file), text); } catch { /* snapshot is best-effort */ }
+    }
     return { settings, state: 'readable', source: file, error: null, retiredKeys: retired, illTypedKeys: illTyped };
   } catch (err) {
     const snapshot = readJson(lastGoodPath(file), null);
-    if (snapshot) {
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
       const { settings, retired, illTyped } = shape(snapshot);
-      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
+      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: file, snapshotSource: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
     }
     // Nothing to hold: fail CLOSED, and the ROLE becomes `unknown` rather than the
     // default. The old "every config was previously snapshotted" rationale does not
@@ -318,9 +320,9 @@ export function collectionPolicy(env = process.env) {
     return {
       role,
       mayCollect: false,
-      reason: read.state === 'unreadable'
+      reason: read.resolvedFrom === 'fallback-closed'
         ? `this machine's role cannot be established: ${read.source} does not parse (${read.error}) and there is no last-good snapshot`
-        : `this machine's config names a role the kit does not know ("${readJson(read.source, {})?.role ?? 'unreadable value'}")`,
+        : `this machine's ${read.resolvedFrom === 'snapshot' ? `last-good snapshot (${read.snapshotSource})` : 'config'} names a role the kit does not know ("${readJson(read.snapshotSource ?? read.source, {})?.role ?? 'unreadable value'}")`,
       remedy: `repair the config, or declare the role: ${kitCommand('install-hooks.mjs', '--role collector|builder')}`,
     };
   }
@@ -357,7 +359,7 @@ export function gitVersion(opts = {}) {
 /** Scope-aware readers: which hooksPath is set where. */
 export function hooksPath(scope = 'global', opts = {}) {
   const flag = { global: '--global', local: '--local', system: '--system' }[scope] ?? '--global';
-  return git(['config', flag, '--get', 'core.hooksPath'], opts);
+  return git(['config', flag, '--includes', '--get', 'core.hooksPath'], opts);
 }
 
 export function hooksPathEffective(opts = {}) {
@@ -418,7 +420,22 @@ export function localHooksPathOverride(cwd = process.cwd(), opts = {}) {
 // ---------------------------------------------------------------- install state
 
 export function readInstallState(env = process.env) {
-  return readJson(env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH, null);
+  const raw = readJson(env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH, null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const state = { ...raw };
+  const isPath = (value) => typeof value === 'string' && value.trim().length > 0;
+  for (const key of ['kitHome', 'hooksPath', 'previousHooksPath', 'bound', 'deployedFrom']) {
+    if (!isPath(state[key])) delete state[key];
+  }
+  for (const key of ['skills', 'boundSet']) {
+    if (key in state) state[key] = Array.isArray(state[key]) ? state[key].filter(isPath) : [];
+  }
+  if ('skillSetHashes' in state) {
+    const hashes = state.skillSetHashes;
+    state.skillSetHashes = hashes && typeof hashes === 'object' && !Array.isArray(hashes)
+      ? Object.fromEntries(Object.entries(hashes).filter(([, hash]) => typeof hash === 'string')) : {};
+  }
+  return state;
 }
 
 export function writeInstallState(state, env = process.env) {

@@ -599,6 +599,23 @@ test('the timeline writes each moment in one readable form', () => {
   assert.ok(whens.includes('2026-09-27 14:05 UTC'), `a real time was lost: ${whens}`);
 });
 
+test('timeline errors with CR/LF or pipes stay inside one readable table row', () => {
+  const dir = makePassingProject();
+  const corpus = readCorpus(dir);
+  for (const error of ['Error: failed\n', 'Error:\r\nretry | later\r\n', 'Error:\nsecond\nthird']) {
+    corpus.ledger.entries.push({ at: '2026-10-13T01:02:03.000Z', op: 'fail', url: 'https://x.invalid/page', error });
+  }
+  renderTimeline(dir, { corpus });
+  const lines = readText(resolve(dir, PATHS.timeline)).split('\n');
+  const rows = lines.filter((line) => line.includes('fetch failed'));
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows, [
+    '| 2026-10-13 01:02 UTC | fetch failed | https://x.invalid/page - Error: failed |',
+    '| 2026-10-13 01:02 UTC | fetch failed | https://x.invalid/page - Error: retry \\| later |',
+    '| 2026-10-13 01:02 UTC | fetch failed | https://x.invalid/page - Error: second third |',
+  ]);
+});
+
 // Found 2026-09-28 (an outside break-test, F-02; confirmed): writeText opened its target
 // with 'w', which EMPTIES it before a byte is written, so a write cut short - a full disk, a
 // quota, EFBIG, a killed process - left a partial new file where the old one had been.

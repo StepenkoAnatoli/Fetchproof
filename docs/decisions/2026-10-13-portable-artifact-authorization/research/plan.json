@@ -1,0 +1,24 @@
+{
+  "topic": "How should portable artifact authorization be derived without consumer policy and while preserving historical brief stamps?",
+  "notes": "Issue #357 decision research. Nine pinned first-party source pages only, no search. Use the explicitly selected http-keyless collector; no Firecrawl credits. Historical profiles are also checked against Git objects and retained fixture probes.",
+  "depth": "normal",
+  "refreshDays": 30,
+  "limit": 9,
+  "perQuery": 1,
+  "maxScrapes": 9,
+  "prefer": [
+    "raw.githubusercontent.com"
+  ],
+  "queries": [],
+  "urls": [
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/preflight.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/checks.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/machine.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/lib/brief.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/brief.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/docs/adr/0069-the-brief-stamp-covers-the-map-the-ledger-and-the-verdict.md",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/lib/artifact.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/artifact-validator.mjs",
+    "https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3bac1f26ddbf8cb6a794626e53dc2af313860940/research-kit/test/brief.test.mjs"
+  ]
+}

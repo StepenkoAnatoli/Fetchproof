@@ -14,7 +14,7 @@ import {
 } from '../lib/artifact.mjs';
 import { validateArtifact, MANIFEST_PATH, MANIFEST_DIGEST_PATH } from '../lib/artifact-validator.mjs';
 import { openZip } from '../lib/artifact-zip.mjs';
-import { readCorpus, appendRow } from '../lib/corpus.mjs';
+import { readCorpus, appendRow, parseCapture } from '../lib/corpus.mjs';
 import { writeRaw } from '../lib/collect.mjs';
 import { firstFinding } from '../lib/finding.mjs';
 import { collectedProject, approvedProject, IDENTITY } from './artifact-fixtures.mjs';
@@ -28,6 +28,27 @@ const scratch = tempDir('rk-producer-');
 function build(root, overrides = {}) {
   return createArtifact({ root, ...IDENTITY, ...overrides });
 }
+
+test('a directory at the explicit ledger path is refused as an unpackageable file', () => {
+  const root = collectedProject();
+  const ledger = path.join(root, PATHS.ledger);
+  fs.unlinkSync(ledger);
+  fs.mkdirSync(ledger);
+  assert.throws(() => build(root), (error) => error.code === 'UNPACKAGEABLE_FILE' && /ledger|fetches/.test(error.message));
+});
+
+test('a blank Raw cell cannot make an extractor-identical finding count as reviewed', () => {
+  const root = approvedProject();
+  const corpus = readCorpus(root);
+  const row = corpus.evidence[0];
+  const capture = corpus.captures.byFile.get(row.raw);
+  const { front, body } = parseCapture(readText(resolve(root, capture.file)));
+  row.finding = firstFinding(body, front.title || front.url || row.url);
+  row.raw = '';
+  const review = findingsReviewState(root, corpus);
+  assert.equal(review.reviewed, false);
+  assert.ok(review.unrewritten.includes(row.id));
+});
 
 test('package handoff prose retains gate warnings without changing build authorization', () => {
   for (const [label, root, authorized] of [['collected', collectedProject(), false], ['approved', approvedProject(), true]]) {
@@ -324,7 +345,7 @@ test('roles and media types are assigned, not guessed at read time', () => {
 // ---------------------------------------------------------------- client_ref and naming
 
 test('an invalid client_ref is refused, never rewritten', () => {
-  for (const bad of ['../escape', 'has space', '-leading-dash', 'a'.repeat(65), 'sl/ash']) {
+  for (const bad of ['../escape', 'has space', '-leading-dash', 'a'.repeat(65), 'sl/ash', 'job\n', 'job\r', 'job\r\n']) {
     const check = checkClientRef(bad);
     assert.equal(check.ok, false, `${JSON.stringify(bad)} should be refused`);
     assert.ok(/refusing rather than rewriting/.test(check.detail));

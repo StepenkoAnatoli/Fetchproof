@@ -19,13 +19,13 @@ import { recordOverride } from './provenance.mjs';
 import { probeFirecrawl, selectTransport } from './transport.mjs';
 import { loadConfig, configPath } from './machine.mjs';
 import { cliInstallSpec, cliCompatibility } from './firecrawl.mjs';
-import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling } from './runtime.mjs';
+import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice } from './runtime.mjs';
 import { verifyBundle, bundleSummary } from './bundle.mjs';
 import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
   hooksPath, hooksPathEffective, runtimePaths, skillLocations,
   readInstallState, gitVersion, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
-  EDIT_GATE_HOOK, KIT_HOME, namesHook,
+  EDIT_GATE_HOOK, KIT_HOME, INSTALL_STATE_PATH, namesHook,
 } from './machine.mjs';
 
 import { kitCommand } from './core.mjs';
@@ -41,14 +41,17 @@ function samePath(a, b) {
 
 // ---------------------------------------------------------------- machine
 
-export function machineHealth({ env = process.env, gitPaths = {}, probe = probeFirecrawl, nodeVersion = process.versions.node } = {}) {
+export function machineHealth({ env = process.env, gitPaths = {}, probe = probeFirecrawl, nodeVersion = process.versions.node, execArgv = process.execArgv } = {}) {
   const out = [];
   const read = readMachineConfig(env);
   const post = posture(env);
 
   if (read.state === 'unreadable') {
+    const resolution = read.resolvedFrom === 'snapshot'
+      ? `Posture (${post.failOpen ? 'fail-open' : 'fail-CLOSED'}) and role (${read.settings.role}) held from ${read.snapshotSource}, the last config that parsed.`
+      : 'There is no last-good snapshot: fail-CLOSED, role unknown.';
     out.push(f('critical', 'machine-config',
-      `${read.source} exists and does not parse (${read.error}). Resolved posture: ${post.failOpen ? 'fail-open from the last config that parsed' : 'fail-CLOSED, because there was nothing to hold'}.`,
+      `${read.source} exists and does not parse (${read.error}). ${resolution}`,
       'repair or delete the config file; the kit keeps a <config>.last-good snapshot beside it'));
   } else {
     out.push(f('pass', 'machine-config', `${read.state} (${read.source}); posture: ${post.failOpen ? 'fail-open' : 'fail-closed'}`));
@@ -93,6 +96,10 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
     out.push(f('warn', 'proxy',
       `${unusable} is set to a value Node cannot use as a proxy (it takes an http:// or https:// URL) - the kit's requests go direct`,
       `write it as ${proxySpelling(env[unusable])}`));
+  } else if (proxy && envProxyChoice({ env, execArgv }) === false) {
+    out.push(f('warn', 'proxy',
+      'NODE_USE_ENV_PROXY is set to a value other than 1, or --no-use-env-proxy was selected; the kit leaves the proxy off and requests go direct',
+      'unset NODE_USE_ENV_PROXY or set it to 1, and remove --no-use-env-proxy from Node startup options'));
   } else if (proxy) {
     out.push(nodeHonoursEnvProxy(nodeVersion)
       ? f('pass', 'proxy', `${proxy} is set, and node ${nodeVersion} sends the kit's requests through it`)
@@ -542,8 +549,10 @@ export function runDoctor(root, { env = process.env, gitPaths = {}, probe = prob
   // `commitGateState` reads the same way - so the measurement and the message agree.
   const deployHome = installed?.kitHome ?? KIT_HOME;
   const drift = deployedDrift({ env, kitHome: deployHome });
-  if (!installed) {
-    findings.push(f('warn', 'deploy', `no install state recorded - run: node ${path.join(KIT_ROOT, 'bin', 'install.mjs')}`));
+  if (!installed?.kitHome) {
+    const stateFile = env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH;
+    const detail = exists(stateFile) ? `the install state at ${stateFile} is not readable` : 'no install state recorded';
+    findings.push(f('warn', 'deploy', `${detail} - run: node ${path.join(KIT_ROOT, 'bin', 'install.mjs')}`));
   } else if (samePath(KIT_ROOT, deployHome)) {
     // Found 2026-10-02 (break-test pass 3): run from the deployed copy - the copy an agent
     // runs - after a line was appended to its lib/core.mjs, doctor printed "matches this
