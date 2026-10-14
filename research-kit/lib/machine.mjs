@@ -236,12 +236,40 @@ export function loadConfig(env = process.env) {
 /** Writing drops retired keys, so the migration happens through normal use. */
 export function saveConfig(patch, env = process.env) {
   const file = configPath(env);
-  const current = readMachineConfig(env).settings;
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const rawFrom = (source) => {
+    const raw = parseJson(readText(source) ?? '');
+    if (!object(raw)) throw new Error('config must be a JSON object');
+    return raw;
+  };
+  let current = {};
+  if (exists(file)) {
+    try { current = rawFrom(file); }
+    catch {
+      try { current = rawFrom(lastGoodPath(file)); }
+      catch {
+        if (!Object.hasOwn(patch, 'role') || !ROLES.includes(patch.role)) {
+          throw Object.assign(new Error(`machine config ${file} does not parse as a JSON object; repair it or declare the role with --role collector|builder before saving`), {
+            code: 'CONFIG-UNREADABLE',
+          });
+        }
+      }
+    }
+  }
+  // Save declarations, not the resolved role/posture. A typo remains available for
+  // doctor to name until the operator patches that field. Only the existing retired
+  // spelling is migrated here; it must keep its mode when its old key is dropped.
+  if (current.editGate?.mode === undefined && EDIT_GATE_MODES.includes(current.claudeGate)) {
+    current = { ...current, editGate: { ...(object(current.editGate) ? current.editGate : {}), mode: current.claudeGate } };
+  }
   const next = {
     ...current,
     ...patch,
-    editGate: { ...current.editGate, ...(patch.editGate ?? {}) },
   };
+  if (patch.editGate !== undefined) {
+    next.editGate = { ...(object(current.editGate) ? current.editGate : {}), ...(patch.editGate ?? {}) };
+  }
+  for (const retired of Object.keys(RETIRED_CONFIG_KEYS)) delete next[retired];
   ensureDir(path.dirname(file));
   writeText(file, `${JSON.stringify(next, null, 2)}\n`);
   writeText(lastGoodPath(file), `${JSON.stringify(next, null, 2)}\n`);

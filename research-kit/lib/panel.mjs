@@ -347,7 +347,11 @@ export function createPanel({
       if (problem) return refuse(res, 400, problem);
       const inside = configInsideRepository(env);
       if (inside) return refuse(res, 409, `the machine config is inside the repository at ${inside}; a key never goes into a repository (Rule 6). Point RESEARCH_KIT_CONFIG outside it.`);
-      saveConfig({ [SEARCH_KEY.configKey]: body.key.trim() }, env);
+      try { saveConfig({ [SEARCH_KEY.configKey]: body.key.trim() }, env); }
+      catch (err) {
+        if (err.code === 'CONFIG-UNREADABLE') return refuse(res, 409, err.message);
+        throw err;
+      }
       return send(res, 200, { saved: true, keys: keyState() });
     }
 

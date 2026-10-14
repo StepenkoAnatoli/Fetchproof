@@ -184,6 +184,21 @@ test('the page never writes server text as HTML', () => {
   assert(/button\.type = 'button'/.test(js) && /aria-label/.test(js), 'request output has no keyboard-accessible control');
 });
 
+test('saving a key refuses a broken unsnapshotted config without replacing or echoing it', async () => {
+  const m = machine();
+  const original = '{"role":"bui';
+  writeText(m.configFile, original);
+  const ctx = await started({ machine: m, project: makeProject() });
+  try {
+    const res = await api(ctx, '/api/key/search', { key: KEY });
+    assertEqual(res.status, 409, res.text);
+    assert(/does not parse.*--role/.test(res.text), res.text);
+    assert(!res.text.includes(KEY), 'the refusal echoed the key');
+    assertEqual(readText(m.configFile), original);
+    assert(!fs.existsSync(`${m.configFile}.last-good`), 'the refusal created a snapshot');
+  } finally { await ctx.panel.close(); }
+});
+
 test('saving the search key writes the machine config and never echoes the key', async () => {
   const m = machine();
   const ctx = await started({ machine: m, project: makeProject() });
