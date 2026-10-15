@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Oversized panel requests receive the intended 413 JSON refusal before the
+  connection closes. Overflow discards retained body chunks and later data, while
+  a complete JSON body at the existing byte limit remains accepted (#324).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos
