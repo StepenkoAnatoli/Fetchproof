@@ -131,7 +131,7 @@ try {
     process.stderr.write(`${why}\n`);
     process.exit(2);
   }
-  if (err.code === 'UNKNOWN_RECIPE' || err.code === 'INVALID_BUDGET' || err.code === 'SEARCH_PROVIDER_NOT_READY') {
+  if (err.code === 'UNKNOWN_RECIPE' || err.code === 'INVALID_RECIPE' || err.code === 'INVALID_BUDGET' || err.code === 'SEARCH_PROVIDER_NOT_READY') {
     process.stderr.write(`${err.message}\n`);
     process.exit(2);
   }
