@@ -8,6 +8,8 @@ import { PATHS, resolve, writeText } from '../lib/core.mjs';
 import { verifyHandoff, handoffRemedy, HANDOFF_REMEDY, lineEndingRemedy, alteredRemedy, safePathspec, insideRepository, repositoryState, NAMES_FILE, PIN_LINES } from '../lib/handoff.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
+import { appendFetch } from '../lib/provenance.mjs';
+import { runPreflight } from '../lib/preflight.mjs';
 
 describe('handoff');
 
@@ -30,6 +32,57 @@ test('a corpus that arrived whole passes', () => {
   const report = verifyHandoff(makePassingProject());
   assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
   assert.equal(report.remedy, '');
+});
+
+test('a leading ledger byte-order mark leaves the chain and handoff intact', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.ledger, (text) => `\uFEFF${text}`);
+  const report = verifyHandoff(dir);
+  assert.equal(report.ok, true, JSON.stringify(report.findings));
+  assert.equal(report.didNotTravel, false);
+  assert.equal(report.ledgerLost, false);
+  assert.equal(runPreflight(dir).pass, true, 'the provenance gate must accept the same intact chain');
+});
+
+test('unparsed ledger lines get the local repair remedy instead of lost-entry or travel advice', () => {
+  const tail = makePassingProject();
+  fs.appendFileSync(resolve(tail, PATHS.ledger), '\n\n{"seq":2,"url":"unfinished');
+  let report = verifyHandoff(tail);
+  assert.equal(report.ok, false);
+  assert.equal(report.didNotTravel, false);
+  assert.equal(report.ledgerLost, false);
+  assert.match(report.remedy, /doctor\.mjs"? --fix-arity/);
+  assert.doesNotMatch(report.remedy, /Something did not travel|ledger lost entries/);
+
+  const middle = makePassingProject();
+  corrupt(middle, PATHS.ledger, (text) => `not JSON\n${text}`);
+  report = verifyHandoff(middle);
+  assert.equal(report.ok, false);
+  assert.equal(report.didNotTravel, false);
+  assert.equal(report.ledgerLost, false);
+  assert.match(report.remedy, /broken line inside the chain.*restore research\/raw\/\.fetches\.jsonl from git/);
+  assert.doesNotMatch(report.remedy, /Something did not travel|ledger lost entries|--fix-arity/);
+
+  const brokenEntry = makePassingProject();
+  appendFetch(brokenEntry, { op: 'fail', url: 'https://example.invalid/second', transport: 'http-keyless' });
+  corrupt(brokenEntry, PATHS.ledger, (text) => text.replace(/^[^\n]+/, 'unreadable first entry'));
+  report = verifyHandoff(brokenEntry);
+  assert.equal(report.ok, false);
+  assert.equal(report.didNotTravel, false, 'unparsed entries cause secondary seq/prev failures');
+  assert.equal(report.ledgerLost, false, 'a capture may be recorded in the unreadable entry');
+  assert.match(report.remedy, /restore research\/raw\/\.fetches\.jsonl from git/);
+  assert.doesNotMatch(report.remedy, /Something did not travel|ledger lost entries/);
+});
+
+test('an unreadable ledger does not hide a capture that really did not travel', () => {
+  const dir = makePassingProject();
+  const capture = readCorpus(dir).captures.entries[0];
+  fs.rmSync(resolve(dir, capture.file));
+  fs.appendFileSync(resolve(dir, PATHS.ledger), '{"seq":2');
+  const report = verifyHandoff(dir);
+  assert.equal(report.didNotTravel, true);
+  assert.match(report.remedy, /Something did not travel/);
+  assert.match(report.remedy, /--fix-arity/);
 });
 
 test('a missing ledger is named handoff-ledger-missing', () => {

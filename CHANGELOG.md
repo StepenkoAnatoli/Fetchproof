@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A leading ledger byte-order mark is tolerated while reading, without changing the
+  evidence file or its entry hashes. Tail repair leaves an intact BOM ledger alone
+  and preserves the prefix when dropping a torn append. Handoff gives unreadable lines the tail-repair
+  or restore-from-git remedy; secondary chain failures no longer imply failed travel
+  or lost entries while parsing is unresolved (#296).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos
