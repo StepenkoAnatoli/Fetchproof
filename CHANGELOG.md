@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Finding extraction remembers the winning paragraph start and builds its excerpt
+  forward only until truncation is established. Long unbroken captures avoid the
+  quadratic array insertion while retaining the same finding and excerpt (#334).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos
