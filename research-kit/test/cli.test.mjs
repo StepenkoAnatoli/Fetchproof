@@ -33,7 +33,7 @@ test('collect-remote refuses unsafe client references before token lookup or cre
   const bare = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref'], { root });
   assert.equal(bare.status, 3);
   assert.match(bare.err, /--client-ref needs a value/);
-  for (const clientRef of ['', 'job-1.a_b', 'a'.repeat(64)]) {
+  for (const clientRef of ['job-1.a_b', 'a'.repeat(64)]) {
     const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--client-ref', clientRef, '--no-wait'], { root });
     assert.equal(r.status, 3);
     assert.match(r.err, /no GitHub token/, 'valid input must reach the existing missing-token refusal');
@@ -841,6 +841,24 @@ test('collect-remote refuses a bare --out, --workflow or --ref before it creates
   }
 });
 
+test('collect-remote refuses empty required and optional values before token lookup or creating out', () => {
+  for (const flag of ['repository', 'topic', 'client-ref', 'prior', 'prefer']) {
+    const required = flag === 'repository' ? ['--topic', 't']
+      : flag === 'topic' ? ['--repository', 'o/r'] : ['--repository', 'o/r', '--topic', 't'];
+    const spellings = [[`--${flag}=`], [`--${flag}`, '']];
+    if (!['repository', 'topic'].includes(flag)) spellings.push([`--${flag}`]);
+    for (const spelling of spellings) {
+      const root = project();
+      const out = path.join(root, 'not-created');
+      const r = run('collect-remote.mjs', [...required, '--out', out, ...spelling], { root });
+      assert.equal(r.status, 3, r.all);
+      assert.equal(r.err.split('\n')[0], `--${flag} needs a value`, r.all);
+      assert.doesNotMatch(r.all, /no GitHub token/);
+      assert.equal(fs.existsSync(out), false, 'invalid flags must not create the output directory');
+    }
+  }
+});
+
 // Found 2026-10-01: lib/dispatch.mjs told the caller to "retry with --run-id <n>", exit 4 said
 // "the run id is on stdout", and collect-remote had no --run-id - it refused it as an unknown
 // option. A watch that ended (a timeout, a dropped connection, a closed laptop) could not be
@@ -1032,7 +1050,9 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
     // Number() makes 1 - so a real run paid for one page nobody asked for.
     ['decompose.mjs', ['--dry-run', '--max-scrapes'], /--max-scrapes needs a value/],
     ['decompose.mjs', ['--dry-run', '--limit'], /--limit needs a value/],
-    ['decompose.mjs', ['--dry-run', '--limit', 'abc'], /--limit must be a whole number of at least 0, not "abc"/],
+    ['decompose.mjs', ['--dry-run', '--limit', 'abc'], /--limit must be a whole number of at least 1, not "abc"/],
+    ['decompose.mjs', ['--dry-run', '--limit', '0'], /--limit must be a whole number of at least 1, not "0"/],
+    ['decompose.mjs', ['--dry-run', '--limit', '-1'], /--limit must be a whole number of at least 1, not "-1"/],
     ['preflight.mjs', ['--check'], /--check needs a value/],
     ['gate.mjs', ['--gate', 'push'], /--gate must be one of/],
     ['prior.mjs', ['--file'], /--file needs a value/],
@@ -1045,6 +1065,13 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
   }
   const only = run('preflight.mjs', ['--only', 'citations'], { root: planned('values') });
   assert.equal(only.status, 2, `preflight --only is accepted and never read:\n${only.all.slice(0, 300)}`);
+});
+
+test('decompose accepts a search limit of one while max-scrapes still accepts zero', () => {
+  const r = run('decompose.mjs', ['--dry-run', '--limit', '1', '--max-scrapes', '0', '--transport', 'http-keyless'], {
+    root: planned('budget-floor'),
+  });
+  assert.equal(r.status, 0, r.all);
 });
 
 // Found 2026-09-27: new-project over an existing project with a different --topic reported

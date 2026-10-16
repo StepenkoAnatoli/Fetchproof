@@ -18,7 +18,7 @@ refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-sc
 // made 1, so `--max-scrapes` with no value quietly paid for one page.
 checkFlagValues(flags, {
   topic: 'value', recipe: 'value', transport: 'value', 'search-transport': 'value',
-  limit: { int: true, min: 0 }, 'max-scrapes': { int: true, min: 0 },
+  limit: { int: true, min: 1 }, 'max-scrapes': { int: true, min: 0 },
 });
 const root = process.cwd();
 
@@ -131,7 +131,7 @@ try {
     process.stderr.write(`${why}\n`);
     process.exit(2);
   }
-  if (err.code === 'UNKNOWN_RECIPE' || err.code === 'INVALID_BUDGET' || err.code === 'SEARCH_PROVIDER_NOT_READY') {
+  if (err.code === 'UNKNOWN_RECIPE' || err.code === 'INVALID_RECIPE' || err.code === 'INVALID_BUDGET' || err.code === 'SEARCH_PROVIDER_NOT_READY') {
     process.stderr.write(`${err.message}\n`);
     process.exit(2);
   }

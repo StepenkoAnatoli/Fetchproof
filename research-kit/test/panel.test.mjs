@@ -6,7 +6,7 @@ import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { test, describe, assert, assertEqual, tempDir, fs, path, makeProject, requireGit, requireSymlink, fixtureInitArgs, KIT_ROOT } from './harness.mjs';
 import { writeText, readText } from '../lib/core.mjs';
-import { createPanel, PANEL_COMMANDS, PANEL_HOST, keyProblem, projectTopic, builderInstructions } from '../lib/panel.mjs';
+import { createPanel, PANEL_COMMANDS, PANEL_HOST, MAX_BODY_BYTES, keyProblem, projectTopic, builderInstructions } from '../lib/panel.mjs';
 import { writeResult, recordTrustedResult, setPaused } from '../lib/requests.mjs';
 
 describe('panel');
@@ -64,6 +64,31 @@ const api = (ctx, route, body) => request(ctx.port, {
   route,
   headers: { 'x-panel-token': ctx.panel.token, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
   body,
+});
+
+test('an oversized POST receives the 413 JSON refusal and the panel keeps answering', async () => {
+  const ctx = await started({ project: makeProject(undefined, { content: true }) });
+  try {
+    for (const size of [MAX_BODY_BYTES + 1, 3 * 1024 * 1024]) {
+      const body = `"${'x'.repeat(size - 2)}"`;
+      const res = await api(ctx, '/api/run', body);
+      assertEqual(res.status, 413);
+      assertEqual(res.json?.error, 'the request is too large');
+      assertEqual(res.headers.connection, 'close');
+      assertEqual((await api(ctx, '/api/state')).status, 200);
+    }
+  } finally { await ctx.panel.close(); }
+});
+
+test('a complete JSON body at the panel limit reaches route handling', async () => {
+  const ctx = await started({ project: makeProject(undefined, { content: true }) });
+  try {
+    const body = `"${'x'.repeat(MAX_BODY_BYTES - 2)}"`;
+    assertEqual(Buffer.byteLength(body), MAX_BODY_BYTES);
+    const res = await api(ctx, '/api/not-a-route', body);
+    assertEqual(res.status, 404);
+    assertEqual(res.json?.error, 'not a panel route');
+  } finally { await ctx.panel.close(); }
 });
 
 test('the panel listens on 127.0.0.1 only and puts its token in the fragment, never the path', async () => {

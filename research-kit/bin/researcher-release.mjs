@@ -54,6 +54,12 @@ function main(argv = process.argv.slice(2)) {
   if (parsed.error) { console.error(`${parsed.error}\n${usage()}`); return 2; }
   let result;
   if (parsed.command === 'validate') {
+    const snapshotMaxAgeMs = parsed.snapshotmaxagems === undefined ? undefined : Number(parsed.snapshotmaxagems);
+    if (parsed.snapshotmaxagems !== undefined
+      && (!parsed.snapshotmaxagems.trim() || !Number.isFinite(snapshotMaxAgeMs) || snapshotMaxAgeMs < 0)) {
+      console.error(`--snapshot-max-age-ms must be a finite non-negative number\n${usage()}`);
+      return 2;
+    }
     if (!parsed.root || !parsed.package || !parsed.registry || !parsed.roles || !parsed.pointers) {
       console.error(usage());
       return 2;
@@ -78,7 +84,7 @@ function main(argv = process.argv.slice(2)) {
       headPath: parsed.head ? path.resolve(parsed.head) : null,
       genesisHash: parsed.genesishash ?? '0'.repeat(64),
       publicKeys,
-      snapshotMaxAgeMs: parsed.snapshotmaxagems === undefined ? undefined : Number(parsed.snapshotmaxagems),
+      snapshotMaxAgeMs,
     });
   } else if (parsed.command === 'conform') {
     if (!parsed.schema) { console.error(usage()); return 2; }

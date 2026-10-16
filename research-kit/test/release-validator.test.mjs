@@ -205,6 +205,72 @@ test('researcher-release names a missing value before resolving paths', () => {
   }
 });
 
+test('researcher-release refuses invalid snapshot ages as usage before judging a valid package', async () => {
+  const root = tempRoot();
+  try {
+    const registryPath = path.join(root, 'registry.json');
+    const rolesPath = path.join(root, 'roles.json');
+    const pointers = path.join(root, 'pointers');
+    const record = envelope();
+    record.payloadSha256 = await sha256(canonical(record.payload));
+    writeJson(path.join(root, 'records', 'R28-01.json'), record);
+    writeJson(registryPath, registryFor());
+    writeJson(rolesPath, roster());
+    fs.mkdirSync(pointers);
+    const args = ['research-kit/bin/researcher-release.mjs', 'validate', '--root', root,
+      '--package', 'R28', '--registry', registryPath, '--roles', rolesPath, '--pointers', pointers, '--json'];
+    for (const value of ['abc', '', '   ', 'NaN', 'Infinity', '1e309', '-1']) {
+      const run = spawnSync(process.execPath, [...args, '--snapshot-max-age-ms', value], { encoding: 'utf8' });
+      assertEqual(run.status, 2, run.stdout || run.stderr);
+      assert(run.stderr.includes('--snapshot-max-age-ms'), run.stderr);
+      assert(run.stderr.includes('Usage:'), run.stderr);
+      assertEqual(run.stdout, '', 'usage must not produce an evidence verdict');
+      assert(!/SNAPSHOT-STALE|allowed .*ms/.test(run.stderr), run.stderr);
+    }
+    for (const value of ['0', '1', '1.5', '1e3']) {
+      const run = spawnSync(process.execPath, [...args, '--snapshot-max-age-ms', value], { encoding: 'utf8' });
+      assertEqual(run.status, 0, run.stdout || run.stderr);
+      assertEqual(JSON.parse(run.stdout).status, 'PASS');
+    }
+  } finally { cleanup(root); }
+});
+
+test('release and snapshot facades distinguish an invalid age allowance from stale evidence', async () => {
+  const { validateRelease, validateSnapshotEvidence } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const registryPath = path.join(root, 'registry.json');
+    const rolesPath = path.join(root, 'roles.json');
+    writeJson(registryPath, registryFor());
+    writeJson(rolesPath, roster());
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    const baseRecord = envelope();
+    baseRecord.payloadSha256 = await sha256(canonical(baseRecord.payload));
+    writeJson(path.join(root, 'records', 'R28-01.json'), baseRecord);
+    const baseline = validateRelease({ root, package: 'R28', registryPath, rolesPath });
+    assertEqual(baseline.status, 'PASS', JSON.stringify(baseline));
+    const refs = Object.fromEntries(['before', 'after', 'recovery'].map((phase) => [phase, {
+      snapshotId: phase, capturedAt: '2026-01-01T00:00:00Z', status: 'PASS', envelopeCanonicalSha256: 'c'.repeat(64),
+    }]));
+    const record = envelope({ payload: { pathAuthoritySnapshots: refs } });
+    for (const value of [NaN, Infinity, -Infinity, -1, null, '0']) {
+      const results = [
+        validateRelease({ root, package: 'R28', registryPath, rolesPath, snapshotMaxAgeMs: value }),
+        validateSnapshotEvidence(record, { root, now, maxAgeMs: value }),
+      ];
+      for (const result of results) {
+        assertEqual(result.status, 'INCOMPLETE', JSON.stringify(result));
+        assert(result.errors.some((error) => error.code === 'INPUT-SNAPSHOT-MAX-AGE'), JSON.stringify(result));
+        assert(!result.errors.some((error) => error.code === 'SNAPSHOT-STALE'), JSON.stringify(result));
+      }
+    }
+    const fresh = validateSnapshotEvidence(record, { root, now, maxAgeMs: 0 });
+    assert(!fresh.errors.some((error) => error.code === 'INPUT-SNAPSHOT-MAX-AGE' || error.code === 'SNAPSHOT-STALE'), JSON.stringify(fresh));
+    const stale = validateSnapshotEvidence(record, { root, now: now + 1, maxAgeMs: 0 });
+    assertEqual(stale.errors.filter((error) => error.code === 'SNAPSHOT-STALE').length, 3, JSON.stringify(stale));
+  } finally { cleanup(root); }
+});
+
 test('researcher-release conform validates explicit files and maps schema failure to exit 1', async () => {
   const root = tempRoot();
   try {

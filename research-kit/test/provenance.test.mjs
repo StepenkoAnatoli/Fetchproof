@@ -18,6 +18,20 @@ test('happy path: the chain verifies and preflight passes', () => {
   assert.equal(runPreflight(dir).pass, true);
 });
 
+test('tail repair leaves an intact BOM ledger alone and preserves its prefix when dropping a torn append', () => {
+  const dir = makePassingProject();
+  const file = resolve(dir, PATHS.ledger);
+  const saved = `\uFEFF${fs.readFileSync(file, 'utf8')}`;
+  fs.writeFileSync(file, saved);
+  assert.deepEqual(repairLedgerTail(dir), { repaired: false, reason: 'tail-parses' });
+  assert.equal(fs.readFileSync(file, 'utf8'), saved);
+  assert.equal(verifyLedger(dir).ok, true);
+  fs.appendFileSync(file, '{"seq":2,"url":"unfinished');
+  assert.equal(repairLedgerTail(dir).repaired, true);
+  assert.equal(fs.readFileSync(file, 'utf8'), saved, 'repair must remove only the torn append');
+  assert.equal(verifyLedger(dir).ok, true);
+});
+
 test('a tampered capture fails body-unmodified', () => {
   const dir = makePassingProject();
   const capture = readCorpus(dir).captures.entries[0];

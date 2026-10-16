@@ -183,6 +183,39 @@ test('the excerpt carries the surrounding paragraph, bounded, so a reviewer can 
   assert.ok(result.excerpt.length <= EXCERPT_CHARS + 1, `excerpt is ${result.excerpt.length} chars, which is not bounded`);
 });
 
+test('long unbroken paragraphs retain the same bounded excerpt without quadratic recovery', () => {
+  const claim = 'The free plan allows 1,000 requests per minute and retains logs for 30 days.';
+  const line = '- item is listed here\n';
+  const count = Math.ceil(8 * 1024 * 1024 / line.length);
+  const page = line.repeat(count) + claim;
+  const started = Date.now();
+  const result = findingWithContext(page, 'fallback');
+  const elapsed = Date.now() - started;
+  assert.equal(result.finding, claim);
+  const prefix = 'item is listed here '.repeat(count).trim();
+  assert.equal(result.excerpt, `${prefix.slice(0, EXCERPT_CHARS).trimEnd()}…`);
+  // The reported recovery takes tens of seconds at the accepted capture size. Leave a
+  // generous bound for loaded machines while keeping that failure clearly outside it.
+  assert.ok(elapsed < 8000, `an 8 MB unbroken paragraph took ${elapsed}ms`);
+});
+
+test('paragraph recovery preserves empty Markdown lines, heading boundaries and the exact cap', () => {
+  const claim = 'The free plan allows 1,000 requests per minute and retains logs for 30 days.';
+  const cases = [
+    [`# Old heading\nIgnored before the boundary.\n## Limits\n**\n${claim}\nRequests beyond that return HTTP 429.\n\nNot this paragraph.`, `${claim} Requests beyond that return HTTP 429.`],
+    [`   \n${claim}\n## Other\nNot this heading.`, claim],
+    [`${'x'.repeat(EXCERPT_CHARS - 1)}\n${claim}`, `${'x'.repeat(EXCERPT_CHARS - 1)}…`],
+    [`${'x'.repeat(EXCERPT_CHARS)}\n**\n${claim}`, `${'x'.repeat(EXCERPT_CHARS)}…`],
+    [`${claim}\n${'x'.repeat(EXCERPT_CHARS)}`, `${(`${claim} ${'x'.repeat(EXCERPT_CHARS)}`).slice(0, EXCERPT_CHARS).trimEnd()}…`],
+    [`${claim}\n\`\`\`\nunchosen code\n\`\`\`\n   `, `${claim} unchosen code`],
+  ];
+  for (const [page, excerpt] of cases) {
+    const result = findingWithContext(page, 'fallback');
+    assert.equal(result.finding, claim);
+    assert.equal(result.excerpt, excerpt, JSON.stringify(page));
+  }
+});
+
 test('firstFinding is exactly findingWithContext.finding, so the two cannot drift', () => {
   // firstFinding is what the collector writes into the evidence table; findingWithContext
   // is what a reviewer reads. If they ever selected differently, the excerpt would be

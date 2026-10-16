@@ -495,7 +495,9 @@ export function readLedger(root) {
   const file = resolve(root, PATHS.ledger);
   const text = readText(file);
   if (text === null) return { present: false, entries: [], problems: [], lines: [] };
-  const lines = text.split(/\r?\n/);
+  // An editor's leading BOM is outside the entries the chain hashes. Ignore it while
+  // reading, as the JSON and Markdown readers do; never rewrite the evidence file.
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   const entries = [];
   const problems = [];
   lines.forEach((line, idx) => {

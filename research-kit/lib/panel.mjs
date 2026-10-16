@@ -270,12 +270,22 @@ export function createPanel({
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks = [];
+      let oversized = false;
       req.on('data', (chunk) => {
+        if (oversized) return;
         size += chunk.length;
-        if (size > MAX_BODY_BYTES) { reject(Object.assign(new Error('the request is too large'), { status: 413 })); req.destroy(); return; }
+        if (size > MAX_BODY_BYTES) {
+          oversized = true;
+          chunks.length = 0;
+          // The handler must send its refusal before the connection closes. Destroying
+          // the request here also destroys the socket carrying that response.
+          reject(Object.assign(new Error('the request is too large'), { status: 413 }));
+          return;
+        }
         chunks.push(chunk);
       });
       req.on('end', () => {
+        if (oversized) return;
         const text = Buffer.concat(chunks).toString('utf8');
         try { resolve(text ? JSON.parse(text) : {}); } catch { reject(Object.assign(new Error('the request is not JSON'), { status: 400 })); }
       });
@@ -401,6 +411,7 @@ export function createPanel({
       try {
         return await api(req, res, route);
       } catch (err) {
+        if (err.status === 413) res.setHeader('Connection', 'close');
         return refuse(res, err.status ?? 500, err.status ? err.message : 'the panel hit an error; the terminal that started it has the detail');
       }
     }
