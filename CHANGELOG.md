@@ -5,6 +5,30 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
+  values by name before creating an output directory or reading a token (#287).
+- Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers
+  receive `INPUT-SNAPSHOT-MAX-AGE` / `INCOMPLETE` rather than a false stale-snapshot
+  verdict; finite non-negative allowances, including zero, retain their meaning (#343).
+- `decompose --limit` consistently requires a whole number of at least 1 before
+  transport selection. `--max-scrapes 0` remains supported (#320).
+- Auto-collect Git failure diagnostics quote the first `fatal:` or `error:` cause,
+  retaining the final-line fallback for output without either marker (#326).
+- A leading ledger byte-order mark is tolerated while reading, without changing the
+  evidence file or its entry hashes. Tail repair leaves an intact BOM ledger alone
+  and preserves the prefix when dropping a torn append. Handoff gives unreadable lines the tail-repair
+  or restore-from-git remedy; secondary chain failures no longer imply failed travel
+  or lost entries while parsing is unresolved (#296).
+- Finding extraction remembers the winning paragraph start and builds its excerpt
+  forward only until truncation is established. Long unbroken captures avoid the
+  quadratic array insertion while retaining the same finding and excerpt (#334).
+- Recipe loading refuses existing files without dimensions and blank dimension labels,
+  naming the source and line. Decompose reports invalid recipe content with exit 2
+  before writing the map (#356).
+- Oversized panel requests receive the intended 413 JSON refusal before the
+  connection closes. Overflow discards retained body chunks and later data, while
+  a complete JSON body at the existing byte limit remains accepted (#324).
+
 - ZIP archives declare UTF-8 names in both headers, so ordinary extractors preserve non-ASCII paths declared by the package manifest (#345).
 
 - Machine config saves preserve unpatched raw role and posture values, including typos

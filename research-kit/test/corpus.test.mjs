@@ -4,13 +4,25 @@ import { spawnSync } from 'node:child_process';
 import { test, describe, assert, makePassingProject, makeProject, corrupt, fs, requireSymlink } from './harness.mjs';
 import { PATHS, HEADERS, resolve, writeText, readText, sha256File, isRegularFile } from '../lib/core.mjs';
 import {
-  readCorpus, readCaptures, parseTable, parseCapture, splitRow, escapeCell, tableRow,
+  readCorpus, readCaptures, readLedger, parseTable, parseCapture, splitRow, escapeCell, tableRow,
   repairRowArity, captureEntry, rememberCapture, cacheDecision, traceOf, captureOf,
   claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl,
 } from '../lib/corpus.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 
 describe('corpus');
+
+test('a leading ledger byte-order mark preserves entries without rewriting the file', () => {
+  const dir = makePassingProject();
+  const file = resolve(dir, PATHS.ledger);
+  const before = readLedger(dir);
+  const saved = `\uFEFF${fs.readFileSync(file, 'utf8')}`;
+  fs.writeFileSync(file, saved);
+  const after = readLedger(dir);
+  assert.deepEqual(after.entries, before.entries);
+  assert.deepEqual(after.problems, []);
+  assert.equal(fs.readFileSync(file, 'utf8'), saved, 'reading must not edit the ledger');
+});
 
 test('splitRow honours escaped pipes; escapeCell round-trips through them', () => {
   assert.deepEqual(splitRow('| a | b\\|c | d |'), ['a', 'b|c', 'd']);

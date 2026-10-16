@@ -694,6 +694,10 @@ function snapshotRefValue(ref) {
  */
 export function validateSnapshotEvidence(record, { root = null, now = Date.now(), maxAgeMs = SNAPSHOT_MAX_AGE_MS } = {}) {
   const errors = [];
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+    add(errors, 'INPUT-SNAPSHOT-MAX-AGE', 'snapshot age allowance must be a finite non-negative number', '--snapshot-max-age-ms', 'INCOMPLETE');
+    return { status: resultStatus(errors), errors };
+  }
   const meta = metaOf(record);
   const refs = snapshotRefs(record);
   if (!refs || typeof refs !== 'object' || Array.isArray(refs)) {
@@ -719,7 +723,7 @@ export function validateSnapshotEvidence(record, { root = null, now = Date.now()
     const capturedMs = typeof capturedAt === 'string' && UTC.test(capturedAt) ? Date.parse(capturedAt) : NaN;
     if (!Number.isFinite(capturedMs)) add(errors, 'SNAPSHOT-TIME', `${phase} capturedAt must be UTC ISO-8601 with Z`, `${at}.capturedAt`, 'INCOMPLETE');
     else if (capturedMs > now) add(errors, 'SNAPSHOT-FUTURE', `${phase} snapshot is dated in the future`, `${at}.capturedAt`);
-    else if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0 || now - capturedMs > maxAgeMs) add(errors, 'SNAPSHOT-STALE', `${phase} path-authority snapshot is older than the allowed ${maxAgeMs}ms`, `${at}.capturedAt`);
+    else if (now - capturedMs > maxAgeMs) add(errors, 'SNAPSHOT-STALE', `${phase} path-authority snapshot is older than the allowed ${maxAgeMs}ms`, `${at}.capturedAt`);
 
     const fileName = ref.path ?? ref.file ?? ref.evidencePath;
     if (fileName === undefined) {
@@ -987,6 +991,10 @@ export function validateRelease({ root, package: packageName, registryPath, role
     recoveryReceiptIds: [],
     errors,
   };
+  if (!Number.isFinite(snapshotMaxAgeMs) || snapshotMaxAgeMs < 0) {
+    add(errors, 'INPUT-SNAPSHOT-MAX-AGE', 'snapshot age allowance must be a finite non-negative number', '--snapshot-max-age-ms', 'INCOMPLETE');
+    return output;
+  }
   if (!root || !fs.existsSync(root) || !inside(process.cwd(), root) && !path.isAbsolute(root)) add(errors, 'INPUT-ROOT', 'root must name an existing directory', '--root', 'INCOMPLETE');
   if (!PACKAGES.has(packageName)) add(errors, 'INPUT-PACKAGE', 'package must be R28, R29, R30, R31, or R32', '--package', 'INCOMPLETE');
   const registryLoaded = readJson(registryPath);

@@ -544,7 +544,9 @@ export function repairLedgerTail(root) {
 
     const tail = lines[lines.length - 1];
     let torn = false;
-    try { JSON.parse(tail); } catch { torn = true; }
+    // A one-entry ledger can carry the same leading editor BOM readLedger tolerates.
+    // It is not a torn append; later-line BOMs remain invalid and the file is untouched.
+    try { JSON.parse(lines.length === 1 ? tail.replace(/^\uFEFF/, '') : tail); } catch { torn = true; }
     if (!torn) return { repaired: false, reason: 'tail-parses' };
 
     const head = lines.slice(0, -1).join('\n');

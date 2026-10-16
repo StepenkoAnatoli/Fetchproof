@@ -28,7 +28,7 @@ export function parseRecipe(text) {
   let name = '';
   if (match) {
     let inList = false;
-    for (const line of match[1].split(/\r?\n/)) {
+    for (const [offset, line] of match[1].split(/\r?\n/).entries()) {
       const named = line.match(/^name:\s*(.*)$/);
       if (named) { name = named[1].trim(); continue; }
       if (/^dimensions:\s*$/.test(line)) { inList = true; continue; }
@@ -36,6 +36,11 @@ export function parseRecipe(text) {
         const item = line.match(/^\s*-\s+(.*)$/);
         if (!item) { if (line.trim()) inList = false; continue; }
         const [label, why] = item[1].split(/\s*\|\s*/);
+        if (!label.trim()) {
+          const err = new Error(`line ${offset + 2}: the dimension label is blank`);
+          err.code = 'INVALID_RECIPE';
+          throw err;
+        }
         dimensions.push({ name: label.trim(), why: (why ?? '').trim() });
       }
     }
@@ -54,7 +59,17 @@ export function loadRecipe(nameOrPath) {
     err.code = 'UNKNOWN_RECIPE';
     throw err;
   }
-  return { ...parseRecipe(text), file: direct };
+  let parsed;
+  try { parsed = parseRecipe(text); } catch (err) {
+    if (err.code === 'INVALID_RECIPE') err.message = `recipe "${direct}" ${err.message}`;
+    throw err;
+  }
+  if (!parsed.dimensions.length) {
+    const err = new Error(`recipe "${direct}" holds no dimensions - use a front-matter dimensions list of "- label | why" lines; see ${RECIPE_DIR}`);
+    err.code = 'INVALID_RECIPE';
+    throw err;
+  }
+  return { ...parsed, file: direct };
 }
 
 /** Where the facts probably live: the official hosts a search keeps pointing at. */

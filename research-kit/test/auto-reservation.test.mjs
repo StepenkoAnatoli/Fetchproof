@@ -63,6 +63,32 @@ function launch(file, dir, marker, held, env) {
   return { child, closed };
 }
 
+test('Git failure notes quote the first fatal or error cause instead of the advice tail', async () => {
+  const { env, projects } = fixture();
+  const dir = projects[0];
+  const cases = [
+    ["fatal: '/nonexistent/remote.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n",
+      "fatal: '/nonexistent/remote.git' does not appear to be a git repository"],
+    ['progress\r\nerror: cannot lock ref\r\nPlease try again.\r\n', 'error: cannot lock ref'],
+    ['notice\nfinal diagnostic\n\n', 'final diagnostic'],
+    ['', ''],
+  ];
+  for (const [output, reason] of cases) {
+    const calls = [];
+    const exec = async (command, args) => {
+      assertEqual(command, 'git', 'a failed pull must not start collection');
+      calls.push(args);
+      if (args[0] === 'rev-parse') return { code: 0, output: dir };
+      assertEqual(args[0], 'pull');
+      return { code: 1, output };
+    };
+    const collector = createAutoCollect({ project: () => dir, env, kitRoot: KIT_ROOT, exec });
+    const status = await collector.cycle();
+    assert(status.notes.some((note) => note.includes(`git pull did not run cleanly (${reason}); collection blocked`)), JSON.stringify(status.notes));
+    assertEqual(calls.length, 2, 'synchronization failure must block all further commands');
+  }
+});
+
 async function waitFile(file) {
   const started = Date.now();
   while (!fs.existsSync(file)) {

@@ -331,6 +331,9 @@ export function findingWithContext(markdown, fallback = '') {
 
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i];
+    // Excerpts use physical paragraph boundaries, including ones inside skipped fences.
+    // Remember the start while scanning so recovery never inserts each line at the front.
+    if (!raw.trim() || /^\s{0,3}#{1,6}\s/.test(raw)) blockStart = i + 1;
     if (/^\s*```/.test(raw)) { inFence = !inFence; continue; }
     if (inFence) continue;
 
@@ -363,7 +366,7 @@ export function findingWithContext(markdown, fallback = '') {
     // An FAQ question is usually plain text, not a heading, so the heading rules cannot
     // see it. Remember whether the previous non-empty line asked something.
     const answersQuestion = lastLine.endsWith('?');
-    if (line) { if (!block.length) blockStart = i; block.push(line); lastLine = line; }
+    if (line) { block.push(line); lastLine = line; }
     if (isNoise(line)) continue;
     for (const sentence of sentences(line)) {
       const text = sentence.trim();
@@ -371,7 +374,7 @@ export function findingWithContext(markdown, fallback = '') {
       if (isNoise(text)) continue;
       // The excerpt is resolved after the paragraph closes, so a sentence carries the
       // whole paragraph it came from rather than just itself.
-      candidates.push({ text, fromTable: false, heading, headings: stack.filter(Boolean).join(' / '), answersQuestion, lineIndex: i });
+      candidates.push({ text, fromTable: false, heading, headings: stack.filter(Boolean).join(' / '), answersQuestion, lineIndex: i, blockStart });
     }
   }
   flushBlock();
@@ -396,10 +399,13 @@ export function findingWithContext(markdown, fallback = '') {
   // Recover the paragraph the winner sat in, bounded. A table row already has one.
   let excerpt = best.excerpt ?? '';
   if (!excerpt && best.lineIndex !== undefined) {
-    const para = [];
-    for (let i = best.lineIndex; i >= 0 && lines[i]?.trim() && !/^\s{0,3}#{1,6}\s/.test(lines[i]); i -= 1) para.unshift(stripMarkdown(lines[i]));
-    for (let i = best.lineIndex + 1; i < lines.length && lines[i]?.trim() && !/^\s{0,3}#{1,6}\s/.test(lines[i]); i += 1) para.push(stripMarkdown(lines[i]));
-    excerpt = para.filter(Boolean).join(' ').trim();
+    for (let i = best.blockStart; i < lines.length && lines[i]?.trim() && !/^\s{0,3}#{1,6}\s/.test(lines[i]); i += 1) {
+      const line = stripMarkdown(lines[i]);
+      if (!line) continue;
+      excerpt += `${excerpt ? ' ' : ''}${line}`;
+      // One character beyond the cap proves truncation, including an exact-cap prefix.
+      if (excerpt.length > EXCERPT_CHARS) break;
+    }
   }
   if (excerpt.length > EXCERPT_CHARS) excerpt = `${excerpt.slice(0, EXCERPT_CHARS).trimEnd()}…`;
 

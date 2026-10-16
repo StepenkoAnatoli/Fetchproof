@@ -319,6 +319,8 @@ export function verifyHandoff(root, { corpus = null } = {}) {
   const missingCaptures = [];
   const unledgered = [];
   const lineEndings = chain.lineEndings ?? [];
+  const ledgerUnparsed = chain.problems.filter((p) => p.rule === 'ledger-unparsed');
+  const parseConsequences = new Set();
 
   if (!snapshot.ledger.present) {
     findings.push({
@@ -326,7 +328,7 @@ export function verifyHandoff(root, { corpus = null } = {}) {
       severity: 'fail',
       detail: `${PATHS.ledger} is not in this checkout - the corpus arrived without its ledger`,
     });
-  } else if (!snapshot.ledger.entries.length) {
+  } else if (!snapshot.ledger.entries.length && !ledgerUnparsed.length) {
     findings.push({
       name: 'handoff-ledger-empty',
       severity: 'fail',
@@ -378,19 +380,24 @@ export function verifyHandoff(root, { corpus = null } = {}) {
 
   const structural = chain.problems.filter((p) => p.rule !== 'ledger-missing');
   for (const problem of structural) {
-    findings.push({
+    const finding = {
       name: 'handoff-chain-broken',
       severity: 'fail',
       // One line per capture, for the same reason the remedy is stated once: a
       // paragraph per capture buries the capture names.
       detail: `${problem.rule}${problem.kind ? `/${problem.kind}` : ''}: ${problem.detail}`,
       kind: problem.kind,
-    });
+    };
+    findings.push(finding);
+    // Missing sequence links cannot establish travel or loss while entries are unreadable.
+    // Restore parsing first; missing captures and altered bodies still have their own cause.
+    if (ledgerUnparsed.length && ['ledger-unparsed', 'seq', 'prev', 'entry-hash'].includes(problem.rule)) parseConsequences.add(finding);
   }
 
   // Present, empty, and captures on disk: lost here, not left behind.
   // Or entries missing for captures that are here - a torn last line of a longer ledger.
   const ledgerLost = snapshot.ledger.present
+    && !ledgerUnparsed.length
     && ((!snapshot.ledger.entries.length && snapshot.captures.entries.length > 0) || unledgered.length > 0);
   // A capture changed after its fetch is here, and so is its ledger entry: nothing failed to
   // travel, the bytes changed (alteredRemedy). A broken chain beside it still did.
@@ -399,6 +406,7 @@ export function verifyHandoff(root, { corpus = null } = {}) {
     .map((p) => ({ file: p.file, line: p.line }));
   const travelled = findings.filter((f) => (f.name !== 'handoff-chain-broken' || (f.kind !== 'line-endings' && f.kind !== 'modified'))
     && f.name !== 'handoff-capture-unledgered'
+    && !parseConsequences.has(f)
     && !(ledgerLost && f.name === 'handoff-ledger-empty'));
   const report = {
     root,
@@ -412,6 +420,11 @@ export function verifyHandoff(root, { corpus = null } = {}) {
     // changed after its fetch, or a ledger that lost entries here.
     didNotTravel: travelled.length > 0,
     ledgerLost,
+    ledgerUnparsed: ledgerUnparsed.map((p) => ({
+      line: p.line,
+      // Physical line numbers include blank lines, just as readLedger and tail repair do.
+      tail: p.line === snapshot.ledger.lines.findLastIndex((line) => line.trim()) + 1,
+    })),
     entries: snapshot.ledger.entries.length,
     rows: snapshot.evidence.length,
     // Not a finding: the corpus can arrive whole while the brief is unreviewed. The CLI
@@ -419,7 +432,7 @@ export function verifyHandoff(root, { corpus = null } = {}) {
     brief: briefReview(snapshot),
     // No ledger entry, no evidence row, no capture: nothing was ever collected, so there is
     // nothing that could have failed to travel. The CLI says so on a collector.
-    nothingCollected: !snapshot.ledger.entries.length && !snapshot.evidence.length && !snapshot.captures.entries.length,
+    nothingCollected: !ledgerUnparsed.length && !snapshot.ledger.entries.length && !snapshot.evidence.length && !snapshot.captures.entries.length,
   };
   const remedy = handoffRemedy(report);
   if (remedy) report.findings.push({ name: 'handoff-remedy', severity: 'info', detail: remedy });
@@ -490,6 +503,11 @@ export function handoffRemedy(report) {
   const parts = [];
   if (report.didNotTravel) parts.push(HANDOFF_REMEDY);
   if (report.ledgerLost) parts.push(ledgerLostRemedy());
+  for (const problem of report.ledgerUnparsed ?? []) {
+    parts.push(problem.tail
+      ? `${PATHS.ledger} line ${problem.line}: the last line is torn (an interrupted append): ${kitCommand('doctor.mjs', '--fix-arity')} drops it. Run handoff again after repair.`
+      : `${PATHS.ledger} line ${problem.line}: a broken line inside the chain cannot be repaired here: restore research/raw/.fetches.jsonl from git, then run handoff again.`);
+  }
   // Whether this is inside a repository at all decides which remedies are even runnable.
   const { inside: isRepo, refused } = repositoryState(report.root ?? '.');
   if (report.altered?.length) parts.push(alteredRemedy(report.altered.map((e) => e.file), { isRepo, refused }));

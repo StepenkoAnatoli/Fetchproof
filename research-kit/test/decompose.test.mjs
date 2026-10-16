@@ -1,7 +1,8 @@
 // Phase 0 gathers material and seeds the checklist. It contains NO judgment: it hands
 // over statuses BLANK, and `subtopic-coverage` is what judges them afterwards.
 
-import { test, describe, assert, makeProject, makePassingProject, fs } from './harness.mjs';
+import { spawnSync } from 'node:child_process';
+import { test, describe, assert, makeProject, makePassingProject, fs, path, KIT_ROOT } from './harness.mjs';
 import { PATHS, resolve, readText, listFiles } from '../lib/core.mjs';
 import { decompose, parseRecipe, loadRecipe, docsHosts, scrapeOrder, ownerOf, topicQueries, RECIPE_DIR, searchSummary, outlineOf, resolveTopic } from '../lib/decompose.mjs';
 import { UNIVERSAL_DIMENSIONS, seedRows, coverageOfUniversals } from '../lib/dimensions.mjs';
@@ -159,6 +160,47 @@ test('every shipped recipe keeps the universal set whole', () => {
 
 test('an unknown recipe is an error naming where recipes live', () => {
   assert.throws(() => loadRecipe('no-such-recipe'), /no recipe/);
+});
+
+const invalidRecipes = [
+  ['plain.md', '# Just a document\n\nNo dimensions.\n', /holds no dimensions/],
+  ['empty.md', '---\nname: empty\ndimensions:\n---\n', /holds no dimensions/],
+  ['blank.md', '---\r\nname: blank\r\ndescription: test\r\ndimensions:\r\n  -  | a reason only\r\n---\r\n', /line 5.*blank/],
+];
+
+test('an existing recipe with no dimensions or a blank label is refused by file and line', () => {
+  const dir = makeProject();
+  for (const [name, text, reason] of invalidRecipes) {
+    const file = resolve(dir, name);
+    fs.writeFileSync(file, text);
+    assert.throws(() => loadRecipe(file), (err) => {
+      assert.equal(err.code, 'INVALID_RECIPE');
+      assert.ok(err.message.includes(file), err.message);
+      assert.match(err.message, reason);
+      return true;
+    });
+  }
+});
+
+test('invalid recipe content is CLI usage failure and leaves the map and ledger untouched', () => {
+  for (const [name, text, reason] of invalidRecipes) {
+    const dir = makePassingProject();
+    // Exercise recipe validation rather than the earlier refusal to replace judged rows.
+    fs.writeFileSync(resolve(dir, PATHS.map), '# An unclassified draft\n');
+    const file = resolve(dir, name);
+    fs.writeFileSync(file, text);
+    const beforeMap = readText(resolve(dir, PATHS.map));
+    const beforeLedger = readText(resolve(dir, PATHS.ledger));
+    const result = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin/decompose.mjs'),
+      '--recipe', file, '--dry-run', '--transport', 'http-keyless', '--search-transport', 'http-keyless'],
+    { cwd: dir, encoding: 'utf8', timeout: 20000, windowsHide: true });
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.match(result.stderr, reason);
+    assert.ok(result.stderr.includes(file), result.stderr);
+    assert.doesNotMatch(result.stderr, /\n\s+at /, 'usage failures must not print a stack');
+    assert.equal(readText(resolve(dir, PATHS.map)), beforeMap);
+    assert.equal(readText(resolve(dir, PATHS.ledger)), beforeLedger);
+  }
 });
 
 test('parseRecipe reads the machine-readable frontmatter', () => {
