@@ -109,7 +109,7 @@ Documentation drift found by the delivery explorer and verified by the lead: `re
 
 Every external claim above rests on a ledgered capture in one of the two nested projects (preflight PASS, chains verify); the kit's own code is read directly. C:E-01, E-02, E-13, E-15, E-16, E-23, E-24 and K:E-06, E-07 are uncited search-return rows, kept as the record of what the searches returned. One claim rests on an older capture of the root corpus: Firecrawl format pricing (root E-02, 2026-09-13, type S). One claim is CONTESTED (Firecrawl scrape and robots.txt). One researcher used the session's Firecrawl MCP search once to locate pages, then fetched them through the kit; the located pages are ledgered, the locating search is not. Spend: 1,175 to 1,061 credits.
 
-## 9. Outcome (ranks 1 to 3 authorised 2026-10-03; ranks 4 and 7 fixed 2026-10-17)
+## 9. Outcome (ranks 1 to 3 authorised 2026-10-03; ranks 4, 7 and 14 fixed 2026-10-17)
 
 | Rank | Change | Commit |
 |---|---|---|
@@ -119,7 +119,9 @@ Every external claim above rests on a ledgered capture in one of the two nested 
 | 4 | A `[quote: ...]` marker is read by counting brackets, so a passage nested two deep (a Markdown link whose own text held brackets) is a marker and is checked, where the one-level regex read it as no marker at all; `anchorFound` requires every fragment to start within `MAX_QUOTE_GAP` (300 compared characters) of the previous one, trying a placement at each occurrence, so `[quote: free ... requests ... credits]` can no longer anchor words scattered over a page; and the short-quote floor is measured over EACH fragment by `quoteTooShort`, not over the joined text (ADR-0162). The empty-normalised-needle case was already closed 2026-10-08. | 3abf0b8 |
 | 7 | The `metadata` record carries `body-sha256`, the block's own hash, beside `capture-sha256` (unchanged - the whole file, which is what the ledger holds), so a consumer can check a block against the export; a ledger `scrape` entry with no `at` is left out and named instead of writing a record with an empty mandatory `WARC-Date`; a partial export exits 2 (`INCOMPLETE`, rank 15 of the 2026-10-04 gap audit); and the written file is re-read from disk before success. ADR-0161 (lifts the freeze for `body-sha256`). | 8ee1be4 |
 
-Ranks 5, 6 and 8 to 15 remain as recorded above, not implemented.
+| 14 | A page's words are read in any script: `shingles` folds text to words with `\p{L}\p{N}\p{M}` and NFC composition instead of the Latin-ASCII `[^a-z0-9]`, so a page in Russian, Arabic, Hebrew, Greek or accented Latin is fingerprinted where it used to shingle to nothing - `sketch` returned null for it, and a republished copy of it was reported as an independent witness, the one inversion this module exists to prevent. ASCII input is byte-identical, so `MIRROR_THRESHOLD` still rests on its own measurement (ADR-0163; rank 17 of the 2026-10-04 gap audit, whose other clauses remain open). | 2689678 |
+
+Ranks 5, 6, 8 to 13 and 15 remain as recorded above, not implemented.
 
 ### Review of the three commits (breaker and mutation auditor, 2026-10-04)
 
