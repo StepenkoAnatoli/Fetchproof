@@ -272,3 +272,28 @@ question), 3 second (cheapest, two classes, prepares 2). Not to touch, with the 
 evidence: the thirteen-check registry and the one verdict function (do not add a fourteenth check
 for rank 3; grade at collection); the ledger; ADR-0037's refusal of a thin-capture heuristic; the
 transport seam's pinned shape; the freeze.
+
+## 10. Outcome (rank 9 fixed 2026-10-17; the rest re-probed 2026-10-17)
+
+A rank's line numbers describe the code it was written against, so every rank below was
+re-probed against `dd5026f` - thirteen days and 253 commits after this audit's base
+(`a4ae8f6`). A rank is closed when the probe finds the defect gone, and a rank the audit
+left UNRESOLVED stays unresolved until its named observation is made.
+
+| Rank | State at `dd5026f` | Evidence |
+|---|---|---|
+| 1 | **closed upstream** - the drafted brief names the warnings and their count | `renderGateWarnings` (`lib/render.mjs`) writes the count and each warned rule with its row or unknown; `lib/brief.mjs:301` calls it, and the PASS line (`lib/brief.mjs:276-277`) says disclosed unknowns and gate warnings still apply |
+| 2 | **closed upstream** - approval is re-derived from the checked corpus, and its blank-Raw half resolves through `captureOf` | `lib/artifact-validator.mjs:418-421` derives `buildAuthorized: status === 'PASS' && claimed` (ADR-0160, `dfaf34c`); `lib/artifact-state.mjs:131-132` counts a row it cannot resolve as not reviewed rather than skipping it |
+| 3, 5, 7, 8, 11, 12, 13, 14, 16, 17 | **open** by probe - the token the named remedy would have introduced is absent from `lib/` and `bin/` | no `suspect-capture`, `numPages`/`totalPages`, `page_age`/`sourceDate`, `table-header-renamed` or `pathToFileURL`; `INTEGRITY_RULES` (`lib/gate.mjs:613`) still omits `raw-missing`, `raw-outside`, `raw-unreadable` |
+| 6 | **not open as written** - its named remedy is contradicted by a later decision | `lib/checks.mjs:50-58` judges freshness by the capture the row NAMES (`ownCapture`) and deliberately does not fall back to `captureOf`: judged by the URL's latest capture, a row with a blank Raw cell "borrowed a fresh fetch's date, lost its stale warning, and drew a date-mismatch telling the operator to write the later date into the row" (found 2026-10-03, review of G8). Doing what rank 6 asks would restore that defect |
+| 9 | **fixed** | `dd5026f`: a fetch's ledger `at` is the moment it happened (`nowIso(now)`), not midnight of its day; the `retrieved` day is unchanged |
+| 10 | **closed upstream** | `d997b85 fix(checks): compare evidence URLs by adopted page identity` keys supersession, the duplicate-url rule and the fresher-row hint on `urlKey` |
+
+Two of these need a decision before they can be built, and neither is a bug fix of a decided
+design: rank 3's remedy is the `suspect-capture` hygiene rule, a new kind and so an ADR under
+ADR-0117, grading on what the page or the vendor says and never on word counts (ADR-0037);
+and rank 5 stays UNRESOLVED because whether the Firecrawl scrape endpoint's JSON carries
+`numPages`/`totalPages` (not only the parse endpoint's) is unverified.
+
+This is a probe of the ranks, not a re-audit: it has re-read the named code, not re-run the
+audit's explorers.
