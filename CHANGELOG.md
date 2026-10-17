@@ -5,6 +5,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Near-duplicate detection reads a **word in any script**: the Latin-ASCII `[^a-z0-9]` class
+  stripped every non-Latin letter, so a page in Russian, Arabic, Hebrew, Greek or Devanagari
+  shingled to nothing, `sketch` returned null for it, and a republished copy of it was reported
+  as an independent witness - the one finding this module exists to make, inverted. Accented
+  Latin no longer collapses to its ASCII skeleton, and canonically equivalent text is one word
+  (rank 17, `docs/review-2026-10-04-gap-audit.md`; rank 14 of `docs/review-2026-10-03-gap-audit.md`).
+  ASCII input is unchanged, so `MIRROR_THRESHOLD` still rests on the corpus it was measured
+  against (ADR-0163).
 - The collector stamps a fetch's ledger `at` with the moment it happened instead of midnight
   of its day; a failed fetch already did, so the two sorted against each other wrongly, and the
   day the capture was retrieved is unchanged in `retrieved` (rank 9,
