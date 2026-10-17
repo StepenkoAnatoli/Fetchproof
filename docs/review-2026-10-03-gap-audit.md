@@ -109,15 +109,16 @@ Documentation drift found by the delivery explorer and verified by the lead: `re
 
 Every external claim above rests on a ledgered capture in one of the two nested projects (preflight PASS, chains verify); the kit's own code is read directly. C:E-01, E-02, E-13, E-15, E-16, E-23, E-24 and K:E-06, E-07 are uncited search-return rows, kept as the record of what the searches returned. One claim rests on an older capture of the root corpus: Firecrawl format pricing (root E-02, 2026-09-13, type S). One claim is CONTESTED (Firecrawl scrape and robots.txt). One researcher used the session's Firecrawl MCP search once to locate pages, then fetched them through the kit; the located pages are ledgered, the locating search is not. Spend: 1,175 to 1,061 credits.
 
-## 9. Outcome (ranks 1 to 3, authorised 2026-10-03)
+## 9. Outcome (ranks 1 to 3 authorised 2026-10-03; rank 7 fixed 2026-10-17)
 
 | Rank | Change | Commit |
 |---|---|---|
 | 1 | `parseTable` records a `table-split` problem for every row-shaped line between a table's end and the next heading; `hygiene` fails it; a second blank-separated table is not one. | 9ca9fc1 |
 | 2 | Every Firecrawl scrape passes `--max-age 0`; a cached answer's `cacheState`/`cachedAt`, if sent, go into the capture's front matter and the ledger entry (ADR-0139). Verified live: the vendor served a previous day's copy as today's scrape; `--max-age 0` fetched live at the same credit. | c6c5377 |
 | 3 | Every transport returns the text it converted as `source`; the collector keeps it LF-folded as `<capture>.source.html`, the ledger names and hashes it, `verifyLedger` checks it like the capture, `readCaptures` never indexes it (ADR-0140, lifts the freeze for that file and two ledger fields). Firecrawl's `rawHtml` verified live at no extra credit. | bed6bc0 |
+| 7 | The `metadata` record carries `body-sha256`, the block's own hash, beside `capture-sha256` (unchanged - the whole file, which is what the ledger holds), so a consumer can check a block against the export; a ledger `scrape` entry with no `at` is left out and named instead of writing a record with an empty mandatory `WARC-Date`; a partial export exits 2 (`INCOMPLETE`, rank 15 of the 2026-10-04 gap audit); and the written file is re-read from disk before success. ADR-0161 (lifts the freeze for `body-sha256`). | 8ee1be4 |
 
-Ranks 4 to 15 remain as recorded above, not implemented.
+Ranks 4 to 6 and 8 to 15 remain as recorded above, not implemented.
 
 ### Review of the three commits (breaker and mutation auditor, 2026-10-04)
 
