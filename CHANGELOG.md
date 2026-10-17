@@ -5,6 +5,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The MCP `fetch_corpus` link is built with the platform's own encoder
+  (`pathToFileURL(path.resolve(file))`) instead of pasting `file:///` onto the path. A `#` in a
+  package name became a fragment and a `?` a query, so the link addressed a file that does not
+  exist; a space was left unencoded; and a relative path was anchored at the filesystem root
+  instead of the working directory (rank 13, `docs/review-2026-10-04-gap-audit.md`).
 - Near-duplicate detection reads a **word in any script**: the Latin-ASCII `[^a-z0-9]` class
   stripped every non-Latin letter, so a page in Russian, Arabic, Hebrew, Greek or Devanagari
   shingled to nothing, `sketch` returned null for it, and a republished copy of it was reported
