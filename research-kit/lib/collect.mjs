@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PATHS, HEADERS, resolve, today, sha256, titleFromUrl, hostOf, urlDigest, writeText, readText, exists,
+  PATHS, HEADERS, resolve, today, nowIso, sha256, titleFromUrl, hostOf, urlDigest, writeText, readText, exists,
   sleepSync, urlKey, ageInDays, realInside, foldLineEndings,
 } from './core.mjs';
 import { rateLimitWaitMs } from './firecrawl.mjs';
@@ -331,7 +331,10 @@ export function collectOne(root, url, {
       completeness: entry.completeness,
       omitted: entry.omitted,
       cmd: entry.command,
-      at: `${date}T00:00:00.000Z`,
+      // The moment the fetch happened, not midnight of its day (rank 9, 2026-10-04 gap audit):
+      // a failed fetch already recorded the real time, so the two sorted against each other
+      // wrongly. The day stays in `retrieved` on the capture and in the evidence row.
+      at: nowIso(now),
       cacheState: result.cacheState,
       cachedAt: result.cachedAt,
     });

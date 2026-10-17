@@ -5,6 +5,10 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The collector stamps a fetch's ledger `at` with the moment it happened instead of midnight
+  of its day; a failed fetch already did, so the two sorted against each other wrongly, and the
+  day the capture was retrieved is unchanged in `retrieved` (rank 9,
+  `docs/review-2026-10-04-gap-audit.md`).
 - The WARC export's metadata record names the resource block's own hash (`body-sha256`)
   beside the capture file's, a ledger `scrape` entry with no date is left out instead of
   writing a record with an empty mandatory `WARC-Date`, a partial export exits 2

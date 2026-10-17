@@ -46,10 +46,11 @@ export function buildTimeline(root, { corpus = null } = {}) {
 }
 
 /**
- * One readable form per moment. The collector stamps fetches at day precision
- * (`T00:00:00.000Z`), evidence rows carry a date, and overrides and diagnostics carry a real
- * time - the column mixed all three (found 2026-09-27). A day is written as a date, a real
- * time as `YYYY-MM-DD HH:MM UTC`. Sorting still uses the raw value.
+ * One readable form per moment. The collector stamps a fetch with the real time it happened
+ * (`nowIso(now)`; it wrote midnight of the day until rank 9 of the 2026-10-04 gap audit fixed
+ * that), evidence rows carry a date, and overrides and diagnostics carry a real time - the
+ * column once mixed day-precision and real-time values (found 2026-09-27). A bare day is
+ * written as a date, a real time as `YYYY-MM-DD HH:MM UTC`. Sorting still uses the raw value.
  */
 function when(at) {
   const text = String(at ?? '');
