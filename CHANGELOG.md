@@ -10,6 +10,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   writing a record with an empty mandatory `WARC-Date`, a partial export exits 2
   (`INCOMPLETE`), and the file it wrote is re-read (rank 7,
   `docs/review-2026-10-03-gap-audit.md`; rank 15, `docs/review-2026-10-04-gap-audit.md`).
+- The `citations` check reads a `[quote: ...]` marker however deeply its brackets nest (a
+  Markdown link whose own text held brackets was not a marker at all, so the quote went
+  unchecked), holds every fragment within one passage instead of anchoring words scattered
+  over a page, and measures the short-quote floor over each fragment rather than the joined
+  text (rank 4, `docs/review-2026-10-03-gap-audit.md`).
 - `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
   values by name before creating an output directory or reading a token (#287).
 - Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers

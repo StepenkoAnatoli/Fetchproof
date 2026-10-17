@@ -13,7 +13,7 @@ import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { readPrior, PRIOR_PATH } from './prior.mjs';
-import { quoteAnchors, anchorFound, quoteWords, quoteChars, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
+import { quoteAnchors, anchorFound, quoteTooShort, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
 
 const VALID_STATUSES = ['CLOSED', 'KNOWN-UNKNOWN'];
@@ -147,10 +147,11 @@ function citations(corpus) {
       const body = parseCapture(readText(resolve(corpus.root, capture.file)) ?? '').body;
       for (const anchor of anchors) {
         quoted += 1;
-        // Short in words AND in characters: a long token of one "word" anchors one exact line.
-        if (quoteWords(anchor) < MIN_QUOTE_WORDS && quoteChars(anchor) < MIN_QUOTE_CHARS) {
+        // Short in words AND in characters, per fragment: a long token of one "word" anchors one
+        // exact line, and an ellipsis does not turn three one-word fragments into a sentence.
+        if (quoteTooShort(anchor)) {
           out.push(finding('warn', 'citations', 'quote-too-short',
-            `${row.id} quotes "${anchor.quote}" - under ${MIN_QUOTE_WORDS} words and ${MIN_QUOTE_CHARS} characters anchors almost nothing; quote the sentence the claim rests on`,
+            `${row.id} quotes "${anchor.quote}" - no fragment reaches ${MIN_QUOTE_WORDS} words or ${MIN_QUOTE_CHARS} characters, so it anchors almost nothing; quote the sentence the claim rests on`,
             { row: row.id, line: row.line }));
           continue;
         }

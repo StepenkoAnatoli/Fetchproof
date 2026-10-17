@@ -177,5 +177,6 @@ directory and are treated as ADR-equivalent.
 
 | [0160](0160-package-approval-is-rederived-with-a-portable-baseline.md) | Claimed package approval is re-derived from its checked corpus with an unpromoted portable gate; false claims remain false, and major-1 early stamps require their actual historical input hash and a missing gate field. |
 | [0161](0161-a-warc-block-is-verifiable-beside-the-capture-that-names-it.md) | A WARC export names the resource block's own hash (`body-sha256`) beside the whole capture file's, leaves out a ledger entry it cannot date (WARC-Date is mandatory) instead of writing an empty one, exits 2 (`INCOMPLETE`) on a partial export, and re-reads the written file (rank 7, 2026-10-03 gap audit; rank 15, 2026-10-04 gap audit) |
+| [0162](0162-a-quote-is-one-passage-read-at-any-bracket-depth.md) | A `[quote: ...]` marker is read at any bracket depth (a two-level passage was not a marker at all, so it went unchecked), its fragments must lie in one passage (`MAX_QUOTE_GAP`, tried at each occurrence), and the short-quote floor is measured per fragment rather than over the joined text (rank 4, 2026-10-03 gap audit) |
 
 Domain vocabulary lives in [`CONTEXT.md`](../../CONTEXT.md).
