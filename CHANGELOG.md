@@ -5,6 +5,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The WARC export's metadata record names the resource block's own hash (`body-sha256`)
+  beside the capture file's, a ledger `scrape` entry with no date is left out instead of
+  writing a record with an empty mandatory `WARC-Date`, a partial export exits 2
+  (`INCOMPLETE`), and the file it wrote is re-read (rank 7,
+  `docs/review-2026-10-03-gap-audit.md`; rank 15, `docs/review-2026-10-04-gap-audit.md`).
 - `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
   values by name before creating an output directory or reading a token (#287).
 - Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers

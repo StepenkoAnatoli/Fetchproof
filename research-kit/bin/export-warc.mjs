@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // bin/export-warc.mjs - the corpus as one .warc.gz, a copy for archive tools (ADR-0090).
 
+import fs from 'node:fs';
 import { parseFlags, refuseUnknownFlags, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
 import { exportWarc, readWarc } from '../lib/warc.mjs';
 import { isGated } from '../lib/gate.mjs';
@@ -18,8 +19,10 @@ if (flags.help) {
 
 One warcinfo record, then per fetched capture a resource record (the page text the kit
 kept - never an HTTP exchange it did not store) and a metadata record (transport,
-completeness, the ledger's hash and sequence number). A capture changed since its fetch is
-left out and named. The corpus and its ledger remain the evidence; this is a copy.
+completeness, the capture file's hash, the block's own hash and the ledger's sequence
+number). A capture changed since its fetch, or a ledger entry with no date, is left out and
+named, and the command exits 2 (INCOMPLETE); a clean export exits 0. The corpus and its
+ledger remain the evidence; this is a copy.
 `);
   process.exit(0);
 }
@@ -46,6 +49,21 @@ try {
   process.stderr.write(`export-warc: ${why}\n`);
   process.exit(2);
 }
+// The bytes on disk are re-read, not assumed from the ones in hand (rank 15, 2026-10-04 gap
+// audit): a write that landed corrupted is refused, never reported as an archive. writeBytes
+// writes a scratch file and renames it, so the window is small; the check is cheap and the
+// file is the product.
+try {
+  readWarc(fs.readFileSync(out));
+} catch (err) {
+  process.stderr.write(`export-warc: the written file could not be read back as WARC (${err.message})\n`);
+  process.exit(2);
+}
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 process.stdout.write(`export-warc: wrote ${plural(records.length, 'record')} (${plural(captures, 'capture')}) to ${out}\n`);
 for (const s of skipped) process.stdout.write(`  left out ${s.file} (ledger seq ${s.seq}): ${s.reason}\n`);
+// Rank 7 (2026-10-03 gap audit; rank 15, 2026-10-04 gap audit): a capture left out used to
+// exit 0, so a caller could not tell a partial export from a whole one. A partial export is
+// INCOMPLETE, and README.md maps INCOMPLETE to 2 (FAIL/REOPEN is 1). The file it could write
+// is still written.
+process.exit(skipped.length ? 2 : 0);

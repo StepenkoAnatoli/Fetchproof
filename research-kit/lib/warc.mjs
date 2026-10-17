@@ -95,6 +95,13 @@ export function exportWarc(root) {
       }[problem] });
       continue;
     }
+    // WARC-Date is mandatory (WARC 1.1). An entry the export cannot date is left out and
+    // named, never written as a record with an empty date (rank 7, 2026-10-03 gap audit).
+    const dated = String(entry.at ?? '').trim();
+    if (!dated) {
+      skipped.push({ file: entry.raw, seq: entry.seq, reason: 'the ledger entry carries no date, and WARC-Date is mandatory' });
+      continue;
+    }
     let raw = null;
     try { raw = fs.readFileSync(abs); } catch { /* named below */ }
     if (raw === null) { skipped.push({ file: entry.raw, seq: entry.seq, reason: 'the capture could not be read' }); continue; }
@@ -106,22 +113,26 @@ export function exportWarc(root) {
     // between the two - a refresh, a concurrent collector - was exported with the new text
     // under the ledger's hash of the old (found 2026-09-30, break-test).
     const { front, body } = parseCapture(raw.toString('utf8'));
+    // The block the resource record carries, and its own hash. `capture-sha256` is the whole
+    // file the ledger hashed; `body-sha256` lets a consumer verify the block itself
+    // (rank 7, 2026-10-03 gap audit).
+    const block = Buffer.from(body, 'utf8');
     const seed = entry.entrySha256 || `${entry.seq}:${entry.url}:${entry.bodySha256}`;
     const resourceId = uuidFrom(`resource:${seed}`);
     const metaId = uuidFrom(`metadata:${seed}`);
     plain.push({
       id: resourceId,
       bytes: warcRecord({
-        type: 'resource', id: resourceId, date: entry.at,
+        type: 'resource', id: resourceId, date: dated,
         fields: [['WARC-Target-URI', entry.url], ['WARC-Warcinfo-ID', infoId]],
         contentType: 'text/markdown; charset=utf-8',
-        block: Buffer.from(body, 'utf8'),
+        block,
       }),
     });
     plain.push({
       id: metaId,
       bytes: warcRecord({
-        type: 'metadata', id: metaId, date: entry.at,
+        type: 'metadata', id: metaId, date: dated,
         fields: [['WARC-Target-URI', entry.url], ['WARC-Concurrent-To', resourceId], ['WARC-Warcinfo-ID', infoId]],
         contentType: 'application/warc-fields',
         block: warcFields([
@@ -131,6 +142,7 @@ export function exportWarc(root) {
           ['evidence-type', entry.type || ''],
           ['capture-file', entry.raw],
           ['capture-sha256', entry.bodySha256 || sha256(raw)],
+          ['body-sha256', sha256(block)],
           ['ledger-seq', entry.seq],
           ['ledger-entry-sha256', entry.entrySha256 || ''],
         ]),
