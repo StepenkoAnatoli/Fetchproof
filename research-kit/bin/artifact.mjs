@@ -20,6 +20,7 @@ import { parseFlags, canonicalJson, checkFlagValues, exitAfterFlush } from '../l
 import { requireRuntime } from '../lib/runtime.mjs';
 import { validateArtifact } from '../lib/artifact-validator.mjs';
 import { writeArtifact, packageName, checkClientRef, GITHUB_API_VERSION } from '../lib/artifact.mjs';
+import { evidenceAt } from '../lib/corpus.mjs';
 
 const HELP = `artifact - the portable Research-Kit package.
 
@@ -187,6 +188,10 @@ if (command === 'create') {
   const runId = Number(flags['run-id']);
   const root = path.resolve(String(flags.root ?? '.'));
   const output = String(flags.output ?? packageName({ clientRef: refCheck.value, workflowRunId: runId }));
+  // Over the ledger it is about to package, a cited capture or anything in research/raw/ is
+  // refused before the package is built (#330): the collect workflow spells --output out.
+  const refusal = evidenceAt(root, path.resolve(output));
+  if (refusal) { process.stderr.write(`artifact create: refused - ${refusal}\n`); await exitAfterFlush(EXIT.BLOCKED); }
 
   let written;
   try {

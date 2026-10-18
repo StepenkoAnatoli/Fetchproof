@@ -110,9 +110,18 @@ export function parseTable(text, header) {
   }
   if (start < 0) return out;
 
+  // GFM makes a row's outer pipes optional, so `E-03 | ... |` straight below a row renders as
+  // the next row on GitHub. It ended the table here, and every later row was named as standing
+  // after a blank line that was not there (#331). A line in the table's run that starts no other
+  // block, holds a `|`, and splits to the header's cells is a row; the header and separator are
+  // still found by their pipes, since the scaffold writes them that way.
+  const startsBlock = (text) => /^(#{1,6}\s|>|`{3}|~{3}|<|[-*+]\s|\d{1,9}[.)]\s)/.test(text);
+  const pipeBearing = (text) => text !== '' && !startsBlock(text) && !isSeparator(text) && /(^|[^\\])\|/.test(text);
+  const rowShaped = (text) => text.startsWith('|') || (pipeBearing(text) && splitRow(text).length === out.header.length);
+  let end = lines.length;
   for (let i = start + 2; i < lines.length; i += 1) {
     const line = lines[i];
-    if (!line.trim().startsWith('|')) break;
+    if (!rowShaped(line.trim())) { end = i; break; }
     if (isSeparator(line)) continue;
     const raw = splitRow(line);
     const freeAt = out.header.findIndex((name) => FREE_TEXT_COLUMNS.includes(name.trim().toLowerCase()));
@@ -148,6 +157,29 @@ export function parseTable(text, header) {
     const heading = /^(#{1,6})\s/.exec(lines[k]);
     if (heading) { level = heading[1].length; break; }
   }
+  // A pipe-bearing line that is not a row (it splits to the wrong number of cells) is what
+  // GitHub still shows in the table and the reader stopped at: it is named once, by its own
+  // line, and the rows run on below it are its consequence, not each a finding of their own.
+  const culprit = end < lines.length && pipeBearing(lines[end].trim());
+  if (culprit) {
+    const text = lines[end].trim();
+    out.problems.push({
+      kind: 'table-split',
+      line: end + 1,
+      detail: `\`${text.slice(0, 40)}\` does not start with |, and splits to ${splitRow(text).length} cells, not the header's `
+        + `${out.header.length}, so the table ended there and no check reads the rows below it - `
+        + 'add the leading pipe if it is a row, or a blank line above it if it is prose',
+      text,
+    });
+  }
+  // A stray row is named with the line that ENDED the table: only a blank one is a blank line.
+  // The rows run on straight below a culprit (nothing but rows between) are not named again.
+  const endedBy = lines[end]?.trim() ?? '';
+  const runsOn = (k) => {
+    let j = k - 1;
+    while (j > end && rowShaped(lines[j].trim())) j -= 1;
+    return j === end;
+  };
   let fence = null;
   let comment = false;
   let i = out.rows.length ? out.rows[out.rows.length - 1].line : start + 2;
@@ -161,17 +193,25 @@ export function parseTable(text, header) {
     if (text.startsWith('<!--')) { if (!text.includes('-->')) comment = true; continue; }
     const heading = /^(#{1,6})\s/.exec(line);
     if (heading && heading[1].length <= level) break;
-    if (!text.startsWith('|') || isSeparator(line)) continue;
+    // A row without its leading pipe is row-shaped here too: below a blank line it was dropped
+    // in silence, and a blocking unknown with it (review of #331).
+    if (!rowShaped(text) || isSeparator(line)) continue;
     const next = lines[i + 1] ?? '';
     if (isSeparator(next)) break;                                   // another table's header
-    const separatorLike = /^\|?[\s:|=_~.-]+\|?$/.test(next.trim()) && next.trim().length > 1;
+    const separatorLike = /^\|?[\s:|=_~.-]+\|?$/.test(next.trim()) && next.trim().length > 1
+      && (text.startsWith('|') || next.includes('|'));              // `---` under prose is a heading rule
+    if (!separatorLike && culprit && runsOn(i)) continue;            // named once, at the culprit
+    const id = splitRow(line)[0] || text.slice(0, 40);
     out.problems.push({
       kind: 'table-split',
       line: i + 1,
       detail: separatorLike
-        ? `row \`${splitRow(line)[0] || text.slice(0, 40)}\` starts a table whose separator row \`${next.trim()}\` is malformed (a separator is written |---|---|), so the table is not recognised - fix the separator`
-        : `row \`${splitRow(line)[0] || text.slice(0, 40)}\` stands after a blank line ended the table above it, so no check reads it - `
-          + 'remove the blank line (or the row), because the table ends where the blank line is',
+        ? `row \`${id}\` starts a table whose separator row \`${next.trim()}\` is malformed (a separator is written |---|---|), so the table is not recognised - fix the separator`
+        : endedBy === ''
+          ? `row \`${id}\` stands after a blank line ended the table above it, so no check reads it - `
+            + 'remove the blank line (or the row), because the table ends where the blank line is'
+          : `row \`${id}\` stands after line ${end + 1} (\`${endedBy.slice(0, 40)}\`), which is not a row and ended the table above it, `
+            + 'so no check reads it - move that line out of the table (or the row)',
       text,
     });
     if (separatorLike) {                                            // one finding for that table
@@ -692,6 +732,87 @@ export async function loadCorpus(root) {
   const { verifyLedger } = await import('./provenance.mjs');
   corpus.chain = verifyLedger(root, { corpus });
   return corpus;
+}
+
+/**
+ * What an output path would write over of the corpus, as a refusal in words, or null (#330).
+ *
+ * `export-warc --out` and `artifact create --output` wrote wherever they were pointed - over
+ * the ledger, over a cited capture, into research/raw/ - and said "wrote", exit 0; the first
+ * anyone heard of it was the commit gate refusing the altered evidence. research/raw/ is the
+ * collector's alone (AGENTS.md; the edit gate denies it whatever the verdict), a capture an
+ * evidence row cites is evidence wherever it sits, and the corpus's own files (PATHS) are not
+ * an output either: a typo had replaced the evidence table with a WARC.
+ *
+ * Judged for EVERY project the path touches, not only `root`: the path resolves against the
+ * working folder, so `create --root nested --output research/raw/.fetches.jsonl` landed on the
+ * outer project's ledger (review of #330). The candidates are `root`, the working folder when
+ * it holds research/, and the folder above every `research` folder on the target's real path.
+ * By real location, as `writeBytes` follows a link, and case-folded where the filesystem
+ * usually folds case.
+ */
+const CORPUS_FILES = Object.freeze({
+  discovery: 'the Discovery Contract', map: 'the subtopic map', evidence: 'the evidence table',
+  sources: 'the source list', timeline: 'the timeline', brief: 'the brief', plan: 'the collection plan',
+  witnesses: 'the witness log', kit: 'the kit config', overrides: 'the override log',
+  gateOff: 'the gate override', audits: 'the audit folder', agents: 'the standing protocol',
+  architecture: 'the architecture map', gitattributes: 'the line-ending pins',
+});
+
+export function evidenceAt(root, target, { cwd = process.cwd() } = {}) {
+  const fold = process.platform === 'win32' || process.platform === 'darwin' ? (p) => p.toLowerCase() : (p) => p;
+  const real = (p) => {
+    let head = path.resolve(p);
+    try { if (fs.lstatSync(head).isSymbolicLink()) head = path.resolve(path.dirname(head), fs.readlinkSync(head)); } catch { /* a new file */ }
+    const tail = [];
+    for (;;) {
+      try { return path.join(fs.realpathSync.native(head), ...tail); } catch { /* not there yet: its folder */ }
+      const up = path.dirname(head);
+      if (up === head) return path.resolve(p);
+      tail.unshift(path.basename(head));
+      head = up;
+    }
+  };
+  const same = (a, b) => fold(a) === fold(b);
+  const within = (dir, abs) => { const rel = path.relative(fold(dir), fold(abs)); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+  const at = real(target);
+  const here = real(cwd);
+  const shown = within(here, at) && !same(at, here) ? relative(here, at) : path.resolve(target);
+
+  const projects = [real(root)];
+  if (isDirectory(path.join(here, 'research'))) projects.push(here);
+  for (let dir = path.dirname(at); path.dirname(dir) !== dir; dir = path.dirname(dir)) {
+    if (fold(path.basename(dir)) === 'research') projects.push(path.dirname(dir));
+  }
+  const unique = projects.filter((dir, i) => projects.findIndex((other) => same(other, dir)) === i);
+  const citing = (project) => parseTable(readText(path.join(project, ...PATHS.evidence.split('/')), ''), HEADERS.evidence).rows
+    .filter((r) => { const raw = normalizeRawCell(r.Raw ?? ''); return raw && same(real(resolve(project, raw)), at); })
+    .map((r) => r.ID);
+  const cited = (ids) => `the capture ${ids.join(', ')} ${ids.length === 1 ? 'cites' : 'cite'}`;
+
+  for (const project of unique) {
+    const rawDir = real(resolve(project, PATHS.raw));
+    if (!within(rawDir, at)) continue;
+    const ids = citing(project);
+    const what = same(at, real(resolve(project, PATHS.ledger))) ? 'the fetch ledger'
+      : ids.length ? cited(ids)
+        : same(at, rawDir) ? 'the capture folder' : `inside ${PATHS.raw}/`;
+    return `${shown} is ${what}; ${PATHS.raw}/ holds fetched evidence and is written only by research.mjs. `
+      + `Name a path outside ${PATHS.raw}/.`;
+  }
+  for (const project of unique) {
+    const ids = citing(project);
+    if (ids.length) return `${shown} is ${cited(ids)}; a cited capture is evidence and is written only by research.mjs. Name a path no evidence row cites.`;
+  }
+  for (const project of unique) {
+    for (const [key, name] of Object.entries(CORPUS_FILES)) {
+      const own = real(resolve(project, PATHS[key]));
+      if (!within(own, at)) continue;
+      return `${shown} is ${same(at, own) ? '' : 'inside '}${name} (${PATHS[key]}), one of the corpus's own files, `
+        + 'which an export or a package never writes over. Name a path that is not one of the project\'s files.';
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- joins (ADR-0015)

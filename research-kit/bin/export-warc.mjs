@@ -3,6 +3,7 @@
 
 import { parseFlags, refuseUnknownFlags, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
 import { exportWarc, readWarc } from '../lib/warc.mjs';
+import { evidenceAt } from '../lib/corpus.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 
@@ -36,6 +37,9 @@ if (flags.out === true || flags.out === '') {
 }
 
 const out = operatorPath(root, typeof flags.out === 'string' ? flags.out : 'research-corpus.warc.gz');
+// Over the ledger, a cited capture or anything in research/raw/ is refused before a byte is read (#330).
+const refusal = evidenceAt(root, out);
+if (refusal) { process.stderr.write(`export-warc: refused - ${refusal}\n`); process.exit(2); }
 const { bytes, records, captures, skipped } = exportWarc(root);
 readWarc(bytes); // a self-check: an export this reader cannot split is never written
 try {

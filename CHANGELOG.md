@@ -332,6 +332,17 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `export-warc --out` and `artifact create --output` refuse, by name and before anything is
+  read or packaged, a path that lands on the ledger, on a capture an evidence row cites,
+  anywhere in a `research/raw/`, or on one of the corpus's own files (`EVIDENCE.md`,
+  `DISCOVERY.md`, `BRIEF.md` and the rest) - in `--root`'s project, the working folder's, or any
+  project enclosing the path: they wrote there, said "wrote" and exited 0, and the commit gate
+  refusing the altered evidence was the first anyone heard of it (#330).
+- A table row written without its leading `|` is read as GitHub renders it, a row of the table,
+  when it splits to the header's cells; a pipe-bearing line that does not is named once, at its
+  own line, as the place the table ended, and one below a blank line is a `table-split` like a
+  piped one. Every later row was reported as standing after a blank line that was not there,
+  and every unknown citing one as a dangling citation (#331).
 
 ## 0.9.5 — 2026-10-04
 
