@@ -332,6 +332,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- The MCP server refuses an input line over its 4 MiB cap while a tool call is in flight,
+  as it already did between calls. The cap had been checked only after the call ended, so
+  150 MB sent without a newline during a hung `fetch_corpus` stayed in memory (526 MB RSS)
+  until then. The buffer now holds at most the cap plus one chunk (#346).
+- The MCP server answers `ping`, `tools/list` and other non-call requests while a tool call
+  is in flight. They had waited behind the call, so the keep-alive went unanswered for as
+  long as `fetch_corpus` took. Tool calls still run one at a time and in order, and a closed
+  stdin still waits for every outstanding answer (#347).
 
 ## 0.9.5 — 2026-10-04
 

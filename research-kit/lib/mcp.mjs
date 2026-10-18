@@ -465,28 +465,37 @@ export function createStdioLoop({ input, output, onMessage, onError = () => {}, 
   const tooLong = () => output.write(`${JSON.stringify(err(null, ERRORS.INVALID_REQUEST,
     `message longer than ${maxLine} characters - refused`))}\n`);
 
-  // SERIALISED, and the test that forced this found a real defect rather than a timing
-  // quirk. `data` fires per chunk, so an async handler that awaits mid-chunk can be
-  // re-entered by the next chunk while `buffer` is half-consumed: two callbacks then
-  // read and rewrite the same string and a message is dropped or doubled. Responses also
-  // arrived out of order, which JSON-RPC tolerates but nothing here needed.
+  // SYNCHRONOUS FRAMING, CONCURRENT ANSWERS. `data` fires per chunk, and an async drain
+  // that awaited mid-chunk was re-entered by the next chunk while `buffer` was
+  // half-consumed: two callbacks read and rewrote the same string and a message was
+  // dropped or doubled. One promise chain fixed that by running each chunk to the end of
+  // its HANDLER before the next began - and so held everything behind a tool call. A
+  // `ping` waited for the `fetch_corpus` in front of it (#347), and the cap above was
+  // never checked while a call was in flight, so 150 MB without a newline sat in memory
+  // until it ended (#346, 2026-10-17).
   //
-  // One promise chain makes each chunk finish before the next begins. It costs the
-  // concurrency a stdio server has no use for: the client is one process, and the work
-  // behind a tool call is a network round trip that would not go faster interleaved.
-  let queue = Promise.resolve();
+  // So the framing has no await in it at all: each chunk is cut into lines, checked
+  // against the cap and parsed inside its own `data` event, and nothing can interleave.
+  // The answers go on two chains. `tools/call` has its own, so calls still run one at a
+  // time and in order - two `fetch_corpus` for one run write the same file, and a stdio
+  // client gains nothing from network round trips interleaved. Everything else - `ping`,
+  // `tools/list`, `initialize`, a parse error - goes on the other, which never waits for a
+  // call: those answers keep their own order and may overtake a call, which JSON-RPC
+  // permits because every response carries its id.
+  let calls = Promise.resolve();
+  let others = Promise.resolve();
+  const pending = new Set();
+  // A rejection here would be an unhandled one and would take the process down; the
+  // server must outlive a single bad message.
+  const enqueue = (chain, job) => {
+    const next = chain.then(job).catch((error) => onError(error));
+    pending.add(next);
+    const done = () => { pending.delete(next); };
+    next.then(done, done);
+    return next;
+  };
 
-  /** Parse one line and answer it. Shared by the newline-driven drain and the end-of-stream flush. */
-  async function serve(raw) {
-    const line = raw.trim();
-    if (!line) return;
-    let parsed;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      output.write(`${JSON.stringify(err(null, ERRORS.PARSE, 'invalid JSON'))}\n`);
-      return;
-    }
+  async function answer(parsed) {
     try {
       const response = await onMessage(parsed);
       if (response) output.write(`${JSON.stringify(response)}\n`);
@@ -498,7 +507,22 @@ export function createStdioLoop({ input, output, onMessage, onError = () => {}, 
     }
   }
 
-  async function drain() {
+  /** Parse one line and start its answer. Shared by the newline-driven drain and the end-of-stream flush. */
+  function serve(raw) {
+    const line = raw.trim();
+    if (!line) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      others = enqueue(others, () => output.write(`${JSON.stringify(err(null, ERRORS.PARSE, 'invalid JSON'))}\n`));
+      return;
+    }
+    if (parsed?.method === 'tools/call') calls = enqueue(calls, () => answer(parsed));
+    else others = enqueue(others, () => answer(parsed));
+  }
+
+  function drain() {
     let index = buffer.indexOf('\n');
     while (index !== -1) {
       const wasDiscarding = discarding;
@@ -508,9 +532,10 @@ export function createStdioLoop({ input, output, onMessage, onError = () => {}, 
       index = buffer.indexOf('\n');
       if (wasDiscarding) continue;
       if (raw.length > maxLine) { tooLong(); continue; }
-      await serve(raw);
+      serve(raw);
     }
-    // What is left has no newline yet. Past the cap, refuse it now and drop it.
+    // What is left has no newline yet. Past the cap, refuse it now and drop it - in this
+    // chunk's event, so the buffer never holds more than the cap plus one chunk.
     if (buffer.length > maxLine || (discarding && buffer)) {
       if (!discarding) tooLong();
       discarding = true;
@@ -521,9 +546,9 @@ export function createStdioLoop({ input, output, onMessage, onError = () => {}, 
   input.setEncoding('utf8');
   input.on('data', (chunk) => {
     buffer += chunk;
-    // A rejection here would be an unhandled one and would take the process down; the
+    // A throw here would be an uncaught exception and would take the process down; the
     // server must outlive a single bad message.
-    queue = queue.then(drain).catch((error) => onError(error));
+    try { drain(); } catch (error) { onError(error); }
   });
 
   // THE TAIL. `drain` serves only what a newline terminates, so a client that wrote one
@@ -535,22 +560,25 @@ export function createStdioLoop({ input, output, onMessage, onError = () => {}, 
   // (found 2026-09-29, break-test).
   //
   // Registered before `exitWhenSettled`'s own 'end' listener, which is what makes the
-  // answer land - this enqueues the flush, and only afterwards does that one read the
-  // current tail of `queue` and wait for it.
+  // answer land - this starts the flush, and only afterwards does that one wait for it.
   input.on('end', () => {
     const tail = buffer;
     buffer = '';
     if (discarding || !tail.trim()) return;
     if (tail.length > maxLine) { tooLong(); return; }
-    queue = queue.then(() => serve(tail)).catch((error) => onError(error));
+    try { serve(tail); } catch (error) { onError(error); }
   });
 
   /**
-   * Resolves when every chunk read so far has been handled - which is the moment it is
-   * safe to stop the process. Read through the closure, so it is always the CURRENT tail
-   * of the chain and not the one that existed when this object was returned.
+   * Resolves when every message read so far has been answered - which is the moment it is
+   * safe to stop the process. It waits on every answer still pending, re-reading the set
+   * until it is empty, so an answer started while it waited is waited for too.
    */
-  return { settled: () => Promise.resolve(queue).catch(() => {}) };
+  return {
+    settled: async () => {
+      while (pending.size) await Promise.allSettled([...pending]);
+    },
+  };
 }
 
 /**
