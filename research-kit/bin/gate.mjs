@@ -12,7 +12,7 @@ import { posture } from '../lib/machine.mjs';
 import { recordDiagnostic } from '../lib/timeline.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['gate', 'help', 'json', 'posture', 'quiet', 'staged', 'staged-stdin']);
+refuseUnknownFlags(flags, ['gate', 'help', 'json', 'posture', 'quiet', 'staged', 'staged-stdin'], { repeatable: ['staged'] });
 checkFlagValues(flags, { gate: { choices: ['commit', 'edit'] }, staged: 'value' });
 
 if (flags.help) {

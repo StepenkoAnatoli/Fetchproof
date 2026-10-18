@@ -11,7 +11,9 @@ import { readCorpus } from '../lib/corpus.mjs';
 import { evidenceContext, renderContext } from '../lib/evidence-context.mjs';
 
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['help', 'unknown', 'all', 'json', 'limit']);
+// The unknown may be given as a bare argument instead of --unknown; beside either flag, one is stray.
+refuseUnknownFlags(flags, ['help', 'unknown', 'all', 'json', 'limit'], flags.unknown !== undefined || flags.all
+  ? { takes: 0, beside: flags.unknown !== undefined ? '--unknown' : '--all' } : { takes: 1 });
 checkFlagValues(flags, { unknown: 'value', limit: { int: true, min: 1 } });
 const root = process.cwd();
 

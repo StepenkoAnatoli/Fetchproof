@@ -9,6 +9,7 @@ import { collectionPolicy, collectionRefusal } from '../lib/machine.mjs';
 import { selectTransport, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
 import { decompose, searchSummary, resolveTopic, RECIPE_DIR } from '../lib/decompose.mjs';
 import { UNIVERSAL_DIMENSIONS } from '../lib/dimensions.mjs';
+import { internalRedirectsSetting } from '../lib/runtime.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-scrapes', 'recipe', 'recipes', 'transport', 'search-transport']);
@@ -17,10 +18,15 @@ refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-sc
 // bare flag is refused too (#269, 2026-10-11): parseFlags reads it as `true`, which Number()
 // made 1, so `--max-scrapes` with no value quietly paid for one page.
 checkFlagValues(flags, {
-  topic: 'value', recipe: 'value', transport: 'value', 'search-transport': 'value',
+  topic: { line: true }, recipe: 'value', transport: 'value', 'search-transport': 'value',
   limit: { int: true, min: 1 }, 'max-scrapes': { int: true, min: 0 },
 });
 const root = process.cwd();
+// A posture value the transports could not read is said once, at the start (#290): read as
+// the refusal, it is otherwise named only by doctor, and a refusal that says "set it to 1"
+// reads as wrong to an operator who believes they did.
+const internalPosture = internalRedirectsSetting();
+if (internalPosture.problem) process.stderr.write(`warning: ${internalPosture.problem}\n`);
 
 // The topic is the project's (plan.json) unless --topic names it; a different one is refused.
 const resolved = flags.help || flags.recipes ? null : resolveTopic(root, flags.topic);

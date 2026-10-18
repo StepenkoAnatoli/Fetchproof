@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/brief.mjs - draft the phase-1 -> phase-2 handoff, and report the brief's state.
 
-import { parseFlags, PATHS, refuseUnknownFlags, kitCommand, writeFailure } from '../lib/core.mjs';
+import { parseFlags, PATHS, refuseUnknownFlags, checkFlagValues, kitCommand, writeFailure } from '../lib/core.mjs';
 import { renderBrief, briefState, JUDGED_SECTIONS, judgedSection } from '../lib/brief.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
@@ -10,6 +10,8 @@ import { GATE_MARKERS } from '../lib/scaffold.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['force', 'help', 'state']);
+// No flag here takes a value, so a word after one is an argument (#289).
+checkFlagValues(flags, {});
 const root = process.cwd();
 const corpus = readCorpus(root);
 

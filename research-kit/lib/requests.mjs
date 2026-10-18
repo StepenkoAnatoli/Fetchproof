@@ -79,6 +79,9 @@ export function requestProblems(request, { perRequestPages = AUTO_COLLECT_DEFAUL
   }
   if (request.topic !== undefined && (!text(request.topic) || request.topic.length > REQUEST_LIMITS.topic)) {
     out.push(`"topic" must be text of at most ${REQUEST_LIMITS.topic} characters`);
+  } else if (request.topic !== undefined && /[\r\n]/.test(request.topic)) {
+    // Refused at intake, as new-project refuses it (#293), not recorded failed after approval.
+    out.push('"topic" must be one line');
   }
   if (request.unknown !== undefined && !(typeof request.unknown === 'string' && /^U-\d+$/.test(request.unknown))) {
     out.push('"unknown" must name a contract row such as "U-3"');

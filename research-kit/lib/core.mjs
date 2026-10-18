@@ -807,15 +807,27 @@ export function uniq(items) {
 
 // ---------------------------------------------------------------- argv
 
+// What parseFlags saw beyond the flags themselves, for the two refusals below: the
+// positionals, and each word a flag took from the next argument (#289).
+const ARGV = Symbol('argv');
+
 /**
  * Generic `--flag value` / `--flag` / positional splitting. It knows no flag names and
  * no semantics: an entrypoint reads meaning out of what this hands back.
  * Repeated flags collect into an array. A bare `--` ends the options, as POSIX has it:
  * everything after it is positional, even an argument that starts with `--`.
+ * The positionals also ride on `flags`, under a symbol no `Object.keys` sees, so that
+ * `refuseUnknownFlags` can refuse one a command does not take without every caller
+ * having to remember to hand them over (#289). So does each word a flag took as its value
+ * from the next argument: this knows no flag names, so `--dry-run word` gives --dry-run the
+ * value "word", and only `checkFlagValues`, which knows the CLI's value flags, can give the
+ * word back as the argument it was.
  */
 export function parseFlags(argv) {
   const flags = Object.create(null);
   const positional = [];
+  const took = [];
+  Object.defineProperty(flags, ARGV, { value: { positional, took, takes: undefined } });
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--') { positional.push(...argv.slice(i + 1)); break; }
@@ -824,8 +836,11 @@ export function parseFlags(argv) {
     const name = eq > 0 ? arg.slice(2, eq) : arg.slice(2);
     let value;
     if (eq > 0) value = arg.slice(eq + 1);
-    else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) { value = argv[i + 1]; i += 1; }
-    else value = true;
+    else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) {
+      value = argv[i + 1];
+      took.push({ name, word: value, at: positional.length });
+      i += 1;
+    } else value = true;
     if (name in flags) flags[name] = [].concat(flags[name], value);
     else flags[name] = value;
   }
@@ -858,20 +873,74 @@ export function flagList(value) {
  *
  * Three entrypoints already did this by hand (`artifact.mjs`, `collect-remote.mjs`,
  * `disclosure.mjs`). Eight did not. This is that check, in one place.
+ *
+ * Two more refusals of the same kind live here, because every CLI already calls this with
+ * its whole flag list (found 2026-10-11):
+ * - A known flag given twice is refused unless `repeatable` names it (#286). parseFlags
+ *   collects a repeat into an array, and a CLI that reads `String(flags.out)` got "a,b" -
+ *   `collect-remote --out a --out b` created a folder named `a,b`, and `new-project --topic a
+ *   --topic b` scaffolded "Untitled topic" because the array was not a string.
+ * - An argument the command does not take is refused (#289): `doctor /other/project`
+ *   described the cwd in silence. `takes` is how many positionals the command reads. A word
+ *   a bare flag took as its value (`--json word`) is given back and judged the same way by
+ *   `checkFlagValues`, the one that knows which flags take a value.
+ *
+ * `report(problems, remedy)` replaces the stderr text - for a CLI whose failures are a JSON
+ * payload in its `--json` mode (#294). The process still exits with `exit` if it returns.
  */
-export function refuseUnknownFlags(flags, known, { help = '', exit = 2, note = null } = {}) {
+export function refuseUnknownFlags(flags, known, { help = '', exit = 2, note = null, repeatable = [], takes = 0, beside = null, report = null } = {}) {
   const allowed = new Set(known);
   const unknown = Object.keys(flags).filter((flag) => !allowed.has(flag));
-  if (!unknown.length) return;
-
+  const problems = [];
   for (const flag of unknown) {
-    process.stderr.write(`unknown option --${flag}\n`);
+    problems.push(`unknown option --${flag}`);
     const why = note ? note(flag) : '';
-    if (why) process.stderr.write(`${why}\n`);
+    if (why) problems.push(why);
   }
-  process.stderr.write(`known options: ${[...allowed].map((f) => `--${f}`).join(' ')}\n`);
-  if (help) process.stdout.write(help);
+  problems.push(...repeatedFlags(flags, repeatable));
+  const argv = flags[ARGV];
+  if (argv) Object.assign(argv, { takes, beside });
+  const stray = (argv?.positional ?? []).slice(takes);
+  if (stray.length) problems.push(strayArguments(stray, takes, beside));
+  if (!problems.length) return;
+
+  const remedy = unknown.length ? `known options: ${[...allowed].map((f) => `--${f}`).join(' ')}` : null;
+  if (report) report(problems, remedy);
+  else {
+    for (const problem of problems) process.stderr.write(`${problem}\n`);
+    if (remedy) process.stderr.write(`${remedy}\n`);
+    if (remedy && help) process.stdout.write(help);
+  }
   process.exit(exit);
+}
+
+/**
+ * The line that refuses arguments a command does not read. `beside` names the flag that
+ * leaves no room for one (`prior --file`, `evidence-context --all`): such a command does
+ * take an argument, so "it runs on the current directory" would be the wrong advice.
+ */
+function strayArguments(stray, takes, beside = null) {
+  const command = path.basename(process.argv[1] ?? 'this command', '.mjs');
+  const quoted = stray.map((arg) => `"${arg}"`).join(', ');
+  if (beside) return `${command} takes no arguments beside ${beside}, and ${quoted} would not be read`;
+  return takes
+    ? `${command} takes ${takes} argument${takes === 1 ? '' : 's'} at most, and ${quoted} would not be read`
+    : `${command} takes no arguments, and ${quoted} would not be read: a gate or corpus command runs on the current directory - cd there first`;
+}
+
+// What `--flag=value` means on a flag that takes no value (2026-10-18): `--force=false` had
+// read as TRUE, so `new-project --force=false` overwrote the files it was told to keep.
+const BARE_ON = ['true', '1', 'yes', 'on'];
+const BARE_OFF = ['false', '0', 'no', 'off'];
+
+/**
+ * The flags given more than once that are not `repeatable`, one problem line each. Exported
+ * for the CLI that refuses unknown flags with its own wording (`artifact.mjs`).
+ */
+export function repeatedFlags(flags, repeatable = []) {
+  return Object.keys(flags)
+    .filter((name) => Array.isArray(flags[name]) && !repeatable.includes(name))
+    .map((name) => `--${name} was given ${flags[name].length === 2 ? 'twice' : `${flags[name].length} times`} - give it once`);
 }
 
 /**
@@ -882,14 +951,50 @@ export function refuseUnknownFlags(flags, known, { help = '', exit = 2, note = n
  * then fell back to its default in silence: `research --depth thorough` ran on quick's
  * budget, `install-hooks --mode block` saved a mode the edit gate reads as "ask", and
  * `new-project --topic` scaffolded "Untitled topic" (found 2026-09-27).
+ *
+ * `{ line: true }` is a value that names something on one line - a topic (#293): blank
+ * after trimming is no value, and a line break is refused, because `"   "` scaffolded a
+ * project decompose then called untitled, and `"a\nb"` broke the contract's heading in two.
+ * The caller stores the trimmed value. `report` is refuseUnknownFlags' (#294).
+ *
+ * After refuseUnknownFlags, every known flag `specs` does not name takes no value, so a
+ * word one of them took from the next argument is given back as the argument it was, in
+ * its place, and refused unless the command `takes` it (#289): `doctor --json /other/project`
+ * read the path as --json's value and described the cwd, and `new-project --force dir`
+ * scaffolded the cwd. `--flag=value` on such a flag is read as asked: true, 1, yes or on
+ * set it, false, 0, no or off leave it unset - `--force=false` had read as true and
+ * overwritten files - and any other value is refused by name.
  */
-export function checkFlagValues(flags, specs, { exit = 2 } = {}) {
+export function checkFlagValues(flags, specs, { exit = 2, report = null } = {}) {
   const problems = [];
+  const argv = flags[ARGV];
+  if (argv?.takes !== undefined) {
+    const freed = argv.took.filter(({ name }) => !(name in specs) && typeof flags[name] === 'string');
+    for (const { name, word, at } of [...freed].reverse()) {
+      flags[name] = true;
+      argv.positional.splice(at, 0, word);
+    }
+    const stray = argv.positional.slice(argv.takes);
+    argv.took.length = 0;
+    if (stray.length) {
+      for (const { name, word } of freed) if (stray.includes(word)) problems.push(`--${name} takes no value, so "${word}" after it is an argument`);
+      problems.push(strayArguments(stray, argv.takes, argv.beside));
+    }
+    // What is left as a string on a bare flag was written `--flag=value`.
+    for (const name of Object.keys(flags).filter((key) => !(key in specs) && typeof flags[key] === 'string')) {
+      const said = flags[name].trim().toLowerCase();
+      if (BARE_ON.includes(said)) flags[name] = true;
+      else if (BARE_OFF.includes(said)) delete flags[name];
+      else problems.push(`--${name} takes no value (or true or false), not "${flags[name]}"`);
+    }
+  }
   for (const [name, spec] of Object.entries(specs)) {
     if (!(name in flags)) continue;
     for (const value of [].concat(flags[name])) {
-      if (value === true || value === '') { problems.push(`--${name} needs a value`); continue; }
-      if (spec?.choices && !spec.choices.includes(value)) {
+      if (value === true || value === '' || (spec?.line && !value.trim())) { problems.push(`--${name} needs a value`); continue; }
+      if (spec?.line && /[\r\n]/.test(value)) {
+        problems.push(`--${name} must be one line`);
+      } else if (spec?.choices && !spec.choices.includes(value)) {
         problems.push(`--${name} must be one of ${spec.choices.join(', ')}, not "${value}"`);
       } else if (spec?.int && !(/^-?\d+$/.test(String(value)) && Number(value) >= (spec.min ?? -Infinity) && Number(value) <= (spec.max ?? Infinity))) {
         const range = spec.min !== undefined && spec.max !== undefined ? ` from ${spec.min} to ${spec.max}`
@@ -899,7 +1004,8 @@ export function checkFlagValues(flags, specs, { exit = 2 } = {}) {
     }
   }
   if (!problems.length) return;
-  for (const problem of problems) process.stderr.write(`${problem}\n`);
+  if (report) report(problems, null);
+  else for (const problem of problems) process.stderr.write(`${problem}\n`);
   process.exit(exit);
 }
 

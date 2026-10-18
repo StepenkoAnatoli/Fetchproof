@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // bin/export-warc.mjs - the corpus as one .warc.gz, a copy for archive tools (ADR-0090).
 
-import { parseFlags, refuseUnknownFlags, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
 import { exportWarc, readWarc } from '../lib/warc.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'out']);
+checkFlagValues(flags, { out: 'value' });
 
 if (flags.help) {
   process.stdout.write(`export-warc - this project's captures as one WARC 1.1 file, for archive tools.

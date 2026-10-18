@@ -10,15 +10,21 @@
 import { parseFlags, flagList, refuseUnknownFlags, checkFlagValues, resolve, readText, parseJson, operatorPath, kitCommand, writeFailure, NAMED_RUN_REFUSALS } from '../lib/core.mjs';
 import { collectionPolicy, collectionRefusal, loadConfig } from '../lib/machine.mjs';
 import { findBrowser } from '../lib/browser-transport.mjs';
+import { internalRedirectsSetting } from '../lib/runtime.mjs';
 import { selectTransport, TRANSPORTS, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
 import { runResearch, searchSummaryLine, readPlan, planProblems, usageSummary, topicMatch, DEPTHS, DEPTH_SCRAPES } from '../lib/research-run.mjs';
 import { parseCapture, readLedger, duplicateKey } from '../lib/corpus.mjs';
 import { readPrior } from '../lib/prior.mjs';
 import { heading } from '../lib/render.mjs';
 const { flags } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['depth', 'dry-run', 'fallback', 'force', 'help', 'no-fallback', 'only', 'plan', 'refresh-days', 'search-transport', 'status', 'transport', 'witness']);
+refuseUnknownFlags(flags, ['depth', 'dry-run', 'fallback', 'force', 'help', 'no-fallback', 'only', 'plan', 'refresh-days', 'search-transport', 'status', 'transport', 'witness'], { repeatable: ['only'] });
 checkFlagValues(flags, { depth: { choices: DEPTHS }, 'refresh-days': { int: true, min: 0 }, plan: 'value', only: 'value', transport: 'value', 'search-transport': 'value' });
 const root = process.cwd();
+// A posture value the transports could not read is said once, at the start (#290): read as
+// the refusal, it is otherwise named only by doctor, and a refusal that says "set it to 1"
+// reads as wrong to an operator who believes they did.
+const internalPosture = internalRedirectsSetting();
+if (internalPosture.problem) process.stderr.write(`warning: ${internalPosture.problem}\n`);
 
 if (flags.help) {
   process.stdout.write(`research - collect primary evidence into this project's corpus.

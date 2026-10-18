@@ -15,6 +15,7 @@ import {
   END_GRACE_MS, MAX_LINE,
   TOOLS, ERRORS, SUPPORTED_VERSIONS, SERVER_INFO, MODERN_VERSION, LEGACY_VERSION,
 } from '../lib/mcp.mjs';
+import { DispatchError } from '../lib/dispatch.mjs';
 
 describe('mcp');
 
@@ -123,6 +124,18 @@ test('a 2025-06-18 client is answered 2025-06-18; a 2025-03-26 client is not', a
 // errors should be returned as Tool Execution Errors rather than Protocol Errors to enable model
 // self-correction" (E-01). This server answered them with JSON-RPC -32602, which a client raises
 // as an exception the model never reads. An unknown tool stays a protocol error.
+// Found 2026-10-18 (review of #293): collect-remote refuses a two-line topic, the MCP collect
+// tool dispatched one, and the runner's new-project then refused it after the run had started.
+test('collect refuses a topic on two lines before anything is dispatched', async () => {
+  for (const topic of ['line one\nline two', 'a\r\nb']) {
+    const d = deps();
+    const r = await handle(call('collect', { repository: 'o/r', topic }), d);
+    assert.equal(r.result.isError, true, JSON.stringify(r));
+    assert.match(r.result.content[0].text, /topic must be one line/);
+    assert.equal(d.seen.dispatch, undefined, 'a two-line topic was dispatched');
+  }
+});
+
 test('arguments that fail the schema come back as a tool result the model can read', async () => {
   const call = (name, args) => handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name, arguments: args } }, deps());
   const bad = await call('collect', { repository: 'o/r', topic: 'x', max_pages: 99 });
@@ -387,6 +400,21 @@ test('an out_dir it cannot write is refused before the run is even read', async 
   } finally { cleanup(dir); }
 });
 
+// Found 2026-10-11 (#295): the out_dir check created the folder before the run was read, so a
+// run the token could not read (HTTP 403), or one still running, left an empty folder behind.
+test('an out_dir is created only when there is a corpus to write into it', async () => {
+  const dir = tempDir();
+  try {
+    const out_dir = path.join(dir, 'not-yet', 'deeper');
+    const refused = deps({ summary: async () => { throw new DispatchError('HTTP', 'could not read run 42: HTTP 403'); } });
+    const r = await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42, out_dir }), refused);
+    assert.equal(r.result.isError, true);
+    const running = deps({ summary: async () => ({ status: 'in_progress', conclusion: null, htmlUrl: 'h', runId: 42 }) });
+    assert.equal((await handle(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 42, out_dir }), running)).result.structuredContent.ready, false);
+    assert.equal(fs.existsSync(path.join(dir, 'not-yet')), false, 'the out_dir was created for a run with nothing to fetch');
+  } finally { cleanup(dir); }
+});
+
 // ---------------------------------------------------------------- the artifact
 
 test('the corpus comes back as a LINK, never as embedded bytes', async () => {
@@ -412,6 +440,8 @@ test('a relative output folder gives a link to the actual absolute download path
     const out_dir = path.relative(process.cwd(), path.join(root, 'nested', 'out'));
     const expected = path.join(path.resolve(out_dir), 'corpus.zip');
     const d = deps({ corpus: async ({ outDir }) => {
+      // fetchCorpus creates the folder once there is a package to write (#295); so does this.
+      fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(path.join(outDir, 'corpus.zip'), 'download');
       return { file: path.join(outDir, 'corpus.zip'), validation: { status: 'PASS', buildAuthorized: false, state: 'REVIEW_REQUIRED', errors: [] } };
     } });

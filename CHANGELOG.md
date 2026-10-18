@@ -332,6 +332,37 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- A flag given twice is refused by name (`--out was given twice`) by every CLI that refuses
+  unknown flags, `artifact` and `disclosure` included, unless it repeats by design
+  (`preflight --check`, `research --only`, `gate --staged`, `collect-remote --query`/`--url`).
+  It had been joined with a comma or replaced by the default: `collect-remote --out a --out b`
+  created a folder named `a,b`, `artifact create --ref a --ref b` wrote `"ref": "a,b"`, and
+  `new-project --topic a --topic b` scaffolded "Untitled topic" (#286).
+- A positional argument a command does not take is refused by name, with exit 2 (3 for
+  `collect-remote` and `disclosure`) and nothing written: `doctor /other/project` had described
+  the current directory in silence, and `timeline stray-word` wrote TIMELINE.md (#289). A word
+  after a flag that takes no value is an argument too: `doctor --json /other/project` and
+  `research --dry-run word` are refused, and `new-project --force dir` scaffolds `dir`, where
+  it had scaffolded the current directory. `--force=false` (or `=0`, `=no`, `=off`) leaves such a
+  flag off - it had read as true, so `new-project --force=false` overwrote files - and a value
+  other than those or true/1/yes/on is refused. `prior --file x extra` and `evidence-context U-1
+  --all` name the flag the argument conflicts with instead of saying to change directory.
+- `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS` with any value but exactly `1` or `0` resolves to the
+  refusal (`0`), and `doctor` names it as `config-ill-typed`; `=false`, `=no` or `= 0` had read
+  as unset, which fetches an internal URL the plan names; `research` and `decompose` print the
+  same line as a warning when they start (#290).
+- `new-project`, `decompose` and `collect-remote` refuse a `--topic` that is blank after
+  trimming (`--topic needs a value`) or holds a line break (`--topic must be one line`), and
+  store a padded topic trimmed; the MCP `collect` tool and builder requests refuse a two-line
+  topic at intake, where the runner's `new-project` would have refused it after the dispatch (#293).
+- `collect-remote --json` reports a refused flag value, an unknown or repeated flag and a stray
+  argument as the JSON payload its later failures use (`code: "BAD_FLAG"`, with a remedy),
+  where stdout had been empty and the reason only on stderr (#294).
+- `collect-remote` and the MCP server's `fetch_corpus` check the output folder without creating
+  it; the download creates it, so a run refused for a missing token, a failed dispatch or an
+  unreadable run leaves no empty folder behind; the check creates and removes the folder, so a
+  name no folder can have (a part past 255 characters) is still refused before a paid run, and
+  `fetchCorpus` creates it only once the run has one package, not for an expired artifact (#295).
 
 ## 0.9.5 — 2026-10-04
 

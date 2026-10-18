@@ -12,8 +12,8 @@ import { resolveTopic } from '../lib/decompose.mjs';
 import { KIT_HOME } from '../lib/machine.mjs';
 
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['help', 'topic', 'force', 'kit', 'layout']);
-checkFlagValues(flags, { topic: 'value', kit: 'value' });
+refuseUnknownFlags(flags, ['help', 'topic', 'force', 'kit', 'layout'], { takes: 1 });
+checkFlagValues(flags, { topic: { line: true }, kit: 'value' });
 
 if (flags.help) {
   process.stdout.write(`new-project - write the canonical project shape into a directory.
@@ -58,7 +58,7 @@ const existingTopic = (() => {
 let result;
 try {
   result = scaffoldProject(dir, {
-    topic: typeof flags.topic === 'string' ? flags.topic : UNTITLED_TOPIC,
+    topic: typeof flags.topic === 'string' ? flags.topic.trim() : UNTITLED_TOPIC,
     kit: typeof flags.kit === 'string' && flags.kit.trim() ? flags.kit.trim() : KIT_HOME,
     force: Boolean(flags.force),
   });

@@ -49,6 +49,16 @@ test('a malformed request is refused, each reason named', () => {
   }
 });
 
+// Found 2026-10-18 (review of #293): a builder request whose topic held a line break passed
+// intake, and the runner's new-project refused it after approval - recorded failed, not refused.
+test('a request topic on two lines is refused at intake', () => {
+  for (const topic of ['line one\nline two', 'a\rb']) {
+    const problems = requestProblems({ ...GOOD, topic });
+    assert(problems.some((p) => /"topic" must be one line/.test(p)), `${JSON.stringify(topic)} -> ${JSON.stringify(problems)}`);
+  }
+  assertEqual(requestProblems({ ...GOOD, topic: 'one line' }).length, 0);
+});
+
 test('a page on this machine or its network is refused - a request cannot aim the collector inward', () => {
   for (const url of ['http://localhost:47123/api/state', 'http://127.0.0.1/', 'http://10.0.0.5/x', 'http://169.254.169.254/latest/meta-data',
     'http://192.168.1.1/', 'http://[::1]/', 'http://app.localhost/', `https://${'user'}:${'pw'}@example.com/`]) {

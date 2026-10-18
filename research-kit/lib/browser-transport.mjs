@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { mainContent, htmlToMarkdown, titleOf, gradeCompleteness, isInternal, serverReason } from './http-transport.mjs';
 import httpKeyless from './http-transport.mjs';
 import { REFUSAL_MARKER } from './browser-guard.mjs';
-import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow } from './runtime.mjs';
+import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow, internalRedirectsSetting } from './runtime.mjs';
 import { loadConfig } from './machine.mjs';
 
 const GUARD_CHILD = fileURLToPath(new URL('./browser-guard.mjs', import.meta.url));
@@ -101,8 +101,8 @@ export function guardChildTimeout(timeout = TIMEOUT_MS) {
 export function renderGuarded(binary, args, { url, env = process.env, timeout = TIMEOUT_MS, allowInternalRedirects, nodePath = process.execPath, spawn = spawnSync } = {}) {
   // ADR-0110: undefined lets the child decide from the URL asked for; the operator's opt-out,
   // or a caller's explicit choice, overrides it.
-  const allow = allowInternalRedirects ?? (env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '1' ? true
-    : env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '0' ? false : undefined);
+  // An unreadable value is a refusal, never the default (#290, internalRedirectsSetting).
+  const allow = allowInternalRedirects ?? internalRedirectsSetting(env).value;
   const job = { binary, args, url: String(url), timeout, ...(allow === undefined ? {} : { allowInternalRedirects: allow }) };
   const result = spawn(nodePath, [GUARD_CHILD], {
     input: JSON.stringify(job), encoding: 'utf8', timeout: guardChildTimeout(timeout), windowsHide: true, maxBuffer: CHILD_OUTPUT_LIMIT, env,
@@ -352,7 +352,7 @@ export function scrape(url, { render = renderGuarded, browserPath = null, env = 
     // refuses one (ADR-0110), unless the operator's decision - or the guard child's, for an
     // internal URL asked for - allowed it. The guard refused such a connection already; this
     // is the same rule read from what the browser reports it reached.
-    const optOut = allowInternalRedirects ?? (env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '1' ? true : undefined);
+    const optOut = allowInternalRedirects ?? internalRedirectsSetting(env).value;
     const allowed = typeof result.allowInternal === 'boolean' ? result.allowInternal
       : optOut === true || (optOut !== false && Boolean(internalByName(target)));
     // The host and port asked for are exempt, as they are at the guard: the operator named them.

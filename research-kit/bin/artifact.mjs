@@ -16,7 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlags, canonicalJson, checkFlagValues, exitAfterFlush } from '../lib/core.mjs';
+import { parseFlags, canonicalJson, checkFlagValues, repeatedFlags, exitAfterFlush } from '../lib/core.mjs';
 import { requireRuntime } from '../lib/runtime.mjs';
 import { validateArtifact } from '../lib/artifact-validator.mjs';
 import { writeArtifact, packageName, checkClientRef, GITHUB_API_VERSION } from '../lib/artifact.mjs';
@@ -104,7 +104,14 @@ if (flags.help || !command) {
 async function refuseUnknownFlags(name) {
   const known = new Set(KNOWN_FLAGS[name] ?? []);
   const unknown = Object.keys(flags).filter((flag) => !known.has(flag));
-  if (!unknown.length) return;
+  // A flag given twice is refused too (#286): parseFlags collects the repeat into an array,
+  // and `create --ref a --ref b` wrote a manifest whose ref was "a,b" - and it validated PASS.
+  const repeated = repeatedFlags(flags);
+  for (const problem of repeated) process.stderr.write(`${problem}\n`);
+  if (!unknown.length) {
+    if (repeated.length) await exitAfterFlush(EXIT.BLOCKED);
+    return;
+  }
 
   for (const flag of unknown) {
     process.stderr.write(`unknown option --${flag}\n`);

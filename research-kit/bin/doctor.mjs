@@ -4,13 +4,15 @@
 // It describes WHEREVER IT IS RUN. A clean report from the wrong directory is a clean
 // report about the wrong project.
 
-import { parseFlags, refuseUnknownFlags, writeFailure, exitAfterFlush, KIT_VERSION } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, writeFailure, exitAfterFlush, KIT_VERSION } from '../lib/core.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
 import { repairLedgerTail } from '../lib/provenance.mjs';
 import { renderTable, heading } from '../lib/render.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['fix-arity', 'help', 'json']);
+// No flag here takes a value, so a word after one is an argument (#289).
+checkFlagValues(flags, {});
 const root = process.cwd();
 
 if (flags.help) {

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // bin/measure.mjs - how well this project's citations hold up, without a judge (ADR-0089).
 
-import { parseFlags, refuseUnknownFlags, kitCommand } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, kitCommand } from '../lib/core.mjs';
 import { measureCorpus, renderMeasure } from '../lib/measure.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'json']);
+// No flag here takes a value, so a word after one is an argument (#289).
+checkFlagValues(flags, {});
 
 if (flags.help) {
   process.stdout.write(`measure - how well this project's citations hold up, computed without a judge.

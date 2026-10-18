@@ -12,7 +12,7 @@
 //   3  could not measure - including any probe that never reached GitHub, unless an
 //      exposure was measured anyway
 
-import { parseFlags } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
 import { probeRun, render, exitCode } from '../lib/disclosure.mjs';
 
@@ -35,18 +35,13 @@ const { flags } = parseFlags(process.argv.slice(2));
 if (flags.help) { process.stdout.write(HELP); process.exit(0); }
 requireRuntime({ node: true });
 
-const known = new Set(['repository', 'run', 'topic', 'json', 'help']);
-const unknown = Object.keys(flags).filter((f) => !known.has(f));
-if (unknown.length) {
-  for (const f of unknown) {
-    process.stderr.write(`unknown option --${f}\n`);
-    if (/token|auth|key|secret/i.test(f)) {
-      process.stderr.write('This probe is unauthenticated by design. Authenticating it would answer a different question.\n');
-    }
-  }
-  process.stdout.write(HELP);
-  process.exit(3);
-}
+// The shared refusal, so a flag given twice or a stray argument is refused too (#286, #289).
+refuseUnknownFlags(flags, ['repository', 'run', 'topic', 'json', 'help'], {
+  help: HELP, exit: 3,
+  note: (f) => (/token|auth|key|secret/i.test(f)
+    ? 'This probe is unauthenticated by design. Authenticating it would answer a different question.' : ''),
+});
+checkFlagValues(flags, { repository: {}, run: {}, topic: {} }, { exit: 3 });
 
 const missing = ['repository', 'run'].filter((n) => flags[n] === undefined || flags[n] === true);
 if (missing.length) {

@@ -531,6 +531,24 @@ test('fetchCorpus refuses an out_dir it cannot write BEFORE it downloads anythin
   } finally { cleanup(dir); }
 });
 
+// Found 2026-10-18 (review of #295): fetchCorpus created out_dir before it listed the run's
+// artifacts, so a run whose artifact had expired left an empty folder behind; and a check that
+// only looked at the nearest existing folder passed a name no folder can have.
+test('fetchCorpus creates out_dir only when there is a package, and the early check creates nothing', async () => {
+  const dir = tempDir();
+  try {
+    const out = path.join(dir, 'not-yet', 'deeper');
+    const doFetch = stubFetch([jsonResponse(200, { artifacts: [{ id: 1, name: 'research-kit-corpus-v1-old', expired: true }] })]);
+    await assert.rejects(() => fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: out, fetch: doFetch }),
+      (err) => err.code === 'NO_ARTIFACT');
+    assert.equal(fs.existsSync(path.join(dir, 'not-yet')), false, 'an expired artifact left the out_dir behind');
+
+    assert.equal(usableOutDir(out, { create: false }), path.resolve(out));
+    assert.equal(fs.existsSync(path.join(dir, 'not-yet')), false, 'the early check left the folder it proved');
+    assert.throws(() => usableOutDir(path.join(dir, 'x'.repeat(300)), { create: false }), (err) => err.code === 'OUT_DIR');
+  } finally { cleanup(dir); }
+});
+
 // Found 2026-09-28 (Arena break test 10, its R-2): writeZip and writeArtifact were moved to
 // the whole-or-nothing write, but fetchCorpus - which writes the package it DOWNLOADED -
 // still called fs.writeFileSync on the target. A failed write (full disk, quota, a killed

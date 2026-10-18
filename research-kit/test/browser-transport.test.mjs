@@ -623,6 +623,11 @@ test('by default the browser renders through the guard child, which is handed th
   const plain = renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: {}, spawn, nodePath: '/opt/node' });
   assert.equal(jobs[1].job.allowInternalRedirects, undefined, 'with nothing decided, the child decides from the URL');
   assert.equal(plain.stdout, PAGE);
+  // #290: a value the kit cannot read is a refusal handed to the child, never the default.
+  for (const value of ['yes', 'false', ' 0', 'TRUE']) {
+    renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value }, spawn, nodePath: '/opt/node' });
+    assert.equal(jobs.at(-1).job.allowInternalRedirects, false, `${JSON.stringify(value)} reached the guard as the default`);
+  }
 });
 
 // ADR-0140: the rendered DOM is the text the browser capture was converted from.

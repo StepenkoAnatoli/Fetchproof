@@ -153,6 +153,17 @@ test('create refuses a bare --ref, --run-id or --output by name, and writes noth
   }
 });
 
+// Found 2026-10-11 (#286): a repeated --ref was joined with a comma into the manifest, and
+// the package it wrote validated PASS with `"ref": "a,b"`.
+test('create refuses a flag given twice by name, and writes nothing', () => {
+  const cwd = tempDir('rk-cli-twice-');
+  const r = run(['create', '--root', collectedProject(), '--repository', 'o/r', '--commit', '0'.repeat(40), '--workflow', 'w.yml',
+    '--run-id', '7', '--output', path.join(cwd, 'p.zip'), '--ref', 'a', '--ref', 'b'], { cwd });
+  assert.equal(r.code, 3, `expected a refusal, got exit ${r.code}\n${r.out}${r.err}`);
+  assert.ok(/^--ref was given twice/m.test(r.err), `--ref was not refused by name:\n${r.err}`);
+  assert.deepEqual(fs.readdirSync(cwd), [], 'something was written in the working folder');
+});
+
 test('validate refuses a bare --file by name, instead of opening a file called "true"', () => {
   const r = run(['validate', '--file']);
   assert.equal(r.code, 3, `${r.out}${r.err}`);

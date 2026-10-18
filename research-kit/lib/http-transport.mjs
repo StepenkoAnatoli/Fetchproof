@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import dns from 'node:dns';
-import { fetchEnv, CHILD_OUTPUT_LIMIT, boundedBody, outputOverflow, fetchFailure } from './runtime.mjs';
+import { fetchEnv, CHILD_OUTPUT_LIMIT, boundedBody, outputOverflow, fetchFailure, internalRedirectsSetting } from './runtime.mjs';
 
 export const name = 'http-keyless';
 export const FULL_THRESHOLD = 1500;
@@ -29,8 +29,8 @@ const SELF = fileURLToPath(import.meta.url);
 function runJob(job, { timeout = 60_000, spawn = spawnSync, nodePath = process.execPath, env = process.env, allowInternalRedirects } = {}) {
   // ADR-0110: undefined lets the child decide from the URL asked for; the operator's opt-out,
   // or a caller's explicit choice, overrides it.
-  const allow = allowInternalRedirects ?? (env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '1' ? true
-    : env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '0' ? false : undefined);
+  // An unreadable value is a refusal, never the default (#290, internalRedirectsSetting).
+  const allow = allowInternalRedirects ?? internalRedirectsSetting(env).value;
   const result = spawn(nodePath, [SELF], {
     input: JSON.stringify(allow === undefined ? job : { ...job, allowInternalRedirects: allow }),
     encoding: 'utf8',

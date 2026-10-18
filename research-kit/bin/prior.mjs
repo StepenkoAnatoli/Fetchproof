@@ -11,7 +11,8 @@ import { heading } from '../lib/render.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['file', 'help']);
+// The prior is the words given, or --file's contents; beside --file, words are stray.
+refuseUnknownFlags(flags, ['file', 'help'], flags.file !== undefined ? { takes: 0, beside: '--file' } : { takes: Infinity });
 checkFlagValues(flags, { file: 'value' });
 const root = process.cwd();
 

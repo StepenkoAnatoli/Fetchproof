@@ -19,7 +19,7 @@ import { recordOverride } from './provenance.mjs';
 import { probeFirecrawl, selectTransport } from './transport.mjs';
 import { loadConfig, configPath } from './machine.mjs';
 import { cliInstallSpec, cliCompatibility } from './firecrawl.mjs';
-import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice } from './runtime.mjs';
+import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice, internalRedirectsSetting, INTERNAL_REDIRECTS_VARIABLE } from './runtime.mjs';
 import { verifyBundle, bundleSummary } from './bundle.mjs';
 import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
@@ -68,6 +68,12 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
     out.push(f('warn', 'config-ill-typed',
       `"${key}" is present and not a value the kit reads (${key === 'failOpen' ? 'true or false, unquoted' : key === 'evidencePolicy' ? 'pluralist or strict' : 'ask, hard-block or off'}) - resolved to ${resolvedTo[key] ?? 'its restrictive state'} until it is fixed`,
       `fix "${key}" in ${read.source}`));
+  }
+  // The same rule for the one posture value read from the environment (#290): a spelling the
+  // transports cannot read refuses the internal network, and the operator is told which.
+  const internal = internalRedirectsSetting(env);
+  if (internal.problem) {
+    out.push(f('warn', 'config-ill-typed', internal.problem, `set ${INTERNAL_REDIRECTS_VARIABLE} to 1 or 0, or unset it`));
   }
   for (const note of retiredEnvNotes(env)) {
     out.push(f('warn', 'env-retired',

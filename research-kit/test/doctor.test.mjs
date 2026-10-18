@@ -247,6 +247,18 @@ test('an ill-typed posture key is named by doctor, with the state it resolved to
   assert.match(find(findings, 'machine-config').detail, /fail-closed/, 'the posture line reports the resolved posture');
 });
 
+// #290: the one posture value read from the environment gets ADR-0121's rule - a value the
+// transports cannot read resolves to the refusal, and doctor says which value and to what.
+test('an unreadable RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS is named by doctor, with the refusal it resolved to', () => {
+  const { env } = machine({});
+  const ill = (value) => machineHealth({ env: { ...env, ...(value === undefined ? {} : { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value }) }, probe: READY })
+    .filter((f) => f.name === 'config-ill-typed');
+  const named = ill('yes');
+  assert.equal(named.length, 1, JSON.stringify(named));
+  assert.match(named[0].detail, /RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS="yes" is not a value the kit reads \(1 or 0\) - resolved to 0 \(refuse\)/);
+  for (const value of ['1', '0', undefined]) assert.deepEqual(ill(value), [], `${value} is a value the kit reads`);
+});
+
 test('doctor reports the gate, the chain, the shape and the verdict from ONE snapshot', () => {
   const dir = makePassingProject();
   const { env } = machine({});

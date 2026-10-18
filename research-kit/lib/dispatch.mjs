@@ -418,13 +418,23 @@ export async function getRunSummary({ repository, runId, token, fetch: doFetch =
  * Exported because every caller that downloads should check it before it spends
  * anything: `collect-remote` before it dispatches a paid run, the MCP server before it
  * reads the run, and `fetchCorpus` before it downloads.
+ *
+ * `{ create: false }` leaves no folder behind (#295): it is created, checked, and what this
+ * call created is removed again. The early callers check that way, because a folder they
+ * created stayed behind, empty, when the run was then refused for a missing token or an
+ * unreadable run; `fetchCorpus` creates it once the run has a package to fetch. Creating is
+ * the check: looking only at the nearest folder that exists passed a name no folder can
+ * have - a component past 255 characters, a `"` or `|` on Windows - and that was found
+ * after the paid run and the wait (review of #295, 2026-10-18).
  */
-export function usableOutDir(dir) {
+export function usableOutDir(dir, { create = true } = {}) {
   let absolute;
   try {
     absolute = path.resolve(dir);
-    fs.mkdirSync(absolute, { recursive: true });
-    fs.accessSync(absolute, fs.constants.W_OK);
+    const first = fs.mkdirSync(absolute, { recursive: true });
+    try { fs.accessSync(absolute, fs.constants.W_OK); } finally {
+      if (!create && first) fs.rmSync(first, { recursive: true, force: true });
+    }
   } catch (err) {
     throw new DispatchError('OUT_DIR', `${dir} is not a folder this process can write (${err.code ?? err.message})`, {
       remedy: 'pass an existing writable folder, or omit it for the default',
@@ -447,18 +457,23 @@ export async function fetchCorpus({
   expectedClientRef = null,
 } = {}) {
   // The folder is checked first: the download is the slow, rate-limited part, and an
-  // unusable folder found after it would waste it and surface as a raw ENOTDIR.
-  let dir;
-  try {
-    dir = outDir == null
-      ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
-      : usableOutDir(outDir);
-  } catch (err) {
-    if (err instanceof DispatchError) throw err;
-    throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
-      remedy: 'pass an existing writable folder, or repair the system temp directory',
-    });
-  }
+  // unusable folder found after it would waste it and surface as a raw ENOTDIR. It is
+  // created only once there is one package to write into it (#295): created before the
+  // listing, it stayed behind, empty, for a run whose artifact had expired.
+  const folder = (check) => {
+    try {
+      if (check) return usableOutDir(outDir ?? tempBase(), { create: false });
+      return outDir == null
+        ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
+        : usableOutDir(outDir);
+    } catch (err) {
+      if (err instanceof DispatchError) throw err;
+      throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
+        remedy: 'pass an existing writable folder, or repair the system temp directory',
+      });
+    }
+  };
+  folder(true);
 
   const artifacts = await listArtifacts({ repository, runId, token, fetch: doFetch, api });
   const wanted = artifacts.filter((a) => !a.expired && a.name.startsWith('research-kit-corpus-v1-'));
@@ -471,6 +486,7 @@ export async function fetchCorpus({
         : 'more than one corpus artifact on one run is not a shape this format defines',
     });
   }
+  const dir = folder(false);
   const bytes = await downloadArtifact({ repository, artifactId: wanted[0].id, token, fetch: doFetch, api });
   const { bytes: pkg, unwrapped, name } = unwrapArtifact(bytes);
 

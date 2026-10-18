@@ -287,6 +287,27 @@ export function fetchEnv(env = process.env) {
   return { ...env, NODE_USE_ENV_PROXY: '1' };
 }
 
+export const INTERNAL_REDIRECTS_VARIABLE = 'RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS';
+
+/**
+ * The operator's internal-network posture, read once for both transports (#290):
+ * `{ value, problem }`. Exactly `1` lifts the check (ADR-0110, ADR-0118), exactly `0` is the
+ * explicit refusal (ADR-0155), unset leaves the choice to the URL asked for (`undefined`).
+ * Anything else is `false` with a named problem - the restrictive reading ADR-0121 gives a
+ * posture value that cannot be read as typed. `=false`, `=no`, `=off` and `= 0` had all read
+ * as unset, which fetches an internal URL the plan names: the operator closed the network
+ * and it stayed open, and nothing said so.
+ */
+export function internalRedirectsSetting(env = process.env) {
+  const raw = env[INTERNAL_REDIRECTS_VARIABLE];
+  if (raw === undefined) return { value: undefined, problem: null };
+  if (raw === '1' || raw === '0') return { value: raw === '1', problem: null };
+  return {
+    value: false,
+    problem: `${INTERNAL_REDIRECTS_VARIABLE}=${JSON.stringify(String(raw).slice(0, 40))} is not a value the kit reads (1 or 0) - resolved to 0 (refuse) until it is fixed`,
+  };
+}
+
 // Whoever started this process chose at startup: the variable (even set to 0) or the flag,
 // on the command line or in NODE_OPTIONS. The flag wins over the variable (E-02). Either
 // way the choice is theirs. Our own restart sets the variable, so it cannot loop.
