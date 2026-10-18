@@ -332,6 +332,30 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- The release schema subset applies `additionalProperties` when it is a schema, and `false`
+  without `properties` refuses every member. The `externalRoots` maps in the artifact-registry
+  and qualification-ledger-genesis schemas now refuse a non-hash value under `conform` and
+  `validate`. The predecessor check tells a malformed external root from a missing one (#335).
+- The release JSON reader keeps a `"__proto__"` key as an own member, as `JSON.parse` and
+  Python do, so Node and Python canonicalise and hash it alike. The schema checker tests
+  membership with `Object.hasOwn`: an extra `constructor` member is `SCHEMA-ADDITIONAL`, and
+  a record holding only `"__proto__"` fails `SCHEMA-REQUIRED`. The FI sidecar runner's patch
+  paths walk own members only, so a vector patch `/__proto__/polluted` is refused as absent
+  instead of setting `Object.prototype.polluted` for the process, and the ledger history
+  summary skips a promotion whose package is `constructor` or `__proto__` instead of throwing
+  on every `validate --ledger` (#336).
+- `path-authority validate` judges a null row or a non-array section FAIL with the schema's
+  `SCHEMA-TYPE`, exit 1, as `conform` does. The semantic pass reads only array sections and
+  object rows, and the CLI reports `JSON-READ` only for a file it could not read. The
+  validator returns a verdict for any snapshot: an unpaired surrogate is `SNAP-ENVELOPE-HASH`
+  or `SNAP-CANONICAL`, and a member that cannot become a string is shown as JSON. A throw
+  from validation itself is `VALIDATE-ERROR`, INCOMPLETE, exit 2. `path-authority conform` and
+  `researcher-release conform` report a lone surrogate in an enum or const field as FAIL
+  (`SNAP-CANONICAL`, `SCHEMA-CANONICAL`), exit 1, with a report. `validate --ledger` reports
+  a ledger record without a payload as `LEDGER-PAYLOAD-HASH` instead of crashing (#340).
+- A flat promotion pointer (`{ artifactId, promotion }`) that passes the pointer schema
+  reaches the promotion and ledger checks. Only a pointer with an envelope package compares
+  it with the registry; the flat form is judged by `promotion.package` (#341).
 
 ## 0.9.5 — 2026-10-04
 

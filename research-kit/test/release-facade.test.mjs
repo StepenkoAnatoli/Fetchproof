@@ -117,3 +117,22 @@ test('the JSON reader refuses nesting past MAX_JSON_DEPTH by name, at any depth'
   assert(/nested deeper than 256 levels/.test((() => { try { json.parseJsonNoDuplicates(objects(257)); return ''; } catch (err) { return err.message; } })()),
     'objects count toward the depth as arrays do');
 });
+
+// #336 (2026-10-17): the reader built each object with `result[key] = value`, so a
+// "__proto__" key ran the prototype setter instead of creating a member - the member
+// vanished from the canonical form and its fields became inherited ones. JSON.parse and
+// Python's json both keep it as an ordinary member; so must the reader every hash rests on.
+test('the JSON reader keeps a prototype-named key as an own member, and canonical JSON keeps it', () => {
+  const plain = json.parseJsonNoDuplicates('{"__proto__":1}');
+  assert(Object.hasOwn(plain, '__proto__'), 'the key must be an own member');
+  assertEqual(Object.getPrototypeOf(plain), Object.prototype);
+  assertEqual(canonical.canonicalJson(plain), '{"__proto__":1}');
+  const text = '{"__proto__":{"artifactId":"R28-01"},"a":{"constructor":2}}';
+  const value = json.parseJsonNoDuplicates(text);
+  assertEqual(value.artifactId, undefined, 'a member must not become an inherited field');
+  assertEqual(canonical.canonicalJson(value), text);
+  assertEqual(canonical.canonicalJson(value), canonical.canonicalJson(JSON.parse(text)), 'the reader and JSON.parse must agree');
+  let message = '';
+  try { json.parseJsonNoDuplicates('{"__proto__":1,"__proto__":2}'); } catch (err) { message = err.message; }
+  assert(/duplicate object key "__proto__"/.test(message), `a duplicate __proto__ must still be refused: ${message || 'parsed'}`);
+});

@@ -114,6 +114,21 @@ test('JSON Schema conformance runner accepts a valid envelope and rejects an unk
     const bad = runSchemaConformance({ files: [file], schemaPath: schema });
     assertEqual(bad.status, 'FAIL', JSON.stringify(bad));
     assert(bad.errors.some((error) => error.code === 'SCHEMA-ADDITIONAL'), JSON.stringify(bad.errors));
+    // #336: a member named after an Object.prototype property is a member like any other.
+    // `key in value` answered true for every prototype name, so an extra `constructor` or
+    // `hasOwnProperty` passed additionalProperties:false, and a record whose only member
+    // was "__proto__" (the reader fed it to the prototype setter) "had" every required key.
+    delete record.unexpected;
+    for (const name of ['constructor', 'hasOwnProperty', 'toString']) {
+      fs.writeFileSync(file, JSON.stringify({ ...record, [name]: 'planted' }), 'utf8');
+      const planted = runSchemaConformance({ files: [file], schemaPath: schema });
+      assertEqual(planted.status, 'FAIL', `${name}: ${JSON.stringify(planted)}`);
+      assert(planted.errors.some((error) => error.code === 'SCHEMA-ADDITIONAL' && error.path.endsWith(`$.${name}`)), `${name}: ${JSON.stringify(planted.errors)}`);
+    }
+    fs.writeFileSync(file, `{"__proto__":${JSON.stringify(record)}}`, 'utf8');
+    const proto = runSchemaConformance({ files: [file], schemaPath: schema });
+    assertEqual(proto.status, 'FAIL', JSON.stringify(proto));
+    assert(proto.errors.some((error) => error.code === 'SCHEMA-REQUIRED' && error.path.endsWith('$.artifactId')), JSON.stringify(proto.errors));
   } finally {
     cleanup(root);
   }
@@ -376,6 +391,115 @@ test('schema conformance enforces numeric minimums and exact artifact IDs', asyn
   } finally {
     cleanup(root);
   }
+});
+
+// #335 (2026-10-17): additionalProperties was applied only when it was `false` and the
+// schema also had `properties`. Both shipped schemas write externalRoots as a map whose
+// members must be hashes - additionalProperties as a schema, no properties - so any value
+// passed, and a malformed root surfaced much later as a "missing" one.
+test('schema conformance applies additionalProperties when it is a schema, and false with no properties', async () => {
+  const { runSchemaConformance, validateJsonSchema } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const genesis = {
+      ledgerVersion: '1.0.0', releaseId: 'release-1', benchmarkSpecVersion: '1.0.0',
+      benchmarkSpecSha256: CONTRACT_HASH, registrySha256: 'c'.repeat(64), roleRosterSha256: ROSTER_HASH,
+      externalRoots: { 'benchmark-spec': CONTRACT_HASH }, genesisHash: 'd'.repeat(64), signerKeyId: 'release-key', signature: 'sig',
+    };
+    for (const [name, value] of [['qualification-ledger-genesis', genesis], ['artifact-registry', registryFor()]]) {
+      const schemaPath = path.resolve(`research-kit/schemas/${name}.schema.json`);
+      const file = path.join(root, `${name}.json`);
+      writeJson(file, value);
+      const good = runSchemaConformance({ files: [file], schemaPath });
+      assertEqual(good.status, 'PASS', `${name}: ${JSON.stringify(good)}`);
+      writeJson(file, { ...value, externalRoots: { 'benchmark-spec': 'not-a-hash', 'role-roster': 42 } });
+      const bad = runSchemaConformance({ files: [file], schemaPath });
+      assertEqual(bad.status, 'FAIL', `${name}: ${JSON.stringify(bad)}`);
+      assert(bad.errors.some((error) => error.code === 'SCHEMA-PATTERN' && error.path.endsWith('$.externalRoots.benchmark-spec')), `${name}: ${JSON.stringify(bad.errors)}`);
+      assert(bad.errors.some((error) => error.code === 'SCHEMA-TYPE' && error.path.endsWith('$.externalRoots.role-roster')), `${name}: ${JSON.stringify(bad.errors)}`);
+    }
+    const closed = { type: 'object', additionalProperties: false };
+    assertEqual(validateJsonSchema({}, closed).length, 0, 'an empty object has no member to refuse');
+    const refused = validateJsonSchema({ a: 1 }, closed);
+    assert(refused.some((error) => error.code === 'SCHEMA-ADDITIONAL' && error.path === '$.a'), JSON.stringify(refused));
+    const mixed = { type: 'object', properties: { n: { type: 'integer' } }, additionalProperties: { type: 'string' } };
+    assertEqual(validateJsonSchema({ n: 1, s: 'x' }, mixed).length, 0, 'a listed member is judged by its own schema only');
+    const unlisted = validateJsonSchema({ n: 1, s: 2 }, mixed);
+    assertEqual(unlisted.length, 1, JSON.stringify(unlisted));
+    assertEqual(unlisted[0].path, '$.s');
+    assertEqual(validateJsonSchema({ any: [1] }, { type: 'object', additionalProperties: true }).length, 0, 'true allows everything');
+  } finally {
+    cleanup(root);
+  }
+});
+
+// #335: with the schema now refusing a malformed root, the predecessor check is left to
+// tell an absent root from a present, wrong one; "missing" named an absence for both.
+test('the predecessor check names a malformed external root apart from a missing one', async () => {
+  const { validateEnvelope } = await import('../lib/release-validator.mjs');
+  const entry = { ...registryFor('R28-02').artifacts[0], predecessors: [{ kind: 'external', id: 'benchmark-spec' }, { kind: 'external', id: 'absent' }] };
+  const record = envelope({ artifactId: 'R28-02', predecessorHashes: [] });
+  record.payloadSha256 = await sha256(canonical(record.payload));
+  const result = validateEnvelope(record, entry, { roster: roster(), records: new Map(), registry: { externalRoots: { 'benchmark-spec': 'not-a-hash' } } });
+  const messages = result.errors.filter((error) => error.code === 'PRE-MISSING').map((error) => error.message);
+  assert(messages.some((message) => /external root benchmark-spec is malformed/.test(message)), JSON.stringify(messages));
+  assert(messages.some((message) => /missing external root absent/.test(message)), JSON.stringify(messages));
+  assert(!messages.some((message) => /missing external root benchmark-spec/.test(message)), JSON.stringify(messages));
+});
+
+// #341 (2026-10-17): the pointer schema accepts a FLAT pointer ({ artifactId, promotion })
+// and forbids it any other member, but validate compared metaOf(pointer).package - for a
+// flat pointer, an absent value - with the registry, so such a pointer was PTR-PACKAGE
+// every time. The flat form is judged by promotion.package alone.
+test('a schema-valid flat promotion pointer reaches the promotion checks instead of PTR-PACKAGE', async () => {
+  const { validateRelease, runSchemaConformance } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const { ledgerPath, ...paths } = await writePointerRelease(root);
+    const pointerFile = path.join(paths.pointersDir, 'R28-04.json');
+    const nested = JSON.parse(fs.readFileSync(pointerFile, 'utf8'));
+    const flat = { artifactId: 'R28-04', promotion: nested.payload.promotion };
+    writeJson(pointerFile, flat);
+    const conform = runSchemaConformance({ files: [pointerFile], schemaPath: path.resolve('research-kit/schemas/promotion-pointer.schema.json') });
+    assertEqual(conform.status, 'PASS', JSON.stringify(conform));
+    const result = validateRelease(paths);
+    assert(!result.errors.some((error) => error.code === 'PTR-PACKAGE'), JSON.stringify(result.errors));
+    assert(!result.errors.some((error) => /^SCHEMA-/.test(error.code)), JSON.stringify(result.errors));
+    assert(result.errors.some((error) => error.code === 'PTR-COMMIT'), `the promotion checks must still run: ${JSON.stringify(result.errors)}`);
+    writeJson(pointerFile, { ...flat, promotion: { ...flat.promotion, package: 'R29' } });
+    const wrong = validateRelease(paths);
+    assert(wrong.errors.some((error) => error.code === 'PTR-PACKAGE' && error.path === '.promotion.package'), JSON.stringify(wrong.errors));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// Review of #336 (2026-10-18): summarizeLedgerHistory looked a promotion's package up with
+// `promotionTimelines[packageName]`, so "constructor", "__proto__" or "toString" found an
+// Object.prototype member and `.push` threw - on every `validate --ledger`. A package that
+// is not one of the six is skipped, as an unknown one always was.
+test('the ledger history summary skips a promotion whose package is a prototype name', async () => {
+  const { summarizeLedgerHistory } = await import('../lib/release-validator.mjs');
+  const records = ['constructor', '__proto__', 'toString', 'R28'].map((packageName, index) => ({
+    recordKind: 'promotion-commit', recordId: `rec-${index}`, package: packageName, physicalSequence: index + 1, payload: {},
+  }));
+  records.push({ recordKind: 'promotion-commit', recordId: 'rec-payload', physicalSequence: 9, payload: { package: 'hasOwnProperty' } });
+  let summary;
+  try { summary = summarizeLedgerHistory(records); } catch (error) { assert(false, `threw ${error.stack}`); }
+  assertEqual(JSON.stringify(Object.keys(summary.promotionTimelines)), JSON.stringify(['R28', 'R29', 'R30', 'R31', 'R32', 'R33']));
+  assertEqual(JSON.stringify(summary.promotionTimelines.R28.map((entry) => entry.recordId)), JSON.stringify(['rec-3']));
+});
+
+// Review of #340 (2026-10-18): a ledger record with no `payload` made payloadHash throw
+// "undefined is not canonical JSON" out of verifyQualificationLedger, so `validate
+// --ledger` crashed with a stack instead of naming the record. It is LEDGER-PAYLOAD-HASH.
+test('ledger verification reports a record without a payload as LEDGER-PAYLOAD-HASH', async () => {
+  const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+  const records = [{ ledgerVersion: '1.0.0', physicalSequence: 1, recordKind: 'prepare', prevChainHash: '0'.repeat(64), payloadSha256: 'e'.repeat(64) }];
+  let result;
+  try { result = verifyQualificationLedger({ records, pointer: {} }); } catch (error) { assert(false, `threw ${error.stack}`); }
+  assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+  assert(result.errors.some((error) => error.code === 'LEDGER-PAYLOAD-HASH'), JSON.stringify(result.errors));
 });
 
 test('nested promotion pointers require a committed promotion and verify pointer linkage', async () => {

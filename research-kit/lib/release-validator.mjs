@@ -317,7 +317,9 @@ export function summarizeLedgerHistory(records = []) {
     if (!['promotion-intent', 'promotion-commit', 'promotion-revoke'].includes(record.recordKind)) continue;
     const payload = record.payload && typeof record.payload === 'object' ? record.payload : {};
     const packageName = record.package ?? payload.package;
-    if (!promotionTimelines[packageName]) continue;
+    // One of the six by name: a lookup found Object.prototype members for "constructor",
+    // "__proto__" or "toString", and `.push` threw on every --ledger run (review of #336).
+    if (!packages.includes(packageName)) continue;
     const entry = {
       recordId: record.recordId ?? null,
       eventId: record.eventId ?? null,
@@ -478,7 +480,12 @@ export function verifyQualificationLedger({ records: suppliedRecords, ledgerPath
     if (!Number.isInteger(record.physicalSequence) || record.physicalSequence !== expectedSequence) add(errors, 'LEDGER-SEQUENCE', `expected physicalSequence ${expectedSequence}`, `${at}.physicalSequence`, 'FAIL');
     expectedSequence = Number.isInteger(record.physicalSequence) ? record.physicalSequence + 1 : expectedSequence;
     if (record.prevChainHash !== previous) add(errors, 'LEDGER-CHAIN', 'prevChainHash does not match the verified prefix', `${at}.prevChainHash`, 'FAIL');
-    if (record.payloadSha256 !== payloadHash(record.payload)) add(errors, 'LEDGER-PAYLOAD-HASH', 'payloadSha256 does not match canonical payload', `${at}.payloadSha256`, 'FAIL');
+    // A record with no payload, or one canonical JSON refuses, has no payload hash to
+    // match; payloadHash threw "undefined is not canonical JSON" and `validate --ledger`
+    // crashed with a stack (review of #340, 2026-10-18).
+    let canonicalPayloadHash = null;
+    try { canonicalPayloadHash = payloadHash(record.payload); } catch { canonicalPayloadHash = null; }
+    if (canonicalPayloadHash === null || record.payloadSha256 !== canonicalPayloadHash) add(errors, 'LEDGER-PAYLOAD-HASH', 'payloadSha256 does not match canonical payload', `${at}.payloadSha256`, 'FAIL');
     if (record.recordHash !== qualificationRecordHash(record)) add(errors, 'LEDGER-RECORD-HASH', 'recordHash does not match canonical record bytes', `${at}.recordHash`, 'FAIL');
     if (record.chainHash !== qualificationChainHash(record)) add(errors, 'LEDGER-CHAIN', 'chainHash does not match canonical chain bytes', `${at}.chainHash`, 'FAIL');
     previous = record.chainHash;
@@ -769,9 +776,15 @@ function checkPredecessors(record, entry, context, errors) {
   for (const selector of entry.predecessors ?? []) {
     if (!selector || typeof selector !== 'object') { add(errors, 'PRE-MISMATCH', 'invalid predecessor selector', '.predecessors'); continue; }
     if (selector.kind === 'external') {
-      const hash = selector.hash ?? context.registry?.externalRoots?.[selector.id];
+      // An own member only: a root named after an Object.prototype property is absent, not
+      // a function (#336). An absent root and a present, malformed one are told apart (#335).
+      const roots = context.registry?.externalRoots;
+      const hash = selector.hash ?? (roots && typeof roots === 'object' && Object.hasOwn(roots, String(selector.id)) ? roots[selector.id] : undefined);
       if (!HASH.test(String(hash ?? ''))) {
-        add(errors, 'PRE-MISSING', `missing external root ${selector.id ?? ''}`, '.predecessorHashes', 'INCOMPLETE');
+        const message = hash === undefined || hash === null
+          ? `missing external root ${selector.id ?? ''}`
+          : `external root ${selector.id ?? ''} is malformed: not a SHA-256 hex digest`;
+        add(errors, 'PRE-MISSING', message, '.predecessorHashes', 'INCOMPLETE');
         context.closure.missing.push(selector.id ?? 'external');
         continue;
       }
@@ -889,7 +902,10 @@ function validatePointer(pointer, entry, context, errors) {
   const promotion = pointerPayload(pointer);
   if (!promotion || typeof promotion !== 'object') { add(errors, 'PTR-STATE', 'promotion object is missing', '.promotion'); return; }
   if (meta.artifactId !== entry.artifactId) add(errors, 'PTR-LINK', 'pointer artifactId does not match registry', '.artifactId');
-  if (meta.package !== entry.package) add(errors, 'PTR-PACKAGE', 'pointer envelope package does not match registry', '.package');
+  // Only a nested pointer has an envelope package. The flat form the pointer schema accepts
+  // ({ artifactId, promotion }, no other member) is judged by promotion.package below;
+  // comparing its absent envelope package made every flat pointer PTR-PACKAGE (#341).
+  if ((nestedRecord(pointer) || meta.package !== undefined) && meta.package !== entry.package) add(errors, 'PTR-PACKAGE', 'pointer envelope package does not match registry', '.package');
   if (meta.state !== undefined && meta.state !== 'sealed') add(errors, 'PTR-STATE', 'pointer envelope must be sealed', '.state');
   if (context.registry?.benchmarkSpecSha256 && meta.benchmarkSpecSha256 && meta.benchmarkSpecSha256 !== context.registry.benchmarkSpecSha256) add(errors, 'PTR-LINK', 'pointer benchmark hash does not match registry', '.benchmarkSpecSha256');
   if (context.registry?.roleRosterSha256 && meta.roleRosterSha256 && meta.roleRosterSha256 !== context.registry.roleRosterSha256) add(errors, 'ROLE-10', 'pointer role roster hash does not match registry', '.roleRosterSha256', 'REOPEN');
@@ -964,7 +980,13 @@ export function runSchemaConformance({ files = [], schemaPath, schema } = {}) {
     const loaded = readJson(file);
     if (loaded.error) { errors.push({ code: loaded.code ?? 'SCHEMA-READ', message: loaded.error.message, path: file, status: 'INCOMPLETE' }); continue; }
     const local = [];
-    validateJsonSchema(loaded.value, actualSchema, { errors: local });
+    // A const or enum comparison runs in canonical JSON, which refuses an unpaired
+    // surrogate by throwing; `conform` crashed with a stack and exit 1. The document was
+    // read and is not canonical: a FAIL finding (review of #340, 2026-10-18).
+    try { validateJsonSchema(loaded.value, actualSchema, { errors: local }); } catch (error) {
+      if (!/is not canonical JSON/.test(String(error?.message))) throw error;
+      local.push({ code: 'SCHEMA-CANONICAL', message: `document is not canonical JSON: ${error.message}`, path: '$' });
+    }
     for (const error of local) errors.push({ ...error, path: `${file}:${error.path}`, status: 'FAIL' });
   }
   return { validatorVersion: VALIDATOR_VERSION, status: resultStatus(errors), files: [...files].sort(), errors };

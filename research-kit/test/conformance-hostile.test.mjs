@@ -125,6 +125,56 @@ test('an astral character is still canonical, and Node and Python hash it alike'
   }
 });
 
+// #336 (2026-10-17): Node's reader fed a "__proto__" key to the prototype setter, so the
+// member dropped out of the canonical form ({"a":1}) while Python kept it - one vector,
+// hash.mismatch in one language and PASS in the other. Both must keep it.
+test('a "__proto__" key is canonicalised alike by Node and Python', () => {
+  const python = requirePython('Node/Python agreement on a "__proto__" key');
+  const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED['ledger-conformance.mjs']), 'utf8'));
+  const canonical = '{"__proto__":{"artifactId":"R28-01"},"a":1}';
+  packet.vectors = [{
+    ...packet.vectors[0], value: JSON.parse(canonical), expectedCanonical: canonical,
+    expectedSha256: crypto.createHash('sha256').update(canonical).digest('hex'),
+  }];
+  const file = path.join(tempDir('rk-proto-'), 'packet.json');
+  const text = JSON.stringify(packet); // JSON.parse made "__proto__" an own key, so it is written
+  assert.match(text, /"__proto__":\{"artifactId":"R28-01"\}/);
+  fs.writeFileSync(file, text);
+  for (const [exe, runner] of [[process.execPath, 'ledger-conformance.mjs'], [python, 'ledger_conformance.py']]) {
+    const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8' });
+    assert.equal(JSON.parse(r.stdout).status, 'PASS', `${runner} hashed other bytes:\n${(r.stdout || r.stderr).slice(0, 600)}`);
+    assert.equal(r.status, 0, runner);
+  }
+});
+
+// Review of #340 (2026-10-18): a guard that made the schema subset treat an unpaired
+// surrogate as unequal to every const, enum member and other item moved the FI runner's
+// Node answer to SCHEMA-ONE-OF/SCHEMA-CONST/SCHEMA-PATTERN/SCHEMA-ADDITIONAL while Python
+// still said JSON-PARSE. The refusal stays a throw in the schema subset, so both agree.
+// The vectors live in a test-local packet built from the shipped one.
+test('an unpaired surrogate in an FI const, enum or unique item gets one code from Node and Python', () => {
+  const python = requirePython('Node/Python agreement on an FI unpaired surrogate');
+  const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED['fi-sidecar-conformance.mjs']), 'utf8'));
+  const field = packet.documents.sidecar.fields[0];
+  packet.vectors = [
+    ['X-SUR-ENUM', [{ op: 'set', path: '/status', value: '\ud800' }]],
+    ['X-SUR-CONST', [{ op: 'set', path: '/recordVersion', value: '\ud800' }]],
+    ['X-SUR-UNIQUE', [{ op: 'set', path: '/fields/0/evidenceIds', value: ['\ud800', '\ud800'] }]],
+    ['X-SUR-NOTES', [{ op: 'set', path: '/fields', value: [{ ...field, note: '\ud800' }, { ...field, note: '\ud800' }] }]],
+  ].map(([vectorId, patches]) => ({ vectorId, target: 'sidecar', base: 'sidecar', patches, expectedCode: 'JSON-PARSE' }));
+  const file = path.join(tempDir('rk-fi-surrogate-'), 'packet.json');
+  fs.writeFileSync(file, JSON.stringify(packet)); // JSON.stringify writes a lone surrogate as \ud800
+  const rows = [[process.execPath, 'fi-sidecar-conformance.mjs'], [python, 'fi_sidecar_conformance.py']].map(([exe, runner]) => {
+    const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8' });
+    assert.doesNotMatch(r.stderr, /Traceback|at .*\.mjs:\d+/, `${runner} crashed:\n${r.stderr.slice(-400)}`);
+    return JSON.parse(r.stdout).vectors;
+  });
+  for (const node of rows[0]) {
+    const py = rows[1].find((row) => row.vectorId === node.vectorId);
+    assert.equal(py?.observedCode, node.observedCode, `${node.vectorId}: Python says ${py?.observedCode}, Node says ${node.observedCode}`);
+  }
+});
+
 // ADR-0083 (2026-09-28, Arena break test 11): both languages refuse a packet nested deeper
 // than 256 levels, and agree below it. Node took thousands of levels and CPython about
 // 300 before its canonicaliser hit the recursion limit, so the same packet was a result in

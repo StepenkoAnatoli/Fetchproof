@@ -17,20 +17,34 @@ function segments(pointer) {
   if (typeof pointer !== 'string' || !pointer.startsWith('/') || pointer === '/') throw packetError('patch path must be a non-root JSON pointer');
   return pointer.slice(1).split('/').map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'));
 }
+// A path segment names an OWN member, as in the Python twin: `part in parent` found every
+// Object.prototype name, so "/__proto__/polluted" walked into Object.prototype and the set
+// polluted it for the whole process, where Python refused the path as absent (review of
+// #336, 2026-10-18). The last member is defined, not assigned, so a "__proto__" key is a
+// member here as it is in Python, and a set reaches only a container Python would set.
+function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+function isIndex(parent, part) { return /^(?:0|[1-9]\d*)$/.test(part) && Number(part) < parent.length; }
 function patch(base, patches) {
   const value = clone(base);
   if (!Array.isArray(patches)) throw packetError('patches must be an array');
   for (const operation of patches) {
     if (!operation || !['set', 'remove'].includes(operation.op)) throw packetError('patch operation must be set or remove');
     const parts = segments(operation.path); let parent = value;
+    const absent = () => packetError(`patch path does not exist: ${operation.path}`);
     for (const part of parts.slice(0, -1)) {
-      if (Array.isArray(parent) ? !/^(?:0|[1-9]\d*)$/.test(part) || Number(part) >= parent.length : !parent || typeof parent !== 'object' || !(part in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
+      if (Array.isArray(parent) ? !isIndex(parent, part) : !isRecord(parent) || !Object.hasOwn(parent, part)) throw absent();
       parent = parent[part];
     }
     const key = parts.at(-1);
-    if (operation.op === 'set') parent[key] = clone(operation.value);
-    else {
-      if (Array.isArray(parent) ? !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= parent.length : !parent || typeof parent !== 'object' || !(key in parent)) throw packetError(`patch path does not exist: ${operation.path}`);
+    if (operation.op === 'set') {
+      if (Array.isArray(parent)) {
+        if (!isIndex(parent, key)) throw absent();
+        parent[Number(key)] = clone(operation.value);
+      } else if (isRecord(parent)) {
+        Object.defineProperty(parent, key, { value: clone(operation.value), enumerable: true, writable: true, configurable: true });
+      } else throw absent();
+    } else {
+      if (Array.isArray(parent) ? !isIndex(parent, key) : !isRecord(parent) || !Object.hasOwn(parent, key)) throw absent();
       Array.isArray(parent) ? parent.splice(Number(key), 1) : delete parent[key];
     }
   }
