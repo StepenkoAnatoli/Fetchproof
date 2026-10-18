@@ -520,7 +520,8 @@ test('PP: RESEARCH_KIT_HOME outranks the OS profile, in the module as well as th
 test('PP: an explicit argument beats the environment variable', () => {
   const explicit = path.join(tempDir('rk-explicit-'), 'c.json');
   assert.equal(configPath({ RESEARCH_KIT_CONFIG: '/from/env.json' }, explicit), path.resolve(explicit));
-  assert.equal(configPath({ RESEARCH_KIT_CONFIG: '/from/env.json' }), '/from/env.json');
+  // Resolved, as the explicit argument is (#367): on Windows a rooted path gains its drive.
+  assert.equal(configPath({ RESEARCH_KIT_CONFIG: '/from/env.json' }), path.resolve('/from/env.json'));
 });
 
 test('PP: with neither, the config sits under the RESEARCH_KIT_HOME agents root', () => {

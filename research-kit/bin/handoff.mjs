@@ -4,13 +4,15 @@
 // It asks the arrival question and names whatever is missing. It cannot repair anything:
 // the machine that asks cannot collect the missing bytes.
 
-import { parseFlags, refuseUnknownFlags, kitCommand, exitAfterFlush } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, kitCommand, exitAfterFlush } from '../lib/core.mjs';
 import { verifyHandoff, handoffRemedy } from '../lib/handoff.mjs';
 import { machineRole } from '../lib/machine.mjs';
 import { heading } from '../lib/render.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'json']);
+// No flag here takes a value, so a word after one is an argument (#289).
+checkFlagValues(flags, {});
 const root = process.cwd();
 
 if (flags.help) {

@@ -33,6 +33,16 @@ fi
 
 KIT_HOME="${RESEARCH_KIT_HOME:-$HOME/.agents/research-kit}"
 CONFIG="${RESEARCH_KIT_CONFIG:-$HOME/.agents/research-kit.config.json}"
+# lib/machine.mjs drops trailing separators of both kinds from this path (#367); tested as
+# typed, `rk.json/` - or `rk.json\` on Windows - named no file here and the posture fell to the
+# absent default. A relative value resolves against the top level git runs this hook from,
+# which is where lib/machine.mjs resolves it from any subdirectory.
+while :; do
+  case "$CONFIG" in
+    ?*/|?*\\) CONFIG="${CONFIG%?}" ;;
+    *) break ;;
+  esac
+done
 
 # The operator's bound on the whole gate, read in the one grammar lib/gate.mjs reads it in
 # (gateTimeoutSeconds): seconds, with an optional fraction and an optional s, m, h or d, and at

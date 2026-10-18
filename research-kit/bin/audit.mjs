@@ -132,6 +132,10 @@ if (!result.written) {
 process.stdout.write(`${heading(`audit v${result.version}`)}\n`);
 process.stdout.write(`${result.main}\n`);
 for (const file of result.subtopics) process.stdout.write(`${file}\n`);
+if (result.continued) {
+  process.stdout.write(`\ncontinuing ${result.continued.as} as v${result.version}: the slug spelling changed, the topic did not\n`
+    + `  (it would be ${result.continued.from} today; audits keep the name they were first written under)\n`);
+}
 const others = held.filter((slug) => slug !== result.slug);
 if (!held.includes(result.slug) && others.length) {
   process.stdout.write(`\nThis started a NEW topic, \`${result.slug}\` - the map's topic line decides the\n`

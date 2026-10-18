@@ -9,22 +9,23 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { PATHS, resolve, exists, isDirectory, readText, tempBase, looksBinary } from './core.mjs';
 import { verdictContext, runPreflight } from './preflight.mjs';
-import { isGated } from './gate.mjs';
+import { isGated, isProjectBelowTop } from './gate.mjs';
 import { verifyHandoff, handoffRemedy } from './handoff.mjs';
 import { validateProject, hookExecutability, GATE_MARKERS, KIT_ROOT } from './scaffold.mjs';
-import { settingsState, deployedDrift, driftNote, handOnState } from './installer.mjs';
+import { settingsState, deployedDrift, driftNote, handOnState, boundDrift } from './installer.mjs';
 import { recordOverride } from './provenance.mjs';
-import { probeFirecrawl, selectTransport } from './transport.mjs';
-import { loadConfig, configPath } from './machine.mjs';
+import { probeFirecrawl, selectTransport, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES } from './transport.mjs';
+import { loadConfig, configPath, CONFIG_KEY_HOLDS } from './machine.mjs';
 import { cliInstallSpec, cliCompatibility } from './firecrawl.mjs';
-import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice } from './runtime.mjs';
+import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice, internalRedirectsSetting, INTERNAL_REDIRECTS_VARIABLE } from './runtime.mjs';
 import { verifyBundle, bundleSummary } from './bundle.mjs';
 import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
   hooksPath, hooksPathEffective, runtimePaths, skillLocations,
-  readInstallState, gitVersion, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
+  readInstallState, runGit, gitFailure, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
   EDIT_GATE_HOOK, KIT_HOME, INSTALL_STATE_PATH, namesHook,
 } from './machine.mjs';
 
@@ -51,10 +52,18 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
       ? `Posture (${post.failOpen ? 'fail-open' : 'fail-CLOSED'}) and role (${read.settings.role}) held from ${read.snapshotSource}, the last config that parsed.`
       : 'There is no last-good snapshot: fail-CLOSED, role unknown.';
     out.push(f('critical', 'machine-config',
-      `${read.source} exists and does not parse (${read.error}). ${resolution}`,
+      `${read.source} exists and ${read.problem}. ${resolution}`,
       'repair or delete the config file; the kit keeps a <config>.last-good snapshot beside it'));
   } else {
     out.push(f('pass', 'machine-config', `${read.state} (${read.source}); posture: ${post.failOpen ? 'fail-open' : 'fail-closed'}`));
+  }
+  // A relative value is read against the repository's top level, where git runs the commit
+  // hook, or the working directory outside one (#367): every folder of one repository names the
+  // file above, and another repository, or a folder outside any, names another file.
+  if (env.RESEARCH_KIT_CONFIG && !path.isAbsolute(env.RESEARCH_KIT_CONFIG)) {
+    out.push(f('warn', 'machine-config',
+      `RESEARCH_KIT_CONFIG="${env.RESEARCH_KIT_CONFIG}" is relative: here it names ${read.source}, read against the repository's top level (the working directory outside one), so another repository or folder names another file`,
+      'set RESEARCH_KIT_CONFIG to an absolute path'));
   }
 
   for (const key of read.retiredKeys) {
@@ -62,12 +71,26 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
       `"${key}" is a retired config key, read into ${RETIRED_CONFIG_KEYS[key] ?? 'the current shape'}; the next kit write drops it`));
   }
   // A posture key the operator typed and the kit could not read as typed resolved to its
-  // restrictive state (ADR-0121); the one thing doctor owes is WHICH key, and to what.
+  // restrictive state (ADR-0121); the one thing doctor owes is WHICH key, and to what. Every
+  // other typed key resolved to its default (#310), and is named in what it should hold.
   const resolvedTo = { failOpen: 'fail-closed', evidencePolicy: 'strict', 'editGate.mode': 'hard-block' };
+  const postureReads = { failOpen: 'true or false, unquoted', evidencePolicy: 'pluralist or strict', 'editGate.mode': 'ask, hard-block or off' };
+  const holds = {
+    ...CONFIG_KEY_HOLDS,
+    transport: `a string (one of ${TRANSPORT_NAMES.join(', ')})`,
+    searchTransport: `a string (one of ${SEARCH_PROVIDER_NAMES.join(', ')})`,
+  };
   for (const key of read.illTypedKeys ?? []) {
-    out.push(f('warn', 'config-ill-typed',
-      `"${key}" is present and not a value the kit reads (${key === 'failOpen' ? 'true or false, unquoted' : key === 'evidencePolicy' ? 'pluralist or strict' : 'ask, hard-block or off'}) - resolved to ${resolvedTo[key] ?? 'its restrictive state'} until it is fixed`,
+    out.push(f('warn', 'config-ill-typed', postureReads[key]
+      ? `"${key}" is present and not a value the kit reads (${postureReads[key]}) - resolved to ${resolvedTo[key]} until it is fixed`
+      : `"${key}" is present and not ${holds[key] ?? 'of its type'} - ${key === 'skillRoots' ? 'only the paths in it are read, and the default roots when none is left,' : 'the default is used'} until it is fixed`,
       `fix "${key}" in ${read.source}`));
+  }
+  // The same rule for the one posture value read from the environment (#290): a spelling the
+  // transports cannot read refuses the internal network, and the operator is told which.
+  const internal = internalRedirectsSetting(env);
+  if (internal.problem) {
+    out.push(f('warn', 'config-ill-typed', internal.problem, `set ${INTERNAL_REDIRECTS_VARIABLE} to 1 or 0, or unset it`));
   }
   for (const note of retiredEnvNotes(env)) {
     out.push(f('warn', 'env-retired',
@@ -108,10 +131,15 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
         'upgrade to Node 22.21 or later on the 22 line, or to 24 or 26'));
   }
 
-  const version = gitVersion(gitPaths);
-  out.push(version
-    ? f('pass', 'git', version)
-    : f('fail', 'git', 'git is not on PATH - the commit gate cannot install', 'install git 2.9 or newer'));
+  // "Not on PATH" only when git could not be started (#363): a git that ran and refused - a
+  // global gitconfig it cannot parse, `fatal: bad config line 1` - was named missing, and the
+  // fix offered was to install the git that was already there.
+  const version = runGit(['--version'], gitPaths);
+  out.push(version.ok
+    ? f('pass', 'git', version.out)
+    : version.missing
+      ? f('fail', 'git', 'git is not on PATH - the commit gate cannot install', 'install git 2.9 or newer')
+      : f('fail', 'git', `${gitFailure(version)} - the commit gate cannot install`, 'repair the file git names (often the global gitconfig), then run doctor again'));
 
   const state = probe();
   // A collector that CHOSE a route without Firecrawl is configured, not broken (ADR-0095).
@@ -223,6 +251,33 @@ export function commitGateState({ hooksPath: dir, kitHome = KIT_HOME } = {}) {
  */
 export { handOnState };
 
+/**
+ * The repository's top level when `root` is below it, in git's spelling; null when `root` is
+ * the top level or in no repository (#309). Compared by real path, because git names the top
+ * level by its real path and `root` may carry an 8.3 or symlinked spelling.
+ */
+function topLevelAbove(root, gitPaths) {
+  const top = repoTopLevel({ ...gitPaths, cwd: root });
+  if (!top) return null;
+  const real = (p) => {
+    try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
+  };
+  const fold = (p) => (process.platform === 'win32' ? real(p).toLowerCase() : real(p));
+  return fold(top) === fold(root) ? null : path.resolve(top);
+}
+
+/** Whether the index holds this project's contract: tracked, or staged in the commit to come. */
+function contractInIndex(root, gitPaths) {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', PATHS.discovery], {
+      cwd: root, env: gitPaths.env ?? process.env, stdio: 'ignore', windowsHide: true, timeout: 10_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function gateHealth(root, { env = process.env, gitPaths = {}, record = true } = {}) {
   const out = [];
   const global = hooksPath('global', gitPaths);
@@ -235,7 +290,32 @@ export function gateHealth(root, { env = process.env, gitPaths = {}, record = tr
     const state = commitGateState({ hooksPath: global, kitHome: readInstallState(env)?.kitHome ?? KIT_HOME });
     const repair = kitCommand('install-hooks.mjs');
     if (state.state === 'current') {
-      out.push(f('pass', 'gate-commit', `${global} (pre-commit ${state.mode.reason})`));
+      // "Installed" is true of the machine; whether the gate judges THIS project depends on where
+      // git runs it (#309): at the repository's top level. Below it, the gate judges a staged
+      // path by its nearest project - its research/DISCOVERY.md tracked or staged, with
+      // research/raw/ or the contract new-project rendered (ADR-0182) - unless the top level is
+      // itself gated, and then its verdict is the one asked, never this project's. doctor said a
+      // bare pass from packages/a.
+      const below = isGated(root) ? topLevelAbove(root, gitPaths) : null;
+      if (below && isGated(below)) {
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and that root is itself a gated project: the commit gate judges every staged path by the root's verdict, never by this project's`));
+      } else if (below && !isProjectBelowTop(root)) {
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and it is not recognised there: below the root the commit gate judges a folder holding ${PATHS.discovery} together with ${PATHS.raw}/ or the contract new-project writes`,
+          kitCommand('new-project.mjs', '.')));
+      } else if (below && !contractInIndex(root, gitPaths)) {
+        // The commit gate finds a project below the root by its tracked contract (ADR-0182); a
+        // scaffold nobody has committed yet is judged only once its contract is staged.
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and its ${PATHS.discovery} is not tracked or staged: until it is, the commit gate does not judge this project`,
+          `git add ${PATHS.discovery}, and commit it`));
+      } else if (below) {
+        out.push(f('pass', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - this project is below the repository root (${below}); git runs the commit gate there, and it judges the staged paths under this project by this project's gate`));
+      } else {
+        out.push(f('pass', 'gate-commit', `${global} (pre-commit ${state.mode.reason})`));
+      }
     } else if (state.state === 'foreign') {
       out.push(f('fail', 'gate-commit',
         `core.hooksPath is ${global}, which is NOT the deployed kit's ${state.expected} - the commit gate that runs belongs to another tree and blocks, or passes, on its own rules`,
@@ -579,6 +659,18 @@ export function runDoctor(root, { env = process.env, gitPaths = {}, probe = prob
     findings.push(stale
       ? f('warn', 'skill', `${location} is STALE - ${stale} file(s) differ from this tree, so the protocol an agent reads is not the one here`)
       : f('pass', 'skill', `${location}`));
+  }
+  // The copy `install --into` bound into THIS project (#328), compared the way the personal root
+  // is: it is committed here and is the protocol a cloud or Cowork session here reads (ADR-0006),
+  // and doctor had looked only at the personal root and said pass while this one differed.
+  const bound = boundDrift({ root, env }).filter((s) => !skillLocations(env).some((l) => samePath(l, s.location)));
+  if (bound.length) {
+    const stale = bound.filter((s) => s.missing.length + s.changed.length + (s.set ? s.extra.length : 0));
+    const named = stale.slice(0, 3).map((s) => s.location).join(', ') + (stale.length > 3 ? ` and ${stale.length - 3} more` : '');
+    findings.push(stale.length
+      ? f('warn', 'skill', `${named} - bound into this project, and STALE: it differs from this tree, so the protocol a session here reads is not the one here`,
+        `node ${path.join(KIT_ROOT, 'bin', 'install.mjs')} --into .`)
+      : f('pass', 'skill', `${bound[0].location} - bound into this project${bound.length > 1 ? `, with ${bound.length - 1} set skill(s) beside it` : ''}, and current`));
   }
 
   const blocking = findings.filter((x) => x.severity === 'fail' || x.severity === 'critical');

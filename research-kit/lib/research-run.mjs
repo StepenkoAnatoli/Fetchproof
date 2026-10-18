@@ -6,9 +6,9 @@
 // Every scrape spends a credit, so the budget is a first-class input: a tier caps the
 // run, a cache hit is never an attempt, and `--dry-run` spends nothing.
 
-import { PATHS, resolve, readJson, readText, today, hostOf, uniq, sleepSync, urlKey, operatorPath } from './core.mjs';
+import { PATHS, HEADERS, resolve, readJson, readText, today, hostOf, uniq, sleepSync, urlKey, operatorPath } from './core.mjs';
 import * as firecrawl from './firecrawl.mjs';
-import { readCorpus, cacheDecision, appendJsonLine } from './corpus.mjs';
+import { readCorpus, cacheDecision, appendJsonLine, parseTable } from './corpus.mjs';
 import { assertAppendable } from './provenance.mjs';
 import { collectOne, recentlyGone, DEFAULT_SOURCE_TYPE } from './collect.mjs';
 import { creditsPolicy } from './credits.mjs';
@@ -60,8 +60,26 @@ export function preferList(value) {
  * moment before a run: "depth": "thorough" ran as quick, "maxScrapes": "five" as 10, a
  * query written {"query": ...} was skipped so the run did nothing, and "not a url" and
  * ftp:// were queued for fetching - all in silence (found 2026-09-27).
+ *
+ * Two fields decide whether a fetched page can count at all, and both were taken on trust
+ * until 2026-10-17 (#291): a url `type` outside P, S and L, and a `why` naming an unknown
+ * the contract does not declare, were fetched and recorded, and only the gate - after the
+ * spend - said the row was unusable. `unknowns` is the contract's ids (`readCorpus(root)
+ * .unknowns`); null when there is no contract to judge against, and `why` is not judged.
+ * A `why` that names no unknown at all is allowed - an exploratory query - and is said by
+ * `planWarnings`, not refused here.
+ *
+ * A URL carrying a user name or password is refused (#308): the ledger records every URL
+ * and command verbatim and is never edited, so a credential pasted from an address bar
+ * would stay in the repository's history. The problem names the host, never the secret.
  */
-export function planProblems(plan) {
+const SOURCE_TYPES = Object.freeze(['P', 'S', 'L']);
+// A URL that does not parse is still repeated in its problem; whatever stands between its
+// scheme and an `@` is masked first, so a credential in it is not printed either.
+const maskUserinfo = (url) => String(url).replace(/^([a-z][a-z0-9+.-]*:[\\/]*)[^\\/?#]*@/i, '$1…@');
+const unknownIds = (why) => uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+
+export function planProblems(plan, { unknowns = null } = {}) {
   const out = [];
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return ['the plan must be a JSON object'];
   if (plan.depth !== undefined && !DEPTHS.includes(plan.depth)) out.push(`depth must be one of ${DEPTHS.join(', ')}, not ${JSON.stringify(plan.depth)}`);
@@ -71,18 +89,69 @@ export function planProblems(plan) {
     }
   }
   const text = (v) => typeof v === 'string' && v.trim() !== '';
+  const declared = Array.isArray(unknowns) ? new Set(unknowns.map((id) => String(id).toUpperCase())) : null;
+  const judgeWhy = (entry, at) => {
+    if (!declared || !entry || typeof entry !== 'object') return;
+    const missing = unknownIds(entry.why).filter((id) => !declared.has(id));
+    if (missing.length) out.push(`${at} is for ${missing.map((id) => `"${id}"`).join(', ')}, which ${PATHS.discovery} does not declare`);
+  };
   if (plan.queries !== undefined && !Array.isArray(plan.queries)) out.push('queries must be a list: [{ "q": "..." }]');
   else (plan.queries ?? []).forEach((query, i) => {
     if (!(text(query) || (query && typeof query === 'object' && text(query.q)))) out.push(`queries[${i}] has no "q": ${JSON.stringify(query)}`);
+    judgeWhy(query, `queries[${i}]`);
   });
   if (plan.urls !== undefined && !Array.isArray(plan.urls)) out.push('urls must be a list: [{ "url": "https://..." }]');
   else (plan.urls ?? []).forEach((entry, i) => {
     const url = typeof entry === 'string' ? entry : entry?.url;
     if (typeof url !== 'string') { out.push(`urls[${i}] has no "url": ${JSON.stringify(entry)}`); return; }
-    let ok = false;
-    try { ok = ['http:', 'https:'].includes(new URL(url).protocol); } catch { /* not a URL */ }
-    if (!ok) out.push(`urls[${i}] is not an http(s) URL: ${url}`);
+    let parsed = null;
+    try { parsed = new URL(url); } catch { /* not a URL */ }
+    // Before the protocol check, whose message repeats the URL: this one must not.
+    if (parsed && (parsed.username || parsed.password)) {
+      out.push(`urls[${i}] carries credentials (…@${parsed.host}) - the ledger records every URL and command verbatim and is never edited; `
+        + 'a page behind a login is a KNOWN-UNKNOWN with a day-one verification step, not a fetch');
+    } else if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) out.push(`urls[${i}] is not an http(s) URL: ${maskUserinfo(url)}`);
+    // Read as the gate reads a row's type - trimmed, any case - and a blank one is absent:
+    // the run types it P, as it always has.
+    const type = entry && typeof entry === 'object' ? entry.type : undefined;
+    if (type !== undefined && type !== null && String(type).trim() !== '' && !SOURCE_TYPES.includes(String(type).trim().toUpperCase())) {
+      out.push(`urls[${i}] has source type ${JSON.stringify(type)} - expected P, S, or L`);
+    }
+    judgeWhy(entry, `urls[${i}]`);
   });
+  return out;
+}
+
+/**
+ * The unknown ids `research/DISCOVERY.md` declares, as `planProblems` takes them - or null
+ * when it declares none (absent, or the scaffold's empty table): nothing to judge a `why`
+ * against, and the gate already says the contract is unwritten. Only the contract is read,
+ * with the corpus loader's own table parser and id rule; `readCorpus` would read every
+ * capture and the ledger first, seconds on a large corpus, on every run and dry run.
+ */
+export function contractUnknownIds(root) {
+  const ids = parseTable(readText(resolve(root, PATHS.discovery)), HEADERS.unknowns).rows
+    .map((row) => String(row.ID ?? '').trim())
+    .filter((id) => /^U-\d+$/i.test(id));
+  return ids.length ? ids : null;
+}
+
+/**
+ * What a sound plan will do that the operator may not intend - said, never refused (#291).
+ *
+ * An entry whose `why` names no unknown is allowed, because an exploratory query is; but the
+ * row it produces supports no closure, and that is worth one line before anything is spent.
+ */
+export function planWarnings(plan) {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return [];
+  const out = [];
+  const say = (entry, at) => {
+    if (!unknownIds(entry && typeof entry === 'object' ? entry.why : '').length) {
+      out.push(`${at} names no unknown - the row will not support any closure`);
+    }
+  };
+  if (Array.isArray(plan.queries)) plan.queries.forEach((query, i) => say(query, `queries[${i}]`));
+  if (Array.isArray(plan.urls)) plan.urls.forEach((entry, i) => say(entry, `urls[${i}]`));
   return out;
 }
 
@@ -229,11 +298,14 @@ export function isPreferred(url, prefer = []) {
  * host. A search result is the vendor's text, and `javascript:` or `file:` rows were queued
  * beside real pages - the browser transport passes a URL to Chromium as it is (found
  * 2026-10-01, break-test). Plan URLs are the operator's and checked where they are read.
+ *
+ * A URL with a user name or password is not one either (#308): it would be handed to the
+ * fetch adapter and written, credential and all, into the ledger that is never edited.
  */
 export function isWebUrl(value) {
   try {
     const url = new URL(String(value));
-    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname) && !url.username && !url.password;
   } catch {
     return false;
   }
@@ -286,6 +358,8 @@ export function runResearch(root, {
   searchAdapter = null,
   // Several providers: asked in parallel and interleaved by rank. One stays one.
   searchAdapters = null,
+  // The operator named the search provider: a failure on it is not degraded (#317).
+  searchExplicit = false,
   // Taken once, when the fetch adapter reports its credits are exhausted (ADR-0086): the
   // rest of the run searches and fetches through it. Null means no fallback.
   fallbackAdapter = null,
@@ -304,7 +378,11 @@ export function runResearch(root, {
   sleep = sleepSync,
   log = () => {},
 } = {}) {
-  const ask = (provider, text) => searchPatiently(provider, text, { limit: settings.limit, maxRateLimitRetries, sleep, log });
+  // What ran out of rate-limit retries in this run - a search provider, a host a page is on -
+  // is asked again without being waited for, so the waits do not add up per query and per page.
+  const searchLimited = new Set();
+  const rateLimited = new Set();
+  const ask = (provider, text) => searchPatiently(provider, text, { limit: settings.limit, maxRateLimitRetries, sleep, log, limited: searchLimited });
 
   // Credits run out mid-run: WHAT a run does then - switch once to the fallback (ADR-0086)
   // or stop and leave the rest `uncollected` (ADR-0129) - is one policy with one state
@@ -321,7 +399,7 @@ export function runResearch(root, {
   // failure rows - is the session's (ADR-0135); this coordinator decides what to do with
   // each answer. Its failure rows land in the failure log as `op: "search"`.
   const session = searchSession({
-    adapter, searchAdapter, searchAdapters, askOne: ask, credits, log,
+    adapter, searchAdapter, searchAdapters, searchExplicit, askOne: ask, credits, log,
     record: (f) => appendJsonLine(root, PATHS.failures, {
       at: new Date().toISOString(), op: 'search', query: f.query, provider: f.provider, error: f.error,
       ...(f.degraded ? { degraded: true } : {}),
@@ -373,6 +451,10 @@ ${compatibility.remedy}`);
 
   const results = [];
   const discovered = [];
+  // What each search came to, kept in the usage line for the collector serving a builder's
+  // request (auto-collect, #321): a search whose matching results were all captured already
+  // makes no target and leaves no ledger entry, yet its pages are there to read.
+  const searchOutcomes = [];
   // `attempts` is what the BUDGET counts - the scrapes a run would make, whether or not
   // it makes them. `spent` is what it actually cost. A dry run has attempts and no
   // spend; conflating the two made a preview ignore the very cap it was previewing.
@@ -425,14 +507,26 @@ ${compatibility.remedy}`);
   // named U-01 and U-04, both closed, and every run would have paid it.
   const statusOf = new Map(corpus.unknowns.map((u) => [String(u.id).toUpperCase(), u.status]));
   const closedUnknowns = (why) => {
-    const ids = uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+    const ids = unknownIds(why);
     return ids.length && ids.every((id) => statusOf.get(id) === 'CLOSED') ? ids : [];
   };
+
+  // One question, one search (#300). URLs were queued once per page; a query written twice -
+  // two unknowns sharing a question, a decompose draft edited by hand - was searched once per
+  // copy, and on a metered provider each copy is a paid call whose results the first already
+  // returned. Compared trimmed and case-folded, the first answer is kept and each later copy
+  // is ranked from it with its own `prefer` and `why`, against the same `seen` set - so each
+  // copy still takes pages of its own, for its own unknown, as when it was searched again. A
+  // copy reuses only a search that ran and answered: one skipped as closed, or one that
+  // failed, leaves the next copy to search.
+  const queryKey = (text) => String(text).trim().toLowerCase();
+  const answered = new Map();
 
   for (const query of settings.queries) {
     const text = typeof query === 'string' ? query : query.q;
     if (!text) continue;
     if (only.length && !only.some((needle) => text.toLowerCase().includes(needle.toLowerCase()))) continue;
+    const why = typeof query === 'object' ? (query.why ?? '') : '';
     const prefer = uniq([...preferList(settings.prefer), ...preferList(typeof query === 'object' ? query?.prefer : null)]);
     if (credits.stopped) {
       countSkippedSearch();
@@ -440,14 +534,22 @@ ${compatibility.remedy}`);
       log(`  skipped   search "${text}" - credits exhausted, the run stopped`);
       continue;
     }
-    const closed = force ? [] : closedUnknowns(typeof query === 'object' ? query.why : '');
+    const closed = force ? [] : closedUnknowns(why);
     if (closed.length) {
-      const why = `${closed.join(', ')} ${closed.length === 1 ? 'is' : 'are'} closed in research/DISCOVERY.md; --force searches again`;
-      discovered.push({ query: text, results: [], note: `not run - ${why}` });
-      log(`  ${dryRun ? 'would skip' : 'skipped   '} search "${text}" - ${why}`);
+      const reason = `${closed.join(', ')} ${closed.length === 1 ? 'is' : 'are'} closed in research/DISCOVERY.md; --force searches again`;
+      discovered.push({ query: text, results: [], note: `not run - ${reason}` });
+      log(`  ${dryRun ? 'would skip' : 'skipped   '} search "${text}" - ${reason}`);
+      continue;
+    }
+    const earlier = answered.get(queryKey(text));
+    if (earlier && dryRun) {
+      const reason = `same query as "${earlier.text}", searched once`;
+      discovered.push({ query: text, results: [], note: `not run - ${reason}` });
+      log(`  skipped   search "${text}" - ${reason}`);
       continue;
     }
     if (dryRun) {
+      answered.set(queryKey(text), { text });
       discovered.push({ query: text, results: [], note: 'search not run under --dry-run' });
       wouldSearch += 1;
       // Named, because a preview that omits the searches previews nothing for a plan made of
@@ -473,13 +575,33 @@ ${compatibility.remedy}`);
         });
       }
     };
-    const found = session.ask(text);
-    if (!found.ok) continue;
-    discovered.push({ query: text, results: found.results, provider: found.provider, searchId: found.searchId });
-    noteOutcome(found.results, found.provider);
-    const eligible = found.results.filter((row) => isWebUrl(row?.url)
-      && !cacheDecision(corpus.captures, row.url, { refreshDays: freshness, force, now }).hit);
-    for (const candidate of selectCandidates(eligible, { prefer, perQuery: settings.perQuery, seen, query: text })) {
+    let found;
+    if (earlier) {
+      found = earlier.found;
+      const reason = `same query as "${earlier.text}", searched once`;
+      discovered.push({ query: text, results: found.results, provider: found.provider, searchId: found.searchId, note: `not run - ${reason}; its results ranked for this entry` });
+      log(`  skipped   search "${text}" - ${reason}; its results ranked for this entry`);
+    } else {
+      found = session.ask(text);
+      if (!found.ok) {
+        searchOutcomes.push({ query: text.slice(0, 200), failed: true });
+        continue;
+      }
+      answered.set(queryKey(text), { text, found });
+      discovered.push({ query: text, results: found.results, provider: found.provider, searchId: found.searchId });
+      noteOutcome(found.results, found.provider);
+    }
+    const captured = (row) => cacheDecision(corpus.captures, row.url, { refreshDays: freshness, force, now }).hit;
+    const eligible = found.results.filter((row) => isWebUrl(row?.url) && !captured(row));
+    const picked = selectCandidates(eligible, { prefer, perQuery: settings.perQuery, seen, query: text });
+    // The captured results this search would have picked, by the same rule.
+    const held = selectCandidates(found.results.filter((row) => isWebUrl(row?.url) && captured(row)),
+      { prefer, perQuery: settings.perQuery, query: text });
+    searchOutcomes.push({
+      query: text.slice(0, 200), results: found.results.length,
+      held: held.map((row) => row.url), targets: picked.map((row) => row.url),
+    });
+    for (const candidate of picked) {
       // Discovered by a search, not chosen by a person: context until an agent reads the
       // page and promotes it. Ranking preference is not source authority. The target row is
       // this coordinator's, and the two paths spell it differently (ADR-0135 leaves that):
@@ -490,13 +612,13 @@ ${compatibility.remedy}`);
       targets.push(found.merged ? {
         url: candidate.url,
         type: DEFAULT_SOURCE_TYPE,
-        usedFor: typeof query === 'object' ? (query.why ?? '') : '',
+        usedFor: why,
         from: 'search',
         rankedBy: (candidate.providers ?? [candidate.provider]).filter(Boolean).join('+'),
       } : {
         url: candidate.url,
         type: DEFAULT_SOURCE_TYPE,
-        usedFor: (typeof query === 'object' && query.why) || text,
+        usedFor: why || text,
         from: `query: ${text} (via ${found.provider})`,
         rankedBy: found.provider,
       });
@@ -516,13 +638,15 @@ ${compatibility.remedy}`);
     }
     seen.add(urlKey(target.url));
     const decision = cacheDecision(corpus.captures, target.url, { refreshDays: freshness, force, now });
-    // A page that answered 404/410 within the window is not fetched and takes no budget slot:
-    // the slot is for a page that may exist (found 2026-09-29, a remembered 404 had crowded out
-    // the one real page a maxScrapes 1 run had room for).
-    const gone = decision.hit ? null : recentlyGone(root, target.url, { refreshDays: freshness, force, now });
+    // A page that answered 404/410 within the window, or that the kit refused for what it is
+    // (ADR-0174), is not fetched and takes no budget slot: the slot is for a page that may
+    // exist (found 2026-09-29, a remembered 404 had crowded out the one real page a
+    // maxScrapes 1 run had room for). Logged as what it is, `gone` or `refused`.
+    // A standing 4xx is remembered for the route that got it: the live transport is asked.
+    const gone = decision.hit ? null : recentlyGone(root, target.url, { refreshDays: freshness, force, now, transport: live(adapter).name });
     if (gone) {
       results.push({ ...target, ...gone });
-      log(`  gone      ${target.url} - ${gone.reason}`);
+      log(`  ${gone.status.padEnd(9)} ${target.url} - ${gone.reason}`);
       continue;
     }
     // The budget binds in a DRY RUN too. A preview that ignores it answers a different
@@ -552,12 +676,16 @@ ${compatibility.remedy}`);
       // Empty for a plan URL - nobody's ranking chose it, a person wrote it down.
       discoveredBy: target.rankedBy ?? '',
       dryRun,
+      maxRateLimitRetries,
+      sleep,
+      rateLimited,
       log,
     });
     let outcome = fetchWith(live(adapter));
     // The refused request cost nothing (a 402 is not charged), so it is not a failed page:
-    // the same page is fetched again through the fallback.
-    if (outcome.status === 'failed' && exhausted(live(adapter), outcome.reason)) {
+    // the same page is fetched again through the fallback. A failure that is the PAGE's own
+    // answer is never exhaustion, whatever its title says (#350).
+    if (outcome.status === 'failed' && !outcome.statusRefused && exhausted(live(adapter), outcome.reason)) {
       onExhaustion(outcome.reason, `fetch ${target.url}`);
       if (credits.stopped) {
         countUncollected();
@@ -590,6 +718,7 @@ ${compatibility.remedy}`);
       ...(searchCreditsEstimate ? { searchCreditsEstimate } : {}),
       searchFailures,
       degraded,
+      ...(searchOutcomes.length ? { searchOutcomes } : {}),
     });
   }
 

@@ -16,10 +16,10 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { mainContent, htmlToMarkdown, titleOf, gradeCompleteness, isInternal, serverReason } from './http-transport.mjs';
+import { mainContent, htmlToMarkdown, titleOf, gradeCompleteness, isInternal, serverReason, bodyKind, decodeEntities, retryAfter } from './http-transport.mjs';
 import httpKeyless from './http-transport.mjs';
 import { REFUSAL_MARKER } from './browser-guard.mjs';
-import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow } from './runtime.mjs';
+import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow, internalRedirectsSetting } from './runtime.mjs';
 import { loadConfig } from './machine.mjs';
 
 const GUARD_CHILD = fileURLToPath(new URL('./browser-guard.mjs', import.meta.url));
@@ -101,8 +101,8 @@ export function guardChildTimeout(timeout = TIMEOUT_MS) {
 export function renderGuarded(binary, args, { url, env = process.env, timeout = TIMEOUT_MS, allowInternalRedirects, nodePath = process.execPath, spawn = spawnSync } = {}) {
   // ADR-0110: undefined lets the child decide from the URL asked for; the operator's opt-out,
   // or a caller's explicit choice, overrides it.
-  const allow = allowInternalRedirects ?? (env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '1' ? true
-    : env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '0' ? false : undefined);
+  // An unreadable value is a refusal, never the default (#290, internalRedirectsSetting).
+  const allow = allowInternalRedirects ?? internalRedirectsSetting(env).value;
   const job = { binary, args, url: String(url), timeout, ...(allow === undefined ? {} : { allowInternalRedirects: allow }) };
   const result = spawn(nodePath, [GUARD_CHILD], {
     input: JSON.stringify(job), encoding: 'utf8', timeout: guardChildTimeout(timeout), windowsHide: true, maxBuffer: CHILD_OUTPUT_LIMIT, env,
@@ -192,6 +192,13 @@ function canonicalUrl(url) {
  *
  * `log` is the log's text or its parsed JSON. Text that does not parse - Chromium killed at
  * the timeout leaves the file without its closing `]}` - is no status, never a guess.
+ *
+ * Beside the status, what the same response says about its body (#315): `contentType` and
+ * `retryAfter`, from the header lines after the status line ('' when absent), and `netError`
+ * - the name of the network error the document's read ended in after those headers (an event
+ * on its source carrying `net_error`, named through `constants.netError`), '' when it ended
+ * cleanly. ERR_ABORTED is not one: it is the browser stopping a load, which the deadline
+ * already grades.
  */
 export function documentStatusFromNetLog(log, requested) {
   let parsed = log;
@@ -206,25 +213,58 @@ export function documentStatusFromNetLog(log, requested) {
   if (![URL_REQUEST, START_JOB, HEADERS].every(Number.isInteger)) return null;
   const want = canonicalUrl(requested);
   if (!want) return null;
-  const requests = new Map();   // source id -> { first, mainFrame, url, statusCode }
+  const errors = parsed.constants.netError && typeof parsed.constants.netError === 'object' ? parsed.constants.netError : {};
+  const errorName = (code) => {
+    const named = Object.keys(errors).find((key) => errors[key] === code);
+    return named ? (named.startsWith('ERR_') ? named : `ERR_${named}`) : `net error ${code}`;
+  };
+  const aborted = Number.isInteger(errors.ERR_ABORTED) ? errors.ERR_ABORTED : -3;
+  const header = (lines, wanted) => {
+    const line = lines.slice(1).map(String).find((l) => l.slice(0, l.indexOf(':')).trim().toLowerCase() === wanted);
+    return line ? line.slice(line.indexOf(':') + 1).trim() : '';
+  };
+  const fresh = { statusCode: null, contentType: '', retryAfter: '', netError: '' };
+  const requests = new Map();   // source id -> { first, mainFrame, url, statusCode, contentType, retryAfter, netError }
   for (const event of events) {
     if (event?.source?.type !== URL_REQUEST) continue;
     const id = event.source.id;
+    const seen = requests.get(id);
     if (event.type === START_JOB && typeof event.params?.url === 'string') {
-      const seen = requests.get(id);
-      if (seen) { seen.url = event.params.url; seen.statusCode = null; continue; }
-      requests.set(id, { first: event.params.url, mainFrame: event.params.request_type === 'main frame', url: event.params.url, statusCode: null });
+      if (seen) { Object.assign(seen, fresh, { url: event.params.url }); continue; }
+      requests.set(id, { first: event.params.url, mainFrame: event.params.request_type === 'main frame', url: event.params.url, ...fresh });
     } else if (event.type === HEADERS) {
-      const seen = requests.get(id);
-      const line = Array.isArray(event.params?.headers) ? String(event.params.headers[0] ?? '') : '';
-      const status = /^HTTP\/[\d.]+\s+(\d{3})(?:\s|$)/.exec(line)?.[1];
-      if (seen && status) seen.statusCode = Number(status);
+      const lines = Array.isArray(event.params?.headers) ? event.params.headers : [];
+      const status = /^HTTP\/[\d.]+\s+(\d{3})(?:\s|$)/.exec(String(lines[0] ?? ''))?.[1];
+      if (seen && status) Object.assign(seen, { statusCode: Number(status), contentType: header(lines, 'content-type'), retryAfter: header(lines, 'retry-after'), netError: '' });
+    } else if (seen && seen.statusCode !== null && !seen.netError) {
+      const code = event.params?.net_error;
+      if (Number.isInteger(code) && code < 0 && code !== aborted) seen.netError = errorName(code);
     }
   }
   const asked = [...requests.values()].filter((r) => canonicalUrl(r.first) === want);
   const doc = asked.find((r) => r.mainFrame) ?? asked[0];
   if (!doc || doc.statusCode === null) return null;
-  return { statusCode: doc.statusCode, finalUrl: doc.url };
+  return { statusCode: doc.statusCode, finalUrl: doc.url, contentType: doc.contentType, retryAfter: doc.retryAfter, netError: doc.netError };
+}
+
+/**
+ * The text of a non-HTML response as Chromium rendered it (#315). Chromium's text viewer makes
+ * the body one `<pre>` holding the escaped text - a JSON body adds an empty formatter `<div>`
+ * after it (Chrome 154, 2026-10-17) - and only that shape is the response's text, entities
+ * decoded. Anything else - XML gets a tree viewer, a page may carry several `<pre>` - is the
+ * document's text with the tags taken out, and says it is not verbatim (review, 2026-10-18:
+ * the first `<pre>` of any dump had been kept as the whole response, graded full).
+ */
+const TEXT_VIEWER = /^<pre\b[^<>]*>([^<]*)<\/pre>(?:<div class="json-formatter-container"><\/div>)?$/i;
+function renderedText(html) {
+  const lower = html.toLowerCase();
+  const at = lower.indexOf('<body');
+  const open = at === -1 ? -1 : lower.indexOf('>', at);
+  const close = lower.lastIndexOf('</body>');
+  const inner = open === -1 ? html : html.slice(open + 1, close > open ? close : undefined);
+  const viewer = TEXT_VIEWER.exec(inner.trim());
+  if (viewer) return { text: decodeEntities(viewer[1]), verbatim: true };
+  return { text: decodeEntities(inner.replace(/<[^>]*>/g, ' ').replace(/[ \t]+/g, ' ').trim()), verbatim: false };
 }
 
 /** `host:port` of a URL, the port spelled out as the guard's exemption spells it; '' when it is not a URL. */
@@ -352,7 +392,7 @@ export function scrape(url, { render = renderGuarded, browserPath = null, env = 
     // refuses one (ADR-0110), unless the operator's decision - or the guard child's, for an
     // internal URL asked for - allowed it. The guard refused such a connection already; this
     // is the same rule read from what the browser reports it reached.
-    const optOut = allowInternalRedirects ?? (env.RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS === '1' ? true : undefined);
+    const optOut = allowInternalRedirects ?? internalRedirectsSetting(env).value;
     const allowed = typeof result.allowInternal === 'boolean' ? result.allowInternal
       : optOut === true || (optOut !== false && Boolean(internalByName(target)));
     // The host and port asked for are exempt, as they are at the guard: the operator named them.
@@ -366,8 +406,58 @@ export function scrape(url, { render = renderGuarded, browserPath = null, env = 
     // error page is never filed as evidence whichever transport rendered it.
     if (observed.statusCode < 200 || observed.statusCode >= 300) {
       const said = serverReason({ contentType: 'text/html', body: html });
+      // A 429, or a 503 with Retry-After, hands the server's wait to the collector's loop, as
+      // the keyless transport does (#313).
+      const retry = retryAfter(observed.statusCode, observed.retryAfter);
+      const asks = !retry ? ''
+        : observed.statusCode === 429 ? ` - rate limited, ${retry.said ? `the server asks for a retry after ${retry.said}` : 'the server named no retry time'}`
+          : ` - the server asks for a retry after ${retry.said}`;
       return { ok: false, url: target, transport: name, cmd, statusCode: observed.statusCode,
-        error: `HTTP ${observed.statusCode}${said ? ` - the server said: "${said}"` : ''}` };
+        error: `HTTP ${observed.statusCode}${asks}${said ? ` - the server said: "${said}"` : ''}`,
+        ...(retry ? { retryAfterMs: retry.ms, ...(retry.capped ? { retryAfterCapped: true } : {}) } : {}) };
+    }
+    // The body did not arrive whole: a decoding failure renders as a blank document and a
+    // cut-off body as whatever arrived, and neither is the page (#315). The keyless route
+    // records the same answers as failures ("terminated").
+    if (observed.netError) {
+      return { ok: false, url: target, transport: name, cmd, statusCode: observed.statusCode,
+        error: `the response for ${target} ended in ${observed.netError} - the body did not arrive whole, and what arrived is not kept` };
+    }
+    // What the response IS, by its Content-Type, judged as the keyless transport judges it
+    // (ADR-0105): a binary body is refused by name - Chromium rendered a viewer or nothing,
+    // never the file - and a text body is kept as its text, not run through the extractor.
+    const kind = bodyKind(observed.contentType);
+    if (kind === 'binary') {
+      const type = observed.contentType.split(';')[0].trim();
+      return { ok: false, url: target, transport: name, cmd, statusCode: observed.statusCode,
+        error: `the response is ${type}, which is not text - the browser transport cannot keep a faithful copy of it. `
+          + 'Fetch it with --transport firecrawl-cli, which converts documents such as PDFs to text, or cite an HTML page that carries the same text.' };
+    }
+    if (kind === 'text') {
+      const { text, verbatim } = renderedText(html);
+      const type = observed.contentType.split(';')[0].trim();
+      // Nothing rendered is not an empty response: a type Chromium saves rather than shows
+      // (text/csv) leaves an empty document, whatever the body held (review, 2026-10-18).
+      if (!text.length) {
+        return { ok: false, url: target, transport: name, cmd, statusCode: observed.statusCode,
+          error: `the browser rendered no text for the ${type} response - it may have been saved as a download rather than shown; nothing is kept` };
+      }
+      const waited = cutAtDeadline(result, timeout);
+      const omitted = [
+        !verbatim && `the browser rendered the ${type} response as a document; its text was read from that document, not kept verbatim`,
+        waited].filter(Boolean).join('; ');
+      return {
+        ok: true,
+        url: canonicalUrl(observed.finalUrl) !== canonicalUrl(target) ? observed.finalUrl : target,
+        title: '',
+        markdown: text,
+        source: html,          // the rendered DOM the text was read from (ADR-0140)
+        statusCode: observed.statusCode,
+        transport: name,
+        cmd,
+        completeness: omitted ? 'partial' : 'full',
+        omitted,
+      };
     }
   }
   const extraction = mainContent(html);

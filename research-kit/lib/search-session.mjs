@@ -2,10 +2,11 @@
 //
 // The ONE owner of how a query is put to the search providers: every provider under a merge
 // (interleaved by rank and attributed), otherwise the one provider with one bounded degrade
-// to the fetch provider's own search; the rate-limit patience; the meters (`searchesUsed`,
-// `searchesOn`, `searchCreditsEstimate`, `searchFailures`, `searchFailuresOn`, `degraded`);
-// one failure row per failed ask, handed to the coordinator's sink; and the refusal of a
-// provider that cannot run, before anything is spent.
+// to the fetch provider's own search, unless the operator chose that provider by name; the
+// rate-limit patience; the meters (`searchesUsed`, `searchesOn`, `searchCreditsEstimate`,
+// `searchFailures`, `searchFailuresOn`, `degraded`); one failure row per failed ask, handed
+// to the coordinator's sink; and the refusal of a provider that cannot run, before anything
+// is spent.
 //
 // `runResearch` (phase 1) and `decompose` (phase 0) each carried a copy of this loop, and
 // read side by side on 2026-10-03 the copies had drifted in six places - a failed ask
@@ -91,10 +92,18 @@ function thrownText(err) {
   try { return String(err?.message ?? err); } catch { return 'a value that cannot be rendered as text'; }
 }
 
-export function searchPatiently(provider, text, { limit, maxRateLimitRetries = 2, sleep = sleepSync, log = () => {} } = {}) {
+/**
+ * `limited` is a Set the caller keeps for one run, of the providers that ran out of rate-limit
+ * retries: one in it is asked once and not waited for, until it answers - so the waits do not
+ * add up per query (review of #313, 2026-10-18: ten queries to a provider answering a bare 429
+ * slept twenty minutes).
+ */
+export function searchPatiently(provider, text, { limit, maxRateLimitRetries = 2, sleep = sleepSync, log = () => {}, limited = null } = {}) {
   // A fetch-only transport (the browser, ADR-0088) is a failed search, said in words - never a
   // TypeError ending the run (found 2026-10-01, break-test).
   if (!canSearch(provider)) return { ok: false, query: text, results: [], error: `${provider?.name ?? 'this transport'} fetches pages but does not search` };
+  let lastTry = false;
+  let waits = 0;
   for (let attempt = 0; ; attempt += 1) {
     let r;
     try {
@@ -116,9 +125,21 @@ export function searchPatiently(provider, text, { limit, maxRateLimitRetries = 2
       Promise.resolve(r).catch(() => {});
       return { ok: false, query: text, results: [], error: `${provider.name} returned a Promise - search adapters are synchronous, and its answer was not waited for` };
     }
-    if (r?.ok || attempt >= maxRateLimitRetries) return r;
-    const wait = firecrawl.rateLimitWaitMs(r?.error);
+    if (r?.ok) { limited?.delete(provider.name); return r; }
+    // The provider's own `retryAfterMs` first - the keyless route reads Retry-After (#313) -
+    // then the vendor's text; a server that asked past the cap is asked once more, not again.
+    const wait = firecrawl.retryWaitMs(r);
+    if (attempt >= maxRateLimitRetries || lastTry) {
+      if (waits && wait !== null) limited?.add(provider.name);
+      return r;
+    }
     if (wait === null) return r;
+    if (limited?.has(provider.name)) {
+      log(`  not waiting - ${provider.name} already ran out of rate-limit retries in this run`);
+      return r;
+    }
+    waits += 1;
+    lastTry = r?.retryAfterCapped === true;
     log(`  waiting    ${Math.round(wait / 1000)}s - ${provider.name} search hit the vendor rate limit`);
     sleep(wait);
   }
@@ -157,6 +178,9 @@ export function searchSession({
   searchAdapter = null,
   // Several providers: asked in parallel and interleaved by rank. One stays one.
   searchAdapters = null,
+  // The search provider was named by the operator (`selectSearch`'s `explicit`): a failure on
+  // it is a failed search, never degraded to the fetch provider's own (#317, ADR-0033).
+  searchExplicit = false,
   limit,
   maxRateLimitRetries = 2,
   sleep = sleepSync,
@@ -173,7 +197,8 @@ export function searchSession({
   // The dry run's label: a merge names every provider whose meter it would spend.
   const meter = providers.length > 1 ? providers.map((one) => one.name).join(' + ') : name;
 
-  const patient = askOne ?? ((provider, text) => searchPatiently(provider, text, { limit, maxRateLimitRetries, sleep, log }));
+  const limited = new Set();
+  const patient = askOne ?? ((provider, text) => searchPatiently(provider, text, { limit, maxRateLimitRetries, sleep, log, limited }));
   // With a credits policy, the policy decides which provider serves the call and switches
   // once on exhaustion (`askLive`); without one, the provider asked is the provider named.
   const askProvider = (provider, text) => (credits ? credits.askLive(provider, text) : { r: patient(provider, text), provider });
@@ -275,8 +300,17 @@ export function searchSession({
     // and it is REPORTED rather than absorbed - a silent fallback is a bill the operator did
     // not know they were paying. Only to a provider that can search: degrading to the
     // browser replaced the real failure with a TypeError (found 2026-10-01).
+    //
+    // Not from a provider the operator chose by name (#317). RR-1 was written for a second
+    // metered vendor going down; an explicit choice says where the queries may go, and for
+    // SearXNG (ADR-0104) the fetch provider's search was DuckDuckGo-lite - the route it exists
+    // to avoid. The failure is kept below, counted on the provider that failed.
     const target = liveAdapter();
-    if (!found?.ok && first.provider !== target && canSearch(target)) {
+    const degradable = !found?.ok && first.provider !== target && canSearch(target);
+    if (degradable && searchExplicit) {
+      log(`  search failed on ${ranker}: ${found?.error} - not degraded: ${ranker} was chosen explicitly`);
+    }
+    if (degradable && !searchExplicit) {
       log(`  search failed on ${ranker}: ${found?.error}`);
       fail(ranker, text, found?.error, { degraded: true, fellBackTo: target.name });
       const next = askProvider(adapter, text);

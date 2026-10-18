@@ -4,14 +4,15 @@
 // With no arguments it prints the prior on record, or says there is none. Registering is
 // the only thing it refuses to do twice, and the only thing it refuses to do late.
 
-import { parseFlags, refuseUnknownFlags, checkFlagValues, readText, resolve, operatorPath, kitCommand, writeFailure } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, operatorPath, kitCommand, writeFailure } from '../lib/core.mjs';
 import { readLedger } from '../lib/corpus.mjs';
-import { readPrior, registerPrior, MIN_PRIOR, PRIOR_PATH } from '../lib/prior.mjs';
+import { readPrior, readPriorSource, registerPrior, unrecordedDetail, MIN_PRIOR, PRIOR_PATH } from '../lib/prior.mjs';
 import { heading } from '../lib/render.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['file', 'help']);
+// The prior is the words given, or --file's contents; beside --file, words are stray.
+refuseUnknownFlags(flags, ['file', 'help'], flags.file !== undefined ? { takes: 0, beside: '--file' } : { takes: Infinity });
 checkFlagValues(flags, { file: 'value' });
 const root = process.cwd();
 
@@ -44,16 +45,29 @@ if (!isGated(root)) {
   process.exit(2);
 }
 
-const entries = readLedger(root).entries;
-const source = typeof flags.file === 'string'
-  ? readText(operatorPath(root, flags.file), null)
-  : (positional.join(' ').trim() || null);
-
-if (source === null) {
-  if (typeof flags.file === 'string') {
-    process.stderr.write(`cannot read ${flags.file}\n`);
+// A positional that was GIVEN is a registration attempt even when it is blank (#355): read as
+// "no argument", `prior "$PREDICTION"` with the variable unset printed the prior on record
+// and exited 0 having registered nothing. The floor refuses it instead.
+let source = positional.length ? positional.join(' ') : null;
+if (typeof flags.file === 'string') {
+  const read = readPriorSource(operatorPath(root, flags.file), flags.file);
+  if (read.refusal) {
+    process.stderr.write(`${read.refusal}\n`);
     process.exit(2);
   }
+  source = read.text;
+}
+
+// Where the prior stands, in the words every reader of it uses: the gate fails both late
+// states, so neither may read back as "before anything was collected" (#352, #353).
+function standing(prior) {
+  if (prior.scrapesBefore) return `AFTER ${prior.scrapesBefore} page(s) were collected`;
+  if (prior.unrecorded) return `but nothing shows it came first: ${unrecordedDetail(prior.unrecorded)}`;
+  return 'before anything was collected';
+}
+
+if (source === null) {
+  const entries = readLedger(root).entries;
   const prior = readPrior(root, { entries });
   if (!prior.present) {
     process.stdout.write(`no prior is registered for this corpus.\n\n`
@@ -64,17 +78,24 @@ if (source === null) {
   }
   const scrapes = entries.filter((e) => e.op === 'scrape').length;
   process.stdout.write(`${heading('prior')}
-registered  seq ${prior.entry.seq} of ${entries.length}, ${prior.scrapesBefore === 0 ? 'before anything was collected' : `AFTER ${prior.scrapesBefore} page(s) were collected`}
+registered  seq ${prior.entry.seq} of ${entries.length}, ${standing(prior)}
 collected   ${scrapes} page(s) since
 file        ${PRIOR_PATH}
 
 ${prior.text.trim()}
 `);
-  process.exit(prior.scrapesBefore ? 1 : 0);
+  process.exit(prior.precedes ? 0 : 1);
 }
 
 try {
-  const entry = registerPrior(root, source, { entries });
+  const entry = registerPrior(root, source);
+  // The position is READ from the ledger, never asserted (#352): the success line said "before
+  // any page was collected" as a constant, over an entry the ledger placed after a scrape.
+  const prior = readPrior(root, { entries: readLedger(root).entries });
+  if (!prior.precedes) {
+    process.stderr.write(`registered at seq ${entry.seq}, ${standing(prior)} - the gate will fail it.\n`);
+    process.exit(1);
+  }
   process.stdout.write(`registered at seq ${entry.seq}, before any page was collected.\n`
     + `${PRIOR_PATH} is now chained: its text and its position are both fixed.\n\n`
     + `Collect next. Whatever comes back, this is what you thought first.\n`);

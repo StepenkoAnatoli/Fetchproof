@@ -10,7 +10,7 @@ import { test, describe, assert, fs, path, cleanup, KIT_ROOT } from './harness.m
 import { sha256 } from '../lib/core.mjs';
 import { createArtifact } from '../lib/artifact.mjs';
 import { collectedProject, approvedProject, seal, basePackage, IDENTITY } from './artifact-fixtures.mjs';
-import { tempDir, requireCapability } from './harness.mjs';
+import { tempDir, requireCapability, makePassingProject } from './harness.mjs';
 import { openZip } from '../lib/artifact-zip.mjs';
 
 describe('artifact-cli');
@@ -151,6 +151,57 @@ test('create refuses a bare --ref, --run-id or --output by name, and writes noth
     assert.ok(new RegExp(`^${bare} needs a value`, 'm').test(r.err), `${bare} was not refused by name:\n${r.err}`);
     assert.deepEqual(fs.readdirSync(cwd), [], `${bare}: something was written in the working folder`);
   }
+});
+
+// #330: --output over the ledger packaged the ledger, then replaced it with the package, and
+// said "re-validated after writing: PASS"; under research/raw/ it left a stray file there.
+test('create refuses an --output in research/raw/ by name before the package is built, and writes nothing', () => {
+  const root = collectedProject();
+  const ledger = path.join(root, 'research', 'raw', '.fetches.jsonl');
+  const before = sha256(fs.readFileSync(ledger));
+  const identity = ['--client-ref', 'probe', '--repository', 'o/r', '--ref', 'main',
+    '--commit', '0123456789abcdef0123456789abcdef01234567', '--workflow', 'collect.yml', '--run-id', '1'];
+  for (const [output, named] of [['research/raw/.fetches.jsonl', /is the fetch ledger/], ['research/raw/stray.zip', /is inside research\/raw\//]]) {
+    const r = run(['create', '--root', '.', '--output', output, ...identity], { cwd: root });
+    assert.equal(r.code, 3, `${output}: expected a refusal, got exit ${r.code}\n${r.out}${r.err}`);
+    assert.match(r.err, /^artifact create: refused - research\/raw\//m, r.err);
+    assert.match(r.err, named, r.err);
+    assert.match(r.err, /Name a path outside research\/raw\/\./, r.err);
+    assert.equal(r.out, '', 'nothing was packaged, so nothing says "wrote"');
+  }
+  assert.equal(sha256(fs.readFileSync(ledger)), before, 'the ledger is byte-identical');
+  assert.equal(fs.existsSync(path.join(root, 'research', 'raw', 'stray.zip')), false);
+});
+
+// Review of #330: --output resolves against the working folder, not --root, so packaging a
+// nested project from the outer one wrote the package over the OUTER ledger; and the corpus's
+// own files (the evidence table) were not refused at all.
+test('create refuses an --output on the working folder\'s ledger or corpus files, whatever --root names', () => {
+  const outer = collectedProject();
+  const inner = makePassingProject(path.join(outer, 'docs', 'decisions', 'nested'));
+  const guarded = ['research/raw/.fetches.jsonl', 'research/EVIDENCE.md'].map((rel) => path.join(outer, ...rel.split('/')));
+  const before = guarded.map((f) => sha256(fs.readFileSync(f)));
+  const identity = ['--client-ref', 'probe', '--repository', 'o/r', '--ref', 'main',
+    '--commit', '0123456789abcdef0123456789abcdef01234567', '--workflow', 'collect.yml', '--run-id', '1'];
+  for (const [output, named] of [['research/raw/.fetches.jsonl', /is the fetch ledger/], ['research/EVIDENCE.md', /is the evidence table/]]) {
+    const r = run(['create', '--root', inner, '--output', output, ...identity], { cwd: outer });
+    assert.equal(r.code, 3, `${output}: expected a refusal, got exit ${r.code}\n${r.out}${r.err}`);
+    assert.match(r.err, /^artifact create: refused - research\//m, r.err);
+    assert.match(r.err, named, r.err);
+    assert.equal(r.out, '');
+  }
+  assert.deepEqual(guarded.map((f) => sha256(fs.readFileSync(f))), before, 'the outer ledger and evidence table are byte-identical');
+});
+
+// Found 2026-10-11 (#286): a repeated --ref was joined with a comma into the manifest, and
+// the package it wrote validated PASS with `"ref": "a,b"`.
+test('create refuses a flag given twice by name, and writes nothing', () => {
+  const cwd = tempDir('rk-cli-twice-');
+  const r = run(['create', '--root', collectedProject(), '--repository', 'o/r', '--commit', '0'.repeat(40), '--workflow', 'w.yml',
+    '--run-id', '7', '--output', path.join(cwd, 'p.zip'), '--ref', 'a', '--ref', 'b'], { cwd });
+  assert.equal(r.code, 3, `expected a refusal, got exit ${r.code}\n${r.out}${r.err}`);
+  assert.ok(/^--ref was given twice/m.test(r.err), `--ref was not refused by name:\n${r.err}`);
+  assert.deepEqual(fs.readdirSync(cwd), [], 'something was written in the working folder');
 });
 
 test('validate refuses a bare --file by name, instead of opening a file called "true"', () => {

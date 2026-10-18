@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import { test, describe, assert, tempDir, fs, path, KIT_ROOT } from './harness.mjs';
 import * as httpKeyless from '../lib/http-transport.mjs';
+import { internalRedirectsSetting } from '../lib/runtime.mjs';
 
 describe('redirect-guard');
 
@@ -112,7 +113,29 @@ test('RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1 lifts the check, and only that val
   httpKeyless.scrape('https://example.invalid/p', { spawn: record, env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: '1' } });
   httpKeyless.scrape('https://example.invalid/p', { spawn: record, env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: 'yes' } });
   httpKeyless.scrape('https://example.invalid/p', { spawn: record, env: {} });
-  assert.deepEqual(jobs.map((j) => j.allowInternalRedirects), [true, undefined, undefined]);
+  // 'yes' does not lift it - and since #290 it is not the default either, but a refusal.
+  assert.deepEqual(jobs.map((j) => j.allowInternalRedirects), [true, false, undefined]);
+});
+
+// Found 2026-10-11 (#290): every value but exactly 1 or 0 read as unset, so `=false`, `=no`,
+// `=off` and `= 0` - each an operator's way to close the network - left it at the default,
+// which fetches an internal URL the plan names. An unreadable value is a refusal, named.
+test('RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS with any value but 1 or 0 refuses, and the problem names the value', () => {
+  const jobs = [];
+  const record = (_, __, opts) => { jobs.push(JSON.parse(opts.input)); return { status: 0, stdout: '{"ok":false,"error":"stub"}', stderr: '' }; };
+  for (const value of ['yes', 'false', ' 0', 'TRUE', 'off', '']) {
+    httpKeyless.scrape('https://example.invalid/p', { spawn: record, env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value } });
+    assert.equal(jobs.at(-1).allowInternalRedirects, false, `${JSON.stringify(value)} did not resolve to a refusal`);
+    const setting = internalRedirectsSetting({ RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value });
+    assert.equal(setting.value, false);
+    assert.ok(setting.problem.includes(JSON.stringify(value)), `the problem does not name ${JSON.stringify(value)}: ${setting.problem}`);
+    assert.match(setting.problem, /resolved to 0 \(refuse\)/);
+  }
+  for (const [value, expected] of [['1', true], ['0', false], [undefined, undefined]]) {
+    const setting = internalRedirectsSetting(value === undefined ? {} : { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value });
+    assert.equal(setting.value, expected);
+    assert.equal(setting.problem, null, `${value} is a value the kit reads`);
+  }
 });
 
 test('what counts as internal: loopback, private, link-local, metadata, localhost names - not the public web', async () => {

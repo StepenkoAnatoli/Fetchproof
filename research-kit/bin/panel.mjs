@@ -12,7 +12,8 @@ import { createPanel } from '../lib/panel.mjs';
 tolerateClosedStdout();
 
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['help', 'project', 'port', 'no-open']);
+// A stray argument is refused below, in words that name --project.
+refuseUnknownFlags(flags, ['help', 'project', 'port', 'no-open'], { takes: Infinity });
 checkFlagValues(flags, { project: 'value', port: { int: true, min: 0, max: 65535 } });
 
 if (flags.help) {

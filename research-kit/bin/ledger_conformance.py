@@ -33,6 +33,7 @@ from conformance_common import (
     parse_json_no_duplicates,
     read_packet,
     report_json,
+    write_report,
     require_unique_vector_ids,
 )
 
@@ -269,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run_conformance(load_vectors(parsed.vectors))
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"{report['status']} ({report['vectorCount']} vector(s))")
             for row in report["vectors"]:
@@ -281,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, VectorPacketError, ConformanceError, RecursionError) as error:
         report = {"validatorVersion": VERSION, "profile": PROFILE, "vectorCount": 0, "status": "FAIL", "vectors": [], "errors": [{"code": "VECTOR-PACKET", "message": str(error)}]}
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1

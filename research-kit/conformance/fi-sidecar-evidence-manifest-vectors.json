@@ -99,11 +99,15 @@
     { "vectorId": "FISC-05", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/workbookSha256", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }], "expectedCode": "SCHEMA-PATTERN" },
     { "vectorId": "FISC-06", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/status", "value": "ROLLED-BACK" }, { "op": "set", "path": "/rollback/targetHash", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, { "op": "set", "path": "/rollback/receiptEvidenceId", "value": "receipt-1" }, { "op": "set", "path": "/rollback/descendantClosureHash", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "expectedCode": "SCHEMA-ONE-OF" },
     { "vectorId": "FISC-07", "target": "sidecar", "rawDocument": "{\"fiId\":\"FI-01\",\"fiId\":\"FI-02\"}", "expectedCode": "JSON-DUPLICATE-KEY" },
+    { "vectorId": "FISC-08", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/workbookSha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" }], "expectedCode": "SCHEMA-PATTERN" },
+    { "vectorId": "FISC-09", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/identity/operatorStartedAt", "value": "\u0662\u0660\u0662\u0666-09-17T00:00:00Z" }], "expectedCode": "SCHEMA-PATTERN" },
     { "vectorId": "FIM-01", "target": "manifest", "base": "manifest", "patches": [], "expectedCode": "PASS" },
     { "vectorId": "FIM-02", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/path", "value": "../escaped.json" }], "expectedCode": "SCHEMA-PATTERN" },
     { "vectorId": "FIM-03", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/untrusted", "value": true }], "expectedCode": "SCHEMA-ADDITIONAL" },
     { "vectorId": "FIM-04", "target": "manifest", "base": "manifest", "patches": [{ "op": "remove", "path": "/entries/0/sha256" }], "expectedCode": "SCHEMA-REQUIRED" },
     { "vectorId": "FIM-05", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/profile", "value": "unknown-profile" }], "expectedCode": "SCHEMA-ENUM" },
-    { "vectorId": "FIM-06", "target": "manifest", "rawDocument": "{\"root\":\"one\",\"root\":\"two\"}", "expectedCode": "JSON-DUPLICATE-KEY" }
+    { "vectorId": "FIM-06", "target": "manifest", "rawDocument": "{\"root\":\"one\",\"root\":\"two\"}", "expectedCode": "JSON-DUPLICATE-KEY" },
+    { "vectorId": "FIM-07", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/byteLength", "value": 0.0 }], "expectedCode": "PASS" },
+    { "vectorId": "FIM-08", "target": "manifest", "rawDocument": "{\"byteLength\":1e400}", "expectedCode": "JSON-PARSE" }
   ]
 }

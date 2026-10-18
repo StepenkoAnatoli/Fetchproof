@@ -371,9 +371,18 @@ export function scrape(url, { execFn = exec, ...opts } = {}) {
   if (!stdout.trim()) {
     return { ok: false, url, error: 'firecrawl exited 0 and printed nothing - no page was returned', cmd: command(argv), transport: name };
   }
-  if (parsePayload(stdout) === null) {
+  const payload = parsePayload(stdout);
+  if (payload === null) {
     return { ok: false, url, cmd: command(argv), transport: name,
       error: `firecrawl exited 0 but printed no JSON payload that could be read - its output began: ${JSON.stringify(stdout.trim().slice(0, 100))}` };
+  }
+  // The vendor said the scrape failed, and why: that is the failure, not "no page text"
+  // (#316 - `{"success": false, "error": "Page could not be fetched: timeout"}` was recorded
+  // as an empty page). One line, bounded, as a server's own reason is.
+  if (payload?.success === false) {
+    const said = typeof payload.error === 'string' ? payload.error.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    return { ok: false, url, cmd: command(argv), transport: name,
+      error: `firecrawl reported the scrape of ${url} failed${said ? `: ${said}` : ', and gave no reason'}` };
   }
   const page = normalizeScrape(stdout, url);
   if (!page.markdown) {
@@ -577,4 +586,15 @@ export function rateLimitWaitMs(errorText) {
   // A rate limit with no stated delay still deserves a wait, and one minute clears a
   // per-minute window by construction.
   return MAX_RATE_LIMIT_WAIT_MS;
+}
+
+/**
+ * The wait a failed result asks for, in milliseconds, or null: the result's own
+ * `retryAfterMs` first - a transport that read a `Retry-After` header hands the server's
+ * number over (#313) - and the vendor's error text after it. Capped like the text's number.
+ */
+export function retryWaitMs(result) {
+  const asked = result?.retryAfterMs;
+  if (Number.isFinite(asked) && asked >= 0) return Math.min(asked, MAX_RATE_LIMIT_WAIT_MS);
+  return rateLimitWaitMs(result?.error);
 }

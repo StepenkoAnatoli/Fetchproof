@@ -66,14 +66,26 @@ export function validateJsonSchema(value, schema, { path: valuePath = '$', error
       return errors;
     }
   }
+  // Membership is Object.hasOwn, never `in`: `in` answers true for every Object.prototype
+  // name, so a `constructor` member passed additionalProperties:false and a record holding
+  // only "__proto__" had every required key (#336).
   if (schema.required && value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const key of schema.required) if (!(key in value)) schemaError(errors, 'SCHEMA-REQUIRED', `missing required property ${key}`, `${valuePath}.${key}`);
+    for (const key of schema.required) if (!Object.hasOwn(value, key)) schemaError(errors, 'SCHEMA-REQUIRED', `missing required property ${key}`, `${valuePath}.${key}`);
   }
-  if (schema.additionalProperties === false && value && typeof value === 'object' && !Array.isArray(value) && schema.properties) {
-    for (const key of Object.keys(value)) if (!(key in schema.properties)) schemaError(errors, 'SCHEMA-ADDITIONAL', `unknown property ${key}`, `${valuePath}.${key}`);
+  // additionalProperties judges every member `properties` does not list: `false` refuses it,
+  // a schema must match it, `true` allows it. Only `false` beside `properties` was applied,
+  // so the externalRoots maps two shipped schemas declare as hashes accepted any value (#335).
+  const additional = schema.additionalProperties;
+  if ((additional === false || (additional && typeof additional === 'object')) && value && typeof value === 'object' && !Array.isArray(value)) {
+    const listed = schema.properties ?? {};
+    for (const key of Object.keys(value)) {
+      if (Object.hasOwn(listed, key)) continue;
+      if (additional === false) schemaError(errors, 'SCHEMA-ADDITIONAL', `unknown property ${key}`, `${valuePath}.${key}`);
+      else validateJsonSchema(value[key], additional, { path: `${valuePath}.${key}`, errors, rootSchema });
+    }
   }
   if (schema.properties && value && typeof value === 'object' && !Array.isArray(value)) {
-    for (const [key, child] of Object.entries(schema.properties)) if (key in value) validateJsonSchema(value[key], child, { path: `${valuePath}.${key}`, errors, rootSchema });
+    for (const [key, child] of Object.entries(schema.properties)) if (Object.hasOwn(value, key)) validateJsonSchema(value[key], child, { path: `${valuePath}.${key}`, errors, rootSchema });
   }
   if (schema.items && Array.isArray(value)) value.forEach((item, index) => validateJsonSchema(item, schema.items, { path: `${valuePath}[${index}]`, errors, rootSchema }));
   if (schema.minItems !== undefined && Array.isArray(value) && value.length < schema.minItems) schemaError(errors, 'SCHEMA-MIN-ITEMS', `must contain at least ${schema.minItems} item(s)`, valuePath);

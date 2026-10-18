@@ -229,7 +229,10 @@ export function selectSearch({ explicit = '', env = process.env, config = null, 
         + `Set ${searxng.URL_ENV}, or put ${searxng.CONFIG_KEY} in ~/.agents/research-kit.config.json, `
         + 'to the URL of a SearXNG instance you run with json in its search.formats.';
     }
-    return { name: adapter.name ?? asked, adapter, why, searchOnly: isSearchOnly(adapter), notReady };
+    // `explicit`: the operator named this provider, so it is where their queries may go. The
+    // session keeps a failure on it rather than degrading the query to the fetch provider's
+    // own search (#317) - for SearXNG that was DuckDuckGo-lite, the route it exists to avoid.
+    return { name: adapter.name ?? asked, adapter, why, searchOnly: isSearchOnly(adapter), notReady, explicit: true };
   }
 
   if (serpapi.readKey({ env, config: settings })) {

@@ -297,6 +297,9 @@ function permissionFixture() {
   const from = tempDir('research-kit-ro-source-');
   writeText(path.join(from, 'README.md'), '# kit\n');
   writeText(path.join(from, 'bin', 'selftest.mjs'), '// the runner\n');
+  // The files every kit ships (ADR-0111): a repeat deploy goes back into a kit folder, and a
+  // recorded folder holding none of them is refused (#327).
+  for (const rel of ['lib/core.mjs', 'bin/gate.mjs', 'bin/preflight.mjs']) writeText(path.join(from, ...rel.split('/')), '// fixture kit\n');
   const kitHome = path.join(tempDir('research-kit-ro-home-'), 'research-kit');
   const env = {
     ...process.env,

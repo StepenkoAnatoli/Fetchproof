@@ -125,6 +125,56 @@ test('an astral character is still canonical, and Node and Python hash it alike'
   }
 });
 
+// #336 (2026-10-17): Node's reader fed a "__proto__" key to the prototype setter, so the
+// member dropped out of the canonical form ({"a":1}) while Python kept it - one vector,
+// hash.mismatch in one language and PASS in the other. Both must keep it.
+test('a "__proto__" key is canonicalised alike by Node and Python', () => {
+  const python = requirePython('Node/Python agreement on a "__proto__" key');
+  const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED['ledger-conformance.mjs']), 'utf8'));
+  const canonical = '{"__proto__":{"artifactId":"R28-01"},"a":1}';
+  packet.vectors = [{
+    ...packet.vectors[0], value: JSON.parse(canonical), expectedCanonical: canonical,
+    expectedSha256: crypto.createHash('sha256').update(canonical).digest('hex'),
+  }];
+  const file = path.join(tempDir('rk-proto-'), 'packet.json');
+  const text = JSON.stringify(packet); // JSON.parse made "__proto__" an own key, so it is written
+  assert.match(text, /"__proto__":\{"artifactId":"R28-01"\}/);
+  fs.writeFileSync(file, text);
+  for (const [exe, runner] of [[process.execPath, 'ledger-conformance.mjs'], [python, 'ledger_conformance.py']]) {
+    const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8' });
+    assert.equal(JSON.parse(r.stdout).status, 'PASS', `${runner} hashed other bytes:\n${(r.stdout || r.stderr).slice(0, 600)}`);
+    assert.equal(r.status, 0, runner);
+  }
+});
+
+// Review of #340 (2026-10-18): a guard that made the schema subset treat an unpaired
+// surrogate as unequal to every const, enum member and other item moved the FI runner's
+// Node answer to SCHEMA-ONE-OF/SCHEMA-CONST/SCHEMA-PATTERN/SCHEMA-ADDITIONAL while Python
+// still said JSON-PARSE. The refusal stays a throw in the schema subset, so both agree.
+// The vectors live in a test-local packet built from the shipped one.
+test('an unpaired surrogate in an FI const, enum or unique item gets one code from Node and Python', () => {
+  const python = requirePython('Node/Python agreement on an FI unpaired surrogate');
+  const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED['fi-sidecar-conformance.mjs']), 'utf8'));
+  const field = packet.documents.sidecar.fields[0];
+  packet.vectors = [
+    ['X-SUR-ENUM', [{ op: 'set', path: '/status', value: '\ud800' }]],
+    ['X-SUR-CONST', [{ op: 'set', path: '/recordVersion', value: '\ud800' }]],
+    ['X-SUR-UNIQUE', [{ op: 'set', path: '/fields/0/evidenceIds', value: ['\ud800', '\ud800'] }]],
+    ['X-SUR-NOTES', [{ op: 'set', path: '/fields', value: [{ ...field, note: '\ud800' }, { ...field, note: '\ud800' }] }]],
+  ].map(([vectorId, patches]) => ({ vectorId, target: 'sidecar', base: 'sidecar', patches, expectedCode: 'JSON-PARSE' }));
+  const file = path.join(tempDir('rk-fi-surrogate-'), 'packet.json');
+  fs.writeFileSync(file, JSON.stringify(packet)); // JSON.stringify writes a lone surrogate as \ud800
+  const rows = [[process.execPath, 'fi-sidecar-conformance.mjs'], [python, 'fi_sidecar_conformance.py']].map(([exe, runner]) => {
+    const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8' });
+    assert.doesNotMatch(r.stderr, /Traceback|at .*\.mjs:\d+/, `${runner} crashed:\n${r.stderr.slice(-400)}`);
+    return JSON.parse(r.stdout).vectors;
+  });
+  for (const node of rows[0]) {
+    const py = rows[1].find((row) => row.vectorId === node.vectorId);
+    assert.equal(py?.observedCode, node.observedCode, `${node.vectorId}: Python says ${py?.observedCode}, Node says ${node.observedCode}`);
+  }
+});
+
 // ADR-0083 (2026-09-28, Arena break test 11): both languages refuse a packet nested deeper
 // than 256 levels, and agree below it. Node took thousands of levels and CPython about
 // 300 before its canonicaliser hit the recursion limit, so the same packet was a result in
@@ -191,6 +241,88 @@ test('a packet opening with a BOM is refused by name in every runner, both langu
       assert.equal(r.status, 1, `${who} exited ${r.status}`);
       const message = JSON.parse(r.stdout).errors?.[0]?.message ?? '';
       assert.match(message, /UTF-8 BOM is not permitted/, `${who} said: ${message}`);
+    }
+  }
+});
+
+// Found 2026-10-17 (#338): three documents the shipped FI packet did not cover, on which the
+// Python sidecar runner disagreed with Node. JavaScript's `$` matches only at the end of the
+// input and Python's also before a trailing newline, so a hash with a stray "\n" passed in
+// Python; `1e400` parsed to inf in Python and was type-checked, where Node refuses it as a
+// non-finite number; and `0.0` failed Python's `integer` check, though JavaScript cannot tell
+// it from `0`. Two more were found beside them: Python's `\d` matches any Unicode digit and
+// JavaScript's (no `u` flag) only 0-9; and `maxLength` counts UTF-16 code units in Node, so
+// 300 astral characters are 600 there and 300 to Python's `len`. A review of that fix found
+// three more: JavaScript's `.` stops at U+2028/U+2029 and Python's does not, so the path
+// lookaheads read past a U+2028 to a `/../` or a NUL in Python only; and a uniqueItems array of
+// ONE item is never canonicalised in Node (it compares pairs), so a lone surrogate in it passed
+// there and was refused in Python. Each expected code is Node's.
+test('FI documents with a trailing newline, 1e400, 0.0, a non-ASCII digit, astral text, U+2028 or a lone surrogate get one code in Node and Python', () => {
+  const python = requirePython('Node/Python agreement on FI pattern and number edges');
+  const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED['fi-sidecar-conformance.mjs']), 'utf8'));
+  const { sidecar, manifest } = packet.documents;
+  const withByteLength = (literal) => {
+    const document = structuredClone(manifest);
+    document.entries[0].byteLength = '__N__';
+    return JSON.stringify(document).replace('"__N__"', literal);
+  };
+  packet.vectors = [
+    { vectorId: 'X-NL', target: 'sidecar', rawDocument: JSON.stringify({ ...sidecar, workbookSha256: `${'a'.repeat(64)}\n` }), expectedCode: 'SCHEMA-PATTERN' },
+    { vectorId: 'X-1E400', target: 'manifest', rawDocument: withByteLength('1e400'), expectedCode: 'JSON-PARSE' },
+    { vectorId: 'X-0.0', target: 'manifest', rawDocument: withByteLength('0.0'), expectedCode: 'PASS' },
+    { vectorId: 'X-DIGIT', target: 'sidecar', rawDocument: JSON.stringify({ ...sidecar, identity: { ...sidecar.identity, operatorStartedAt: '\u0662\u0660\u0662\u0666-09-17T00:00:00Z' } }), expectedCode: 'SCHEMA-PATTERN' },
+    { vectorId: 'X-ASTRAL', target: 'manifest', rawDocument: JSON.stringify({ ...manifest, entries: [{ ...manifest.entries[0], fieldLabel: '\u{1F600}'.repeat(300) }] }), expectedCode: 'SCHEMA-MAX-LENGTH' },
+    { vectorId: 'X-LS', target: 'sidecar', rawDocument: JSON.stringify({ ...sidecar, workbookPath: 'x /../../outside.xlsx' }), expectedCode: 'PASS' },
+    { vectorId: 'X-PS-NUL', target: 'manifest', rawDocument: JSON.stringify({ ...manifest, root: 'x \u0000.json' }), expectedCode: 'PASS' },
+    { vectorId: 'X-SURROGATE-1', target: 'manifest', rawDocument: JSON.stringify({ ...manifest, entries: [{ ...manifest.entries[0], path: '\ud800x' }] }), expectedCode: 'PASS' },
+    { vectorId: 'X-SURROGATE-2', target: 'manifest', rawDocument: JSON.stringify({ ...manifest, entries: [{ ...manifest.entries[0], path: '\ud800x' }, { ...manifest.entries[0], evidenceId: 'FI-01-other' }] }), expectedCode: 'JSON-PARSE' },
+    // An array index in a patch path is canonical ASCII digits in Node; `str.isdigit` also took
+    // "00" and "٠", whose int() is 0, and patched the first item. And Python's refusal of
+    // any patch path read JSON-PARSE: its PacketError is a ValueError, caught by that clause first.
+    { vectorId: 'X-PATH-MISSING', target: 'sidecar', base: 'sidecar', patches: [{ op: 'remove', path: '/nope/x' }], expectedCode: 'VECTOR-PACKET' },
+    { vectorId: 'X-INDEX-00', target: 'sidecar', base: 'sidecar', patches: [{ op: 'set', path: '/fields/00/label', value: 'Changed' }], expectedCode: 'VECTOR-PACKET' },
+    { vectorId: 'X-INDEX-ARABIC', target: 'sidecar', base: 'sidecar', patches: [{ op: 'remove', path: '/fields/٠' }], expectedCode: 'VECTOR-PACKET' },
+  ];
+  const file = path.join(tempDir('rk-fi-edges-'), 'packet.json');
+  fs.writeFileSync(file, JSON.stringify(packet));
+  const rows = [[process.execPath, 'fi-sidecar-conformance.mjs'], [python, 'fi_sidecar_conformance.py']].map(([exe, runner]) => {
+    const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8' });
+    assert.doesNotMatch(r.stderr, /Traceback|at .*\.mjs:\d+/, `${runner} crashed:\n${r.stderr.slice(-400)}`);
+    return JSON.parse(r.stdout).vectors;
+  });
+  for (const vector of packet.vectors) {
+    const [node, py] = rows.map((vectors) => vectors.find((row) => row.vectorId === vector.vectorId));
+    assert.equal(node?.observedCode, vector.expectedCode, `Node ${vector.vectorId}: ${JSON.stringify(node)}`);
+    assert.equal(py?.observedCode, node.observedCode, `${vector.vectorId}: Python says ${py?.observedCode}, Node says ${node.observedCode}`);
+  }
+});
+
+// Found 2026-10-18 (review of #338/#339): a Python runner wrote its report through the text
+// layer, which on a Windows pipe is the locale's code page, so a report holding a character
+// outside cp1252 raised UnicodeEncodeError - a traceback where Node reported - and a lone
+// surrogate could not be encoded at all, where JSON.stringify escapes it. PYTHONIOENCODING
+// makes that pipe on any host.
+test('a report holding non-Latin-1 text or a lone surrogate is the same JSON from Node and Python on a cp1252 pipe', () => {
+  const python = requirePython('Python report output on a cp1252 pipe');
+  // The ledger and property runners canonicalise, and so refuse a lone surrogate alike in both
+  // languages; the FI runner reports it, escaped. The CJK/emoji ID reaches every report.
+  for (const vectorId of ['X-\u4e2d\u{1F600}', 'X-\u4e2d-\ud800']) {
+    for (const [nodeRunner, pythonRunner] of RUNNERS) {
+      const packet = JSON.parse(fs.readFileSync(path.join(CONFORMANCE, SHIPPED[nodeRunner]), 'utf8'));
+      packet.vectors[0].vectorId = vectorId;
+      const file = path.join(tempDir('rk-cp1252-'), 'packet.json');
+      fs.writeFileSync(file, JSON.stringify(packet));
+      const [node, py] = [[process.execPath, nodeRunner], [python, pythonRunner]].map(([exe, runner]) => {
+        const env = { ...process.env, PYTHONIOENCODING: 'cp1252' };
+        const r = spawnSync(exe, [path.join(BIN, runner), '--vectors', file, '--json'], { encoding: 'utf8', env });
+        assert.doesNotMatch(r.stderr, /Traceback/, `${runner} crashed:\n${r.stderr.slice(-400)}`);
+        const report = JSON.parse(r.stdout);
+        return JSON.stringify([report.status, report.vectors.map((row) => row.vectorId), (report.errors ?? []).map((error) => error.code)]);
+      });
+      if (!vectorId.includes('\ud800') || nodeRunner === 'fi-sidecar-conformance.mjs') {
+        assert.ok(node.includes(JSON.stringify(vectorId)), `${nodeRunner} did not report ${JSON.stringify(vectorId)}: ${node}`);
+      }
+      assert.equal(py, node, `${pythonRunner} and ${nodeRunner} report differently for ${JSON.stringify(vectorId)}`);
     }
   }
 });

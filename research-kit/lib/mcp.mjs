@@ -69,9 +69,6 @@ import { checkClientRef } from './artifact.mjs';
 export const MODERN_VERSION = '2026-07-28';
 export const LEGACY_VERSION = '2025-11-25';
 
-/** The revision this server prefers when nobody says otherwise. */
-export const PROTOCOL_VERSION = MODERN_VERSION;
-
 /**
  * Every revision this server will serve, newest first.
  *
@@ -337,8 +334,10 @@ async function callTool(message, deps) {
       });
     }
 
-    // fetch_corpus - the folder first, so an unusable one costs no GitHub call
-    const outDir = args.out_dir === undefined ? undefined : usableOutDir(args.out_dir);
+    // fetch_corpus - the folder first, so an unusable one costs no GitHub call. Checked, not
+    // created: a run that cannot be read, has nothing to fetch yet or whose artifact expired
+    // leaves no folder (#295); fetchCorpus creates it once there is a package to write.
+    const outDir = args.out_dir === undefined ? undefined : usableOutDir(args.out_dir, { create: false });
     const state = await deps.summary({ repository: args.repository, runId: args.workflow_run_id, token });
     if (state.status !== 'completed') {
       return ok(message.id, {
@@ -435,6 +434,8 @@ export function validateArgs(tool, args) {
   if (tool.name === 'collect') {
     const reference = checkClientRef(args.client_ref);
     if (!reference.ok) return redact(reference.detail);
+    // As collect-remote refuses one (#293): the runner's new-project would, after the dispatch.
+    if (/[\r\n]/.test(args.topic ?? '')) return 'topic must be one line';
   }
   return null;
 }

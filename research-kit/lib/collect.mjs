@@ -13,7 +13,7 @@ import {
   PATHS, HEADERS, resolve, today, sha256, titleFromUrl, hostOf, urlDigest, writeText, readText, exists,
   sleepSync, urlKey, ageInDays, realInside, foldLineEndings,
 } from './core.mjs';
-import { rateLimitWaitMs } from './firecrawl.mjs';
+import { retryWaitMs, rateLimitWaitMs } from './firecrawl.mjs';
 import {
   captureEntry, cacheDecision, rememberCapture, appendRow, upsertRow, nextId,
   readCaptures, parseTable, readLedger, ledgerRank, CAPTURE_MAX_BYTES,
@@ -190,27 +190,74 @@ function whyFetched(decision) {
  */
 export const DEFAULT_SOURCE_TYPE = 'S';
 
+/**
+ * The HTTP status a failure names, as the collector words it ("the page answered HTTP 403") or
+ * as the keyless and browser transports word theirs ("HTTP 403 - the server said ..."), or null.
+ * Anchored, so a status quoted inside some other failure's text is not read as this one's.
+ */
+const FAILED_STATUS = /^(?:the page answered )?HTTP (\d{3})\b/;
 /** Statuses that say the page is not there, as opposed to a server that was busy. */
-const GONE = /answered HTTP (404|410)\b/;
+const GONE = new Set([404, 410]);
+/**
+ * A 4xx that is not about this moment: the server's standing answer to this client (a 401, a
+ * 403, a 402 paywall). 408 (a request timeout) and 429 (a rate limit) are about this moment;
+ * 405 and 407 are what a proxy answers for every page it will not carry (#314's proxy said 405
+ * to a loopback target), so they say nothing about the page.
+ */
+const NOT_STANDING = new Set([405, 407, 408, 429]);
+const STANDING = (status) => status >= 400 && status < 500 && !NOT_STANDING.has(status);
+/**
+ * The kit's own refusals of what a page IS, which the same page earns again on every fetch
+ * (ADR-0174): over the size a capture may hold (ADR-0082), a binary body (ADR-0105).
+ */
+const DETERMINISTIC = [
+  [/a capture may hold - not kept|is larger than \d+ MiB - not (?:read|kept) \(ADR-0082\)/, 'over the size a capture may hold'],
+  [/which is not text - the [\w-]+ transport cannot keep a faithful copy of it/, 'the response is not text'],
+];
 
 /**
- * The ledger's last word on a URL, when it is "gone": a 404 or 410 within the refresh window.
- * Such a page is not fetched again until the window passes or --force (found 2026-09-29: a plan
- * URL that 404'd was fetched, and paid for, again ten minutes later). A 5xx, a timeout or a
- * rate limit is transient and gets no such memory.
+ * Why a failure will not change by asking again - `{ status: 'gone' | 'refused', why }` - or null.
+ *
+ * A failure that reads as a rate limit is never one, whatever its status: GitHub answers a
+ * keyless client `403 ... API rate limit exceeded`, which the wait loop already treats as "not
+ * now". A standing 4xx is the server's answer to the ROUTE that asked (`sameRoute`): a page
+ * that refuses the keyless client is exactly what the browser transport is for (ADR-0088), so
+ * another transport is not told the answer one got. A size or binary refusal is about the page
+ * whichever route fetched it, and so is a 404 or 410 (ADR-0100).
  */
-export function recentlyGone(root, url, { refreshDays = 30, force = false, now = new Date() } = {}) {
+function standingFailure(error, { sameRoute = false } = {}) {
+  const text = String(error ?? '');
+  if (rateLimitWaitMs(text) !== null) return null;
+  const status = Number(FAILED_STATUS.exec(text)?.[1]);
+  if (GONE.has(status)) return { status: 'gone', why: `answered HTTP ${status}` };
+  if (STANDING(status)) return sameRoute ? { status: 'refused', why: `the page answered HTTP ${status}` } : null;
+  const kit = DETERMINISTIC.find(([pattern]) => pattern.test(text));
+  return kit ? { status: 'refused', why: kit[1] } : null;
+}
+
+/**
+ * The ledger's last word on a URL, when asking again would get the same answer, within the
+ * refresh window: "gone" - a 404 or 410 (ADR-0100) - or "refused" - a standing 4xx, or one of
+ * the kit's own refusals of what the page is (ADR-0174). Such a page is not fetched again until
+ * the window passes or --force (found 2026-09-29: a plan URL that 404'd was fetched, and paid
+ * for, again ten minutes later; 2026-10-11: an 11 MB page, a 403 and a PDF were paid for again
+ * on every run). A 5xx, a timeout, a rate limit or a transport error is transient and gets no
+ * such memory. `transport` names the route about to fetch: a standing 4xx is remembered only
+ * when the ledger's failure was that route's.
+ */
+export function recentlyGone(root, url, { refreshDays = 30, force = false, now = new Date(), transport = '' } = {}) {
   if (force) return null;
   const key = urlKey(url);
   const last = readLedger(root).entries.filter((e) => (e.op === 'fail' || e.op === 'scrape') && e.url && urlKey(e.url) === key).pop();
   if (!last || last.op !== 'fail') return null;
-  const status = GONE.exec(String(last.error ?? ''));
-  if (!status) return null;
+  const standing = standingFailure(last.error, { sameRoute: Boolean(transport) && last.transport === transport });
+  if (!standing) return null;
   const age = ageInDays(last.at, now);
   if (age === null || (refreshDays >= 0 && age > refreshDays)) return null;
   const on = String(last.at).slice(0, 10);
-  return { status: 'gone', url, entry: null, spent: 0,
-    reason: `answered HTTP ${status[1]} on ${on} - not fetched again for ${refreshDays} days; --force retries it` };
+  const tail = `not fetched again for ${refreshDays} days; --force retries it`;
+  return { status: standing.status, url, entry: null, spent: 0,
+    reason: standing.status === 'gone' ? `${standing.why} on ${on} - ${tail}` : `refused on ${on}: ${standing.why} - ${tail}` };
 }
 
 
@@ -229,6 +276,10 @@ export function collectOne(root, url, {
   discoveredBy = '',
   dryRun = false,
   maxRateLimitRetries = 2,
+  sleep = sleepSync,
+  // The hosts that ran out of rate-limit retries earlier in this run (a Set the coordinator
+  // keeps for one run): a later page on one is asked once and not waited for.
+  rateLimited = null,
   log = () => {},
 } = {}) {
   // A dry run decides and writes nothing, so it needs no exclusive section.
@@ -256,36 +307,59 @@ export function collectOne(root, url, {
     if (decision.hit) {
       return { status: 'cached', url, entry: decision.entry, reason: `fresh capture from ${decision.entry.retrieved}`, spent: 0 };
     }
-    const gone = recentlyGone(root, url, { refreshDays, force, now });
+    const gone = recentlyGone(root, url, { refreshDays, force, now, transport: transportName });
     if (gone) return gone;
 
     // A rate limit is not a failure, it is an instruction to wait. Bounded, because a
     // vendor that keeps refusing is a different problem from a busy minute, and a
     // collector that retried forever would hold this lock forever.
+    // The wait is the result's own `retryAfterMs` when the transport read the server's
+    // Retry-After (#313), else the vendor's error text. A server that asked for longer than
+    // the cap is asked once more, after the cap, and not again.
+    //
+    // The waits are per page, so a host that kept refusing made every page on it wait again:
+    // a plan of twenty pages on a host answering a bare 429 slept 40 minutes holding the corpus
+    // lock (review of #313, 2026-10-18). A host that ran out of retries is noted for the run
+    // (`rateLimited`); a later page on it is asked once and not waited for, until one succeeds.
+    const host = hostOf(url);
     let result;
     let waits = 0;
+    let lastTry = false;
     for (let attempt = 0; ; attempt += 1) {
       try {
         result = runScrape(url);
       } catch (err) {
         result = { ok: false, url, error: err.message };
       }
-      if (result?.ok || attempt >= maxRateLimitRetries) break;
-      const wait = rateLimitWaitMs(result?.error);
+      if (result?.ok || attempt >= maxRateLimitRetries || lastTry) break;
+      const wait = retryWaitMs(result);
       if (wait === null) break;
+      if (rateLimited?.has(host)) {
+        log(`  not waiting - ${host} already ran out of rate-limit retries in this run`);
+        break;
+      }
       waits += 1;
+      lastTry = result?.retryAfterCapped === true;
       log(`  waiting    ${Math.round(wait / 1000)}s - ${url} hit the vendor rate limit`);
-      sleepSync(wait);
+      sleep(wait);
     }
+    if (result?.ok) rateLimited?.delete(host);
+    else if (waits && retryWaitMs(result) !== null) rateLimited?.add(host);
 
     // An error page is not a capture (found 2026-09-28): Firecrawl answers ok with the page
     // a server sent, and Google's "Error 503 (Service Unavailable)" arrived with statusCode
     // 503 in its metadata and became an EVIDENCE row. The status was recorded and never
     // read. The keyless transport already treated a non-2xx answer as a failure; this makes
     // it the rule for every transport.
+    //
+    // The failure is then the PAGE's answer, not the transport's, and is marked so: the page's
+    // title rides in its text, and a page titled "Insufficient credits" is not Firecrawl running
+    // dry (#350) - only a transport's own failure is read for exhaustion.
     const status = Number(result?.statusCode);
+    let statusRefused = false;
     if (result?.ok && Number.isInteger(status) && status >= 400) {
       result = { ...result, ok: false, error: `the page answered HTTP ${status}${result.title ? ` (${String(result.title).slice(0, 80)})` : ''} - an error page is not evidence` };
+      statusRefused = true;
     }
 
     if (!result?.ok) {
@@ -295,7 +369,7 @@ export function collectOne(root, url, {
         discoveredBy,
         cmd: result?.cmd ?? '', error: result?.error ?? 'unknown failure',
       });
-      return { status: 'failed', url, entry: null, reason: result?.error ?? 'unknown failure', spent: 1, waits };
+      return { status: 'failed', url, entry: null, reason: result?.error ?? 'unknown failure', spent: 1, waits, ...(statusRefused ? { statusRefused } : {}) };
     }
 
     // A page the reader will never read is not a capture: readCaptures refuses a file over

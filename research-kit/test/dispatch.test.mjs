@@ -9,7 +9,7 @@ import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink } fr
 import { tempBase } from '../lib/core.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
-  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir,
+  tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir, MAX_ARTIFACT_BYTES,
 } from '../lib/dispatch.mjs';
 import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
@@ -509,6 +509,29 @@ test('a URL that is not http(s) is refused before dispatch, not searched on the 
   }
 });
 
+// #308: a URL with a user name or password would become a workflow input anyone who can read
+// the collector repository sees, and a ledger line nobody may edit.
+test('a URL carrying credentials is refused before dispatch, naming the host and not the secret', () => {
+  for (const bad of ['https://user:hunter2@a.example/x', 'https://hunter2@a.example/x']) {
+    const r = queriesInput({ queries: ['q'], urls: [bad] });
+    assert.equal(r.value, undefined, `${bad} was accepted`);
+    assert.match(r.error, /carries credentials \(…@a\.example\)/, r.error);
+    assert.doesNotMatch(r.error, /hunter2/, 'the refusal repeated the credential');
+  }
+  // Review of the first fix: collect.yml fetches any line that is an http(s) URL, so one sent
+  // as a QUERY was dispatched, password and all. A line that only looks like such a URL - its
+  // port does not parse, or a backslash stands for the slashes - is refused too.
+  for (const bad of ['https://user:hunter2@a.example/x', 'https://user:hunter2@a.example:99999/x', 'https:\\user:hunter2@a.example/x']) {
+    for (const input of [{ queries: [bad] }, { urls: [bad] }]) {
+      const r = queriesInput(input);
+      assert.equal(r.value, undefined, `${JSON.stringify(input)} was accepted`);
+      assert.match(r.error, /carries credentials \(…@a\.example(:99999)?\)/, r.error);
+      assert.doesNotMatch(r.error, /hunter2/, 'the refusal repeated the credential');
+    }
+  }
+  assert.equal(queriesInput({ queries: ['how @ works', 'https://example.com/@user'] }).error, '', 'an @ in a search or a path is not a credential');
+});
+
 test('fetchCorpus refuses an out_dir it cannot write BEFORE it downloads anything', async () => {
   // The download is the slow, rate-limited part; learning afterwards that the folder was
   // unusable wasted it, and the raw ENOTDIR that surfaced carried no code a caller could
@@ -528,6 +551,24 @@ test('fetchCorpus refuses an out_dir it cannot write BEFORE it downloads anythin
         return true;
       });
     assert.equal(doFetch.calls.length, 0, 'the run was queried before the folder was checked');
+  } finally { cleanup(dir); }
+});
+
+// Found 2026-10-18 (review of #295): fetchCorpus created out_dir before it listed the run's
+// artifacts, so a run whose artifact had expired left an empty folder behind; and a check that
+// only looked at the nearest existing folder passed a name no folder can have.
+test('fetchCorpus creates out_dir only when there is a package, and the early check creates nothing', async () => {
+  const dir = tempDir();
+  try {
+    const out = path.join(dir, 'not-yet', 'deeper');
+    const doFetch = stubFetch([jsonResponse(200, { artifacts: [{ id: 1, name: 'research-kit-corpus-v1-old', expired: true }] })]);
+    await assert.rejects(() => fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: out, fetch: doFetch }),
+      (err) => err.code === 'NO_ARTIFACT');
+    assert.equal(fs.existsSync(path.join(dir, 'not-yet')), false, 'an expired artifact left the out_dir behind');
+
+    assert.equal(usableOutDir(out, { create: false }), path.resolve(out));
+    assert.equal(fs.existsSync(path.join(dir, 'not-yet')), false, 'the early check left the folder it proved');
+    assert.throws(() => usableOutDir(path.join(dir, 'x'.repeat(300)), { create: false }), (err) => err.code === 'OUT_DIR');
   } finally { cleanup(dir); }
 });
 
@@ -577,9 +618,10 @@ test('a downloaded package cannot be written outside the directory asked for', a
       await assert.rejects(() => fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: dir, fetch: download(name, Buffer.from('not a zip')) }),
         (e) => e instanceof DispatchError && e.code === 'ARTIFACT_NAME', `${JSON.stringify(name)} was not refused`);
     }
-    // A nested entry is flattened; an entry naming a parent is refused by openZip already, so
-    // the download is kept whole under the artifact's own name - inside --out either way.
-    for (const [entry, expected] of [['nested/package.zip', 'package.zip'], ['../../evil.zip', 'research-kit-corpus-v1-ok.zip']]) {
+    // A nested entry is not GitHub's wrapper (#329: its one zip sits at the root), and an entry
+    // naming a parent is refused by openZip already, so either download is kept whole under the
+    // artifact's own name - inside --out either way.
+    for (const [entry, expected] of [['nested/package.zip', 'research-kit-corpus-v1-ok.zip'], ['../../evil.zip', 'research-kit-corpus-v1-ok.zip']]) {
       const r = await fetchCorpus({ repository: REPO, runId: 1, token: TOKEN, outDir: dir, fetch: download('research-kit-corpus-v1-ok', rawZip([{ name: entry, data: 'inner' }])) });
       assert.equal(r.file, path.join(dir, expected), `the wrapper entry ${entry} was not flattened`);
     }
@@ -631,4 +673,79 @@ test('each query and URL must be one line before workflow input serialization', 
       assert.match(r.error, /must be one line/);
     }
   }
+});
+
+// #329: downloadArtifact held the whole body (`arrayBuffer`) with no ceiling - 300 MB of zeros
+// from a fake API cost 8 s and 1.3 GB RSS before the validator refused it - on the one read
+// that takes bytes from a repository the operator may not control. It reads through a bound now.
+function streamedResponse({ contentLength = null, chunk = Buffer.alloc(1024 * 1024), chunks = 1 } = {}) {
+  const read = { chunks: 0, arrayBuffer: false, cancelled: false };
+  let left = chunks;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (left-- <= 0) return controller.close();
+      read.chunks += 1;
+      controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.length));
+    },
+    cancel() { read.cancelled = true; },
+  }, { highWaterMark: 0 });   // pulled only when read, so `read.chunks` counts what the reader took
+  return {
+    read,
+    response: {
+      ok: true, status: 200, body,
+      headers: { get: (name) => (name.toLowerCase() === 'content-length' && contentLength !== null ? String(contentLength) : null) },
+      arrayBuffer: async () => { read.arrayBuffer = true; throw new Error('the whole body must not be held'); },
+    },
+  };
+}
+
+test('#329 a download declaring more than the package ceiling is refused before its body is read', async () => {
+  const { read, response } = streamedResponse({ contentLength: MAX_ARTIFACT_BYTES + 1, chunks: 1000 });
+  await assert.rejects(() => downloadArtifact({ repository: REPO, artifactId: 9, token: TOKEN, fetch: stubFetch([response]) }),
+    (err) => {
+      assert.ok(err instanceof DispatchError);
+      assert.equal(err.code, 'TOO_LARGE');
+      assert.match(err.message, new RegExp(`${MAX_ARTIFACT_BYTES + 1}`));
+      assert.match(err.remedy, /fewer pages/);
+      return true;
+    });
+  assert.equal(read.chunks, 0, 'the body was read although its declared length was over the limit');
+  assert.equal(read.arrayBuffer, false);
+});
+
+test('#329 a chunked download that grows past the ceiling is cut mid-stream and refused', async () => {
+  const chunks = Math.ceil(MAX_ARTIFACT_BYTES / (1024 * 1024)) + 50;
+  const { read, response } = streamedResponse({ chunks });
+  await assert.rejects(() => downloadArtifact({ repository: REPO, artifactId: 9, token: TOKEN, fetch: stubFetch([response]) }),
+    (err) => err instanceof DispatchError && err.code === 'TOO_LARGE');
+  assert.ok(read.chunks < chunks, `all ${chunks} chunks were read`);
+  assert.ok(read.cancelled, 'the stream was not cancelled');
+
+  // Under the ceiling, the streamed body is returned whole.
+  const small = streamedResponse({ chunk: Buffer.from('package bytes'), chunks: 3 });
+  const bytes = await downloadArtifact({ repository: REPO, artifactId: 9, token: TOKEN, fetch: stubFetch([small.response]) });
+  assert.equal(bytes.toString(), 'package bytes'.repeat(3));
+});
+
+// #329: unwrapArtifact took any download holding exactly one `.zip` anywhere for GitHub's
+// wrapper. A package that carries an audit bundle (`audit --zip`) holds one, three folders
+// down beside manifest.json - and the bundle was written and validated as the corpus.
+test('#329 a package holding an audit bundle is not mistaken for the wrapper; a root-level zip still is', () => {
+  const bundle = rawZip([{ name: 'paths-with-spaces-v0.1-2026-10-11.md', data: '# audit' }]);
+  const pkg = rawZip([
+    { name: 'manifest.json', data: '{}' },
+    { name: 'project/research/audits/paths-with-spaces-v0.1-2026-10-11.zip', data: bundle },
+  ]);
+  const bare = unwrapArtifact(pkg);
+  assert.equal(bare.unwrapped, false, 'the audit bundle was pulled out of the package');
+  assert.equal(bare.bytes, pkg);
+
+  // Without manifest.json, a nested zip is still not the wrapper's: GitHub's sits at the root.
+  const nested = rawZip([{ name: 'project/research/audits/a.zip', data: bundle }]);
+  assert.equal(unwrapArtifact(nested).unwrapped, false);
+
+  const outer = rawZip([{ name: 'research-kit-corpus-v1-job-1.zip', data: pkg }]);
+  const wrapped = unwrapArtifact(outer);
+  assert.equal(wrapped.unwrapped, true);
+  assert.deepEqual([...wrapped.bytes], [...pkg]);
 });

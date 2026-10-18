@@ -16,6 +16,7 @@
 // is a fact about git's index.
 
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test, describe, assert, fs, path, KIT_ROOT, requireGit } from './harness.mjs';
 import { missingKitLines } from '../lib/scaffold.mjs';
 
@@ -330,4 +331,52 @@ test('one kit version: the MCP server, doctor and the changelog all state KIT_VE
   assert.match(changelog, new RegExp(`^## ${KIT_VERSION.replace(/\./g, '\\.')} `, 'm'), 'the changelog has no entry for this version');
   const doctor = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'doctor.mjs'), '--json'], { cwd: KIT_ROOT, encoding: 'utf8' });
   assert.equal(JSON.parse(doctor.stdout).kitVersion, KIT_VERSION, 'doctor does not report the version it is');
+});
+
+// #297 (2026-10-17): ten `lib/` exports were referenced nowhere - not by a command, a hook, a
+// test or another module - and two of them were named in the architecture map as part of
+// their module's contract (`stagedPathsFromStdin`, `PROTOCOL_VERSION`) while the shipped code
+// did the work another way. An export nothing calls is surface the freeze (ADR-0117) is meant
+// to keep from growing, and a map row that names one misdirects its reader. This reads the
+// files, not git's index, so it judges an archive tree the same way.
+const UNREFERENCED_ON_PURPOSE = new Map([
+  // ADR-0012's register of retired names: a future rename adds the old name here, and the
+  // ADR's procedure names these constants. Nothing reads them yet.
+  ['RETIRED_FLAGS', 'ADR-0012 register of retired CLI flags'],
+  ['RETIRED_PROJECT_SKILL_DIRS', 'ADR-0012 register of retired project skill folders'],
+]);
+
+test('every lib/ export is referenced somewhere besides its own definition', () => {
+  const THIS_FILE = fileURLToPath(import.meta.url);
+  const counts = new Map();
+  const readable = /\.(mjs|js|cjs|py|sh|ya?ml|html|json)$/;
+  const walk = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      // githooks carry no extension; every other file is judged by its type.
+      if (!readable.test(entry.name) && path.basename(dir) !== 'githooks') continue;
+      // This file names the removed exports in prose; it is no reference to them.
+      if (full === THIS_FILE) continue;
+      let text;
+      try { text = fs.statSync(full).size > 4 * 1024 * 1024 ? '' : fs.readFileSync(full, 'utf8'); } catch { continue; }
+      for (const word of text.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+        counts.set(word, (counts.get(word) ?? 0) + 1);
+      }
+    }
+  };
+  for (const part of ['lib', 'bin', 'hooks', 'githooks', 'test', 'panel', 'conformance']) walk(path.join(KIT_ROOT, part));
+  walk(path.join(REPO, '.github'));
+
+  const lib = path.join(KIT_ROOT, 'lib');
+  const unused = [];
+  for (const file of fs.readdirSync(lib).filter((f) => f.endsWith('.mjs'))) {
+    const text = fs.readFileSync(path.join(lib, file), 'utf8');
+    for (const [, name] of text.matchAll(/^export\s+(?:async\s+)?(?:function\s*\*?|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+      if ((counts.get(name) ?? 0) < 2 && !UNREFERENCED_ON_PURPOSE.has(name)) unused.push(`lib/${file}: ${name}`);
+    }
+  }
+  assert.deepEqual(unused, [], `exported and referenced nowhere else - delete it, or call it:\n  ${unused.join('\n  ')}`);
 });

@@ -1,7 +1,7 @@
 # ADR-0053 — The edit gate judges a subfolder cwd by the repository it is in
 
 - **Date:** 2026-09-27
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0182 (a named file is judged by the project it belongs to in its repository; a call naming no file is still judged by the cwd)
 - **Area:** `hooks/edit-gate.mjs`
 - **Refines:** ADR-0017 (the wrong project is asked about, not searched for)
 

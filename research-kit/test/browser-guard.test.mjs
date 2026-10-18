@@ -15,7 +15,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { syncBuiltinESMExports } from 'node:module';
 import { test, describe, assert, tempDir, fs, path, requireCapability, KIT_ROOT } from './harness.mjs';
-import { startGuard, judge, parseUpstream, renderThroughGuard, REFUSAL_MARKER, DROP_MARKER, isBrowserService } from '../lib/browser-guard.mjs';
+import { startGuard, judge, parseUpstream, renderThroughGuard, REFUSAL_MARKER, DROP_MARKER, isBrowserService, parseNoProxy, bypassesProxy, noProxyOf } from '../lib/browser-guard.mjs';
 import browser, { findBrowser, renderGuarded, browserArgs } from '../lib/browser-transport.mjs';
 
 describe('browser-guard');
@@ -174,6 +174,94 @@ test('behind a configured proxy every request is forwarded to it, CONNECT includ
   } finally { await guard.close(); await new Promise((r) => { upstream.closeAllConnections?.(); upstream.close(r); }); }
   assert.deepEqual(parseUpstream('proxy.corp:3128'), { host: 'proxy.corp', port: 3128, auth: null }, 'a bare host:port, as curl reads it');
   assert.equal(parseUpstream(''), null);
+});
+
+// #315 (2026-10-17, measured with Chrome 154 through the guard): an origin that declared
+// 100000 bytes and closed after 2000 left the guard's answer to the browser open - piped, the
+// cut-off answer never ended it - so the browser waited out its deadline and the transport
+// captured the first 2000 bytes as the page. The cut is passed on: the browser's connection
+// closes short, and its net log names ERR_CONTENT_LENGTH_MISMATCH.
+test('a body the origin cut off is cut off for the browser too, not left open', async () => {
+  const origin = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html', 'content-length': '100000' });
+    res.write('x'.repeat(2000));
+    setTimeout(() => res.destroy(), 50);
+  });
+  await new Promise((resolve) => origin.listen(0, '127.0.0.1', resolve));
+  const guard = await startGuard({ allowInternal: true });
+  try {
+    const url = `http://127.0.0.1:${origin.address().port}/cut`;
+    const outcome = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ hung: true }), 5000);
+      const req = http.request({ host: '127.0.0.1', port: guard.port, path: url, headers: { host: new URL(url).host } }, (res) => {
+        let bytes = 0;
+        res.on('data', (chunk) => { bytes += chunk.length; });
+        res.on('error', () => {});
+        res.on('close', () => { clearTimeout(timer); resolve({ hung: false, complete: res.complete, bytes }); });
+      });
+      req.on('error', () => {});
+      req.end();
+    });
+    assert.equal(outcome.hung, false, 'the browser\'s connection was left open after the origin cut the body');
+    assert.equal(outcome.complete, false);
+    assert.ok(outcome.bytes < 100000, JSON.stringify(outcome));
+  } finally { await guard.close(); await new Promise((r) => { origin.closeAllConnections?.(); origin.close(r); }); }
+});
+
+// #314 (2026-10-11): behind a configured proxy the guard forwarded every request to it, NO_PROXY
+// read nowhere; the keyless route honours NO_PROXY through Node's env-proxy support. So a
+// loopback or intranet page collected on one route and failed on the other. A host the list
+// names is connected to directly, judged as with no upstream; the rest still go to the upstream.
+test('behind a configured proxy, a host NO_PROXY names is connected to directly, and the upstream sees nothing', async () => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => { seen.push(req.url); res.writeHead(200, { 'content-type': 'text/plain' }); res.end('VIA-UPSTREAM'); });
+  upstream.on('connect', (req, socket) => { seen.push(`CONNECT ${req.url}`); socket.end('HTTP/1.1 200 Connection Established\r\n\r\n'); });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const via = `http://127.0.0.1:${upstream.address().port}`;
+  const pages = await site({ '/ok': '<html><body>THE-PAGE</body></html>' });
+  try {
+    // NO_PROXY=127.0.0.1: the loopback page is reached at its own server.
+    const direct = await startGuard({ allowInternal: true, upstream: via, bypass: '127.0.0.1' });
+    try {
+      const r = await viaProxy(direct.port, `${pages.base}/ok`);
+      assert.equal(r.status, 200, r.body);
+      assert.match(r.body, /THE-PAGE/);
+      assert.deepEqual(seen, [], 'a NO_PROXY host reached the upstream');
+    } finally { await direct.close(); }
+    // A domain suffix: sub.example.invalid goes direct (resolved here), other.invalid to the upstream.
+    const lookup = fakeLookup({ 'sub.example.invalid': '127.0.0.1' });
+    const suffix = await startGuard({ allowInternal: true, lookup, upstream: via, bypass: 'localhost, .example.invalid' });
+    try {
+      const sub = await viaProxy(suffix.port, `http://sub.example.invalid:${pages.port}/ok`);
+      assert.match(sub.body, /THE-PAGE/, sub.body);
+      const other = await viaProxy(suffix.port, 'http://other.invalid/x');
+      assert.equal(other.body, 'VIA-UPSTREAM');
+      assert.deepEqual(seen, ['http://other.invalid/x']);
+    } finally { await suffix.close(); }
+    // `*`: nothing goes to the upstream.
+    const everything = await startGuard({ allowInternal: true, upstream: via, bypass: '*' });
+    try {
+      assert.match((await viaProxy(everything.port, `${pages.base}/ok`)).body, /THE-PAGE/);
+      assert.equal(seen.length, 1);
+    } finally { await everything.close(); }
+  } finally { await pages.close(); await new Promise((r) => { upstream.closeAllConnections?.(); upstream.close(r); }); }
+
+  // The list, as curl reads it (wider than Node's undici: CIDR ranges, bare IPv6, subdomains of a bare name).
+  const list = parseNoProxy('localhost,127.0.0.1, ::1 .corp.example,*.intra.example host.example:8080 10.0.0.0/8,[::2]:443');
+  const on = (host, port = 80) => bypassesProxy(list, host, port);
+  assert.ok(on('127.0.0.1') && on('localhost') && on('::1') && on('[::1]'));
+  assert.ok(on('corp.example') && on('a.corp.example') && on('b.intra.example'), 'a leading dot or *. covers the domain');
+  assert.ok(!on('notcorp.example'), 'a suffix matches at a label boundary only');
+  assert.ok(on('host.example', 8080) && !on('host.example', 80), 'a port narrows the entry to that port');
+  assert.ok(on('10.20.30.40') && !on('11.0.0.1'), 'a CIDR range');
+  assert.ok(on('::2', 443) && !on('::2', 80));
+  assert.ok(!on('public.example'));
+  assert.equal(parseNoProxy('*'), '*');
+  assert.ok(bypassesProxy(parseNoProxy('a.example, *'), 'anything.example', 1));
+  assert.ok(!bypassesProxy(parseNoProxy(''), '127.0.0.1', 80), 'an empty list bypasses nothing');
+  assert.equal(noProxyOf({ NO_PROXY: 'upper', no_proxy: 'lower' }), 'lower', 'the lower-case name first, as Node\'s fetch reads it');
+  assert.equal(noProxyOf({ NO_PROXY: 'upper' }), 'upper');
+  assert.equal(noProxyOf({}), '');
 });
 
 // Found 2026-10-01 on CI: the suite's first Chromium launch ran to its deadline on three

@@ -194,6 +194,17 @@ test('DR-1: the usage log keeps the two meters apart', () => {
   assert.equal(usage.degraded, 0);
 });
 
+test('the usage line says what each search returned: the pages it made targets, and those already captured (#321)', () => {
+  const root = project();
+  runResearch(root, { adapter: fetchStub(), searchAdapter: searchStub(), plan: plan() });
+  // The same search again: its one result is captured now, so it makes no target and the
+  // ledger gets no entry - the usage line is the only record that the page was found.
+  runResearch(root, { adapter: fetchStub(), searchAdapter: searchStub(), plan: plan() });
+  const [first, second] = jsonLines(root, '.usage.jsonl');
+  assert.deepEqual(first.searchOutcomes, [{ query: 'a query', results: 1, held: [], targets: ['https://searchside.example/a'] }]);
+  assert.deepEqual(second.searchOutcomes, [{ query: 'a query', results: 1, held: ['https://searchside.example/a'], targets: [] }]);
+});
+
 test('DR-1: a run that only SEARCHED is still recorded - a second meter spent is still spend', () => {
   const root = project();
   // Every candidate is already a plan url that will not be reached, so nothing is
@@ -558,6 +569,36 @@ test('RR-1: decompose degrades too, and records which provider was down', () => 
   assert.ok(out.failures.length > 0, 'the outage was not recorded');
   assert.equal(out.failures[0].provider, 'stub-search');
   assert.equal(out.failures[0].degraded, true);
+});
+
+// #317: a provider the operator chose by name (`--search-transport`, the environment, the
+// machine config) is where their queries may go. Both coordinators hand that to the session,
+// and a failure on it is a failed search: kept, counted on it, never sent to the fetch
+// provider's own search.
+test('an explicitly chosen search provider is never degraded, by either coordinator', () => {
+  const root = project();
+  const fetcher = fetchStub();
+  const run = runResearch(root, {
+    adapter: fetcher,
+    searchAdapter: searchStub({ name: 'searxng', fail: 'searxng returned HTTP 429' }),
+    searchExplicit: true,
+    plan: plan(),
+  });
+  assert.equal(fetcher.calls.search, 0, 'research sent the query to the fetch provider\'s search');
+  assert.equal(run.degraded, 0);
+  assert.equal(run.searchFailures, 1);
+  assert.deepEqual(jsonLines(root, '.failures.jsonl').filter((f) => f.op === 'search').map((f) => [f.provider, f.degraded ?? false]), [['searxng', false]]);
+
+  const phase0 = project();
+  const fetcher0 = fetchStub();
+  const out = decompose(phase0, {
+    topic: 'a topic', adapter: fetcher0,
+    searchAdapter: searchStub({ name: 'searxng', fail: 'searxng returned HTTP 429' }),
+    searchExplicit: true, maxScrapes: 0, limit: 3,
+  });
+  assert.equal(fetcher0.calls.search, 0, 'decompose sent the query to the fetch provider\'s search');
+  assert.ok(out.failures.length > 0);
+  assert.ok(out.failures.every((f) => f.provider === 'searxng' && !f.degraded), JSON.stringify(out.failures));
 });
 
 // ---------------------------------------------------------------- RR-4  the timeout

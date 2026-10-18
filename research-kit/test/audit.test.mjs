@@ -10,6 +10,8 @@ import { test, describe, assert, makePassingProject, corrupt, fs, tempDir } from
 import { PATHS, resolve, readText, readJson, writeText, makeSlug } from '../lib/core.mjs';
 import { writeAudit, listVersions, resolveVersion, nextVersion, zipAudit, fingerprintOf, readManifest, TOPIC_SLUG, SUBTOPIC_SLUG } from '../lib/audit.mjs';
 import { crc32, buildZip, entryName } from '../lib/archive.mjs';
+import { readCentralDirectory, ZIP_LIMITS } from '../lib/artifact-zip.mjs';
+import { rawZip } from './artifact-fixtures.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { holdsLock } from '../lib/provenance.mjs';
 
@@ -102,6 +104,34 @@ test('entryName refuses anything that could unpack outside the folder', () => {
 
 test('an archive with no entries is refused, not written empty', () => {
   assert.throws(() => buildZip([]), /no entries/);
+});
+
+// #348: the writer met the ZIP field limits only when Buffer refused a write - a raw
+// ERR_OUT_OF_RANGE after every entry was hashed and deflated - and at exactly 65,535 entries
+// it wrote the ZIP64 sentinel as a count, an archive its own reader then refused. The bounds
+// are now refused by name, before any work, and exclude the sentinels.
+test('#348 an archive the ZIP format cannot carry is refused by name, never as ERR_OUT_OF_RANGE', () => {
+  const byName = (pattern) => (err) => {
+    assert.notEqual(err.code, 'ERR_OUT_OF_RANGE', `a raw RangeError escaped: ${err.message}`);
+    assert.match(err.message, pattern);
+    return true;
+  };
+  const many = Array.from({ length: 65_535 }, (_, i) => ({ name: `f${i}`, data: 'x' }));
+  assert.throws(() => buildZip(many), byName(/65535 entries.*65534/));
+  assert.throws(() => buildZip([{ name: 'a'.repeat(65_536), data: 'x' }]), byName(/name is 65536 bytes.*65535/));
+  assert.throws(() => buildZip([{ name: '\u65e5'.repeat(21_846), data: 'x' }]), byName(/name is 65538 bytes/));
+  // 65,534 entries is the most the writer may emit, and the kit's reader must open a count
+  // that high. Built stored by rawZip: deflating 65,534 entries through buildZip took 100 s.
+  const most = rawZip(many.slice(1));
+  assert.equal(readCentralDirectory(most, { limits: { ...ZIP_LIMITS, maxEntries: 65_534 } }).totalEntries, 65_534);
+});
+
+test('#348 entry data is a string or bytes - a Uint8Array is stored as its bytes, anything else is refused', () => {
+  const [entry] = readZip(buildZip([{ name: 'bytes.bin', data: new Uint8Array([1, 2, 3]) }]));
+  assert.equal(entry.text, '\u0001\u0002\u0003', 'a Uint8Array was stored as its decimal digits');
+  for (const data of [null, undefined, 42, { a: 1 }]) {
+    assert.throws(() => buildZip([{ name: 'x.md', data }]), /data must be a string or bytes/, `${JSON.stringify(data)} was stored`);
+  }
 });
 
 /** A minimal reader, standing in for the operator's unzip tool. */
@@ -329,6 +359,109 @@ test('an audit manifest in the 2026-09-14 shape still shows and zips', () => {
   const read = readZip(fs.readFileSync(resolve(dir, bundle.file)));
   assert.ok(read.some((e) => e.text.includes('# the main audit')), 'the old main audit is in the bundle');
   assert.ok(read.some((e) => e.text.includes('# a subtopic audit')), 'the old subtopic audit is in the bundle');
+});
+
+// #304 (2026-10-17): this repository's committed audit (v0.1, 2026-09-14) is keyed
+// `the-research-kits-own-protocol-metered-primary`; makeSlug has since changed, and spells the
+// same topic `the-research-kit-s-own-protocol-metered-primary-source-colle`. writeAudit looked
+// the record up by makeSlug alone, so the next render started a second topic at v0.1 and every
+// later --zip and --show needed --topic. A record that predates the stored topic text is
+// continued under the slug it already has when it is the SAME topic: keyed by the old
+// spelling of it (apostrophes dropped, cut at 46), or naming it in its main audit.
+
+/** A project whose map topic is `topic`, holding one 2026-09-14-shape audit record under `key`. */
+function oldShapeProject(topic, key, mainText = '# the main audit\n') {
+  const dir = makePassingProject();
+  const map = resolve(dir, PATHS.map);
+  writeText(map, readText(map).replace(/^## Topic\n\n.+$/m, `## Topic\n\n${topic}`));
+  assert.equal(readCorpus(dir).map.topic, topic, 'the fixture did not set the map topic');
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  fs.writeFileSync(resolve(audits, `${key}-v0.1-2026-09-14.md`), mainText);
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: {
+      [key]: {
+        latest: '0.1',
+        versions: { 0.1: { file: `${key}-v0.1-2026-09-14.md`, scope: 'full', at: '2026-09-14T20:30:57.908Z', date: '2026-09-14', fingerprint: 'x' } },
+      },
+    },
+  }));
+  return dir;
+}
+
+test('a render continues a 2026-09-14-shape record whose slug makeSlug no longer produces', () => {
+  const topic = 'The fixture\'s own protocol: metered primary-source collection, provenance';
+  const old = 'the-fixtures-own-protocol-metered-primary-sour';
+  assert.notEqual(makeSlug(topic), old);
+  const dir = oldShapeProject(topic, old);
+
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.written, true, rendered.reason);
+  assert.equal(rendered.slug, old, 'the render started a new topic instead of continuing the old one');
+  assert.equal(rendered.version, '0.2');
+  assert.deepEqual(rendered.continued, { from: makeSlug(topic), as: old });
+  assert.equal(rendered.main, `${PATHS.audits}/${old}-v0.2-2026-10-17.md`);
+
+  const listed = listVersions(dir);
+  assert.deepEqual(listed.known, [old], 'the manifest holds two topics');
+  assert.equal(listed.topics[0].latest, '0.2');
+  assert.equal(listed.topics[0].topic, topic, 'the continued record does not carry the topic text');
+  assert.equal(resolveVersion(dir, old, '0.1').main, `${PATHS.audits}/${old}-v0.1-2026-09-14.md`, 'v0.1 is no longer readable');
+
+  const bundle = zipAudit(dir);
+  assert.equal(bundle.ok, true, bundle.reason);
+  assert.equal(bundle.version, '0.2');
+});
+
+test('an old record whose main audit names this topic is continued, whatever its key', () => {
+  const dir = oldShapeProject('Fixture topic', 'fixture-topic-other-spelling', '---\ntitle: "Fixture topic"\ntopic: "Fixture topic"\n---\n# the main audit\n');
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.slug, 'fixture-topic-other-spelling');
+  assert.equal(rendered.version, '0.2');
+});
+
+// Review of #304 (2026-10-18): the first version continued ANY lone old-shape record, whatever
+// topic it held, and stamped this topic's text onto it.
+test('a lone old record of another topic is not continued, and keeps its own text', () => {
+  const dir = oldShapeProject('Fixture topic', 'an-earlier-question', '---\ntopic: "An earlier question"\n---\n# the main audit\n');
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.slug, makeSlug('Fixture topic'));
+  assert.equal(rendered.version, '0.1');
+  assert.equal(rendered.continued, undefined);
+  const listed = listVersions(dir);
+  assert.deepEqual(listed.known, ['an-earlier-question', 'fixture-topic']);
+  assert.equal(readManifest(dir).topics['an-earlier-question'].topic, undefined, 'this topic was stamped on another record');
+});
+
+test('a record holding this topic text under another slug is continued, beside other topics', () => {
+  const dir = makePassingProject();
+  const topic = readCorpus(dir).map.topic;
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  const record = (name, text) => ({ topic: text, latest: '0.1', versions: { 0.1: { date: '2026-09-14', fingerprint: 'x', main: `${PATHS.audits}/${name}-v0.1-2026-09-14.md`, subtopics: [] } } });
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: { 'same-text-old-slug': record('same-text-old-slug', topic), 'another-topic': record('another-topic', 'Another topic') },
+  }));
+  const rendered = writeAudit(dir);
+  assert.equal(rendered.slug, 'same-text-old-slug');
+  assert.equal(rendered.version, '0.2');
+  assert.deepEqual(listVersions(dir).known, ['another-topic', 'same-text-old-slug']);
+});
+
+// A record that carries its topic text and a DIFFERENT one is another topic, not a re-spelling:
+// a refined topic line still starts its own chain (cli.test.mjs, 2026-09-30).
+test('a one-record manifest holding a different topic text is not continued', () => {
+  const dir = makePassingProject();
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: { 'another-topic': { topic: 'Another topic', latest: '0.1', versions: { 0.1: { date: '2026-09-14', fingerprint: 'x', main: `${PATHS.audits}/another-topic-v0.1-2026-09-14.md`, subtopics: [] } } } },
+  }));
+  const rendered = writeAudit(dir);
+  assert.equal(rendered.written, true, rendered.reason);
+  assert.equal(rendered.slug, makeSlug(readCorpus(dir).map.topic));
+  assert.equal(rendered.version, '0.1');
+  assert.equal(rendered.continued, undefined);
 });
 
 test('a version with no audit file recorded is named as such, not interpolated as undefined', () => {

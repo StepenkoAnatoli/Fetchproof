@@ -49,6 +49,16 @@ test('a malformed request is refused, each reason named', () => {
   }
 });
 
+// Found 2026-10-18 (review of #293): a builder request whose topic held a line break passed
+// intake, and the runner's new-project refused it after approval - recorded failed, not refused.
+test('a request topic on two lines is refused at intake', () => {
+  for (const topic of ['line one\nline two', 'a\rb']) {
+    const problems = requestProblems({ ...GOOD, topic });
+    assert(problems.some((p) => /"topic" must be one line/.test(p)), `${JSON.stringify(topic)} -> ${JSON.stringify(problems)}`);
+  }
+  assertEqual(requestProblems({ ...GOOD, topic: 'one line' }).length, 0);
+});
+
 test('a page on this machine or its network is refused - a request cannot aim the collector inward', () => {
   for (const url of ['http://localhost:47123/api/state', 'http://127.0.0.1/', 'http://10.0.0.5/x', 'http://169.254.169.254/latest/meta-data',
     'http://192.168.1.1/', 'http://[::1]/', 'http://app.localhost/', `https://${'user'}:${'pw'}@example.com/`]) {
@@ -105,7 +115,7 @@ test('applying a request adds an OPEN contract row, the plan entries, and a boun
   assertEqual(rows[0].cells[3], 'OPEN');
   const plan = readJson(path.join(project, 'research', 'plan.json'));
   assertEqual(plan.urls.length, 1);
-  assertEqual(plan.queries[0].why, 'U-1');
+  assertEqual(plan.queries[0].why, 'U-1 request burst-limit');
   const run = readJson(path.join(project, planFile));
   assertEqual(run.topic, 'Apply topic');
   assertEqual(run.maxScrapes, 3);
@@ -126,6 +136,64 @@ test('a request cannot add searches to a closed unknown', () => {
   } catch (err) { threw = err.message; }
   assert(/U-1 is already CLOSED/.test(threw), threw);
   assertEqual(readJson(path.join(project, 'research', 'plan.json')).queries.length, 0);
+});
+
+test('a request applied again reuses the contract row it made and replaces its plan entries (#322)', () => {
+  const project = makeProject(undefined, { topic: 'Reapplied request', content: true });
+  const rows = () => parseTable(readText(path.join(project, 'research', 'DISCOVERY.md')), HEADERS.unknowns).rows;
+  const plan = () => readJson(path.join(project, 'research', 'plan.json'));
+  const first = applyRequest(project, 'nores', { ...GOOD, queries: ['x burst limit'] }, 2);
+  assertEqual(first.unknown, 'U-1');
+  // The same request again: no second row, no second plan entry.
+  assertEqual(applyRequest(project, 'nores', { ...GOOD, queries: ['x burst limit'] }, 2).unknown, 'U-1');
+  assertEqual(rows().length, 1);
+  assertEqual(plan().urls.length, 1);
+  assertEqual(plan().queries.length, 1);
+  // The builder edited its pages and searches: the row stays, the entries are replaced.
+  const edited = { ...GOOD, urls: ['https://docs.example.com/other'], queries: ['y burst limit'] };
+  assertEqual(applyRequest(project, 'nores', edited, 2).unknown, 'U-1');
+  assertEqual(rows().length, 1);
+  assertEqual(JSON.stringify(plan().urls.map((u) => [u.url, u.why])), JSON.stringify([['https://docs.example.com/other', 'U-1 request nores']]));
+  assertEqual(JSON.stringify(plan().queries.map((q) => [q.q, q.why])), JSON.stringify([['y burst limit', 'U-1 request nores']]));
+  // A reworded fact still reuses the row and rewrites nothing else in it.
+  assertEqual(applyRequest(project, 'nores', { ...edited, fact: 'A reworded fact' }, 2).unknown, 'U-1');
+  assertEqual(rows().length, 1);
+  assertEqual(rows()[0].cells[1], GOOD.fact);
+  // Another request still gets its own row.
+  assertEqual(applyRequest(project, 'other', { ...GOOD, urls: ['https://docs.example.com/third'] }, 1).unknown, 'U-2');
+  // The row was CLOSED since: refused, as a request naming a closed row is.
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  writeText(discovery, readText(discovery).replace(/(\| U-1 \|[^\n]*\| )OPEN( \|)/, '$1CLOSED$2'));
+  assertEqual(rows()[0].cells[3], 'CLOSED');
+  let threw = '';
+  try { applyRequest(project, 'nores', edited, 2); } catch (err) { threw = err.message; }
+  assert(/U-1 is already CLOSED/.test(threw), threw);
+  assertEqual(rows().length, 2);
+});
+
+test('a request\'s own plan file cannot choose its row or delete the operator\'s plan entries (#322)', () => {
+  const project = makeProject(undefined, { topic: 'Builder plan file', content: true });
+  appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Operator fact', 'the design', 'OPEN', '']);
+  const planPath = path.join(project, 'research', 'plan.json');
+  const operator = [{ q: 'vendor pricing tiers', why: 'U-1' }, { q: 'vendor rate limits', why: 'U-1' }];
+  writeText(planPath, JSON.stringify({ ...readJson(planPath), queries: operator }, null, 2));
+  // research/requests/ is the builder's folder: a plan file there is the builder's to write.
+  writeText(path.join(project, 'research', 'requests', 'evil.plan.json'), JSON.stringify({
+    queries: operator, urls: [{ url: 'https://docs.example.com/x', why: 'U-1 request evil' }],
+  }));
+  assertEqual(applyRequest(project, 'evil', GOOD, 1).unknown, 'U-2', 'the builder\'s plan file chose the operator\'s row');
+  assertEqual(JSON.stringify(readJson(planPath).queries), JSON.stringify(operator), 'the operator\'s searches were deleted');
+});
+
+test('a re-applied request keeps a search the operator had already planned (#322)', () => {
+  const project = makeProject(undefined, { topic: 'Operator search', content: true });
+  appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Operator fact', 'the design', 'OPEN', '']);
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(planPath, JSON.stringify({ ...readJson(planPath), queries: [{ q: 'vendor rate limits', why: 'U-1' }] }, null, 2));
+  applyRequest(project, 'limits', { ...GOOD, unknown: 'U-1', queries: ['vendor rate limits'] }, 1);
+  applyRequest(project, 'limits', { ...GOOD, unknown: 'U-1', queries: ['vendor burst limit docs'] }, 1);
+  assertEqual(JSON.stringify(readJson(planPath).queries.map((q) => [q.q, q.why])),
+    JSON.stringify([['vendor rate limits', 'U-1'], ['vendor burst limit docs', 'U-1 request limits']]));
 });
 
 test('a request or its collector-owned sibling that is a symbolic link is ignored, and never written through', () => {
@@ -205,10 +273,38 @@ function standInKit() {
 const fs = require('node:fs');
 const path = require('node:path');
 fs.appendFileSync(path.join(process.env.STANDIN_LOG, 'calls.log'), JSON.stringify(process.argv.slice(2)) + '\\n');
-fs.mkdirSync('research/raw', { recursive: true });
-fs.writeFileSync('research/raw/2026-10-07-page.md', 'captured\\n');
-fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ url: 'https://docs.example.com/limits' }) + '\\n');
 const mode = process.env.STANDIN_MODE || '';
+fs.mkdirSync('research/raw', { recursive: true });
+if (!['fetch-failed', 'gone', 'search-cached', 'search-empty', 'search-offtopic'].includes(mode)) {
+  fs.writeFileSync('research/raw/2026-10-07-page.md', 'captured\\n');
+  fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ url: 'https://docs.example.com/limits' }) + '\\n');
+}
+if (mode === 'fetch-failed' || mode === 'some-failed') {
+  // A failed fetch is a ledger entry with the transport's error, as collectOne writes it.
+  const asked = ((JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).urls || [])[0] || {}).url;
+  fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ op: 'fail', url: asked, raw: '', discoveredBy: '',
+    transport: 'http-keyless', error: 'fetch failed (getaddrinfo ENOTFOUND docs.example.com)' }) + '\\n');
+  // An operator's run in a terminal, appending to the same ledger at the same time.
+  fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ op: 'fail', url: 'https://operator.example/own', raw: '', discoveredBy: '',
+    transport: 'http-keyless', error: 'operator terminal run' }) + '\\n');
+}
+// What the request's search returned, in the run's usage line as runResearch writes it.
+if (mode.startsWith('search-')) {
+  const q = ((JSON.parse(fs.readFileSync(process.argv[3], 'utf8')).queries || [])[0] || {}).q;
+  const outcome = {
+    'search-cached': { query: q, results: 1, held: ['https://docs.example.com/rate-limits'], targets: [] },
+    'search-empty': { query: q, results: 0, held: [], targets: [] },
+    'search-offtopic': { query: q, results: 3, held: [], targets: [] },
+    'search-foreign': { query: q, results: 1, held: [], targets: ['https://docs.example.com/limits'] },
+  }[mode];
+  if (mode === 'search-foreign') {
+    // An operator's run in a terminal failed on a page its own search found, at the same time.
+    fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ op: 'fail', url: 'https://operator.example/found', raw: '',
+      discoveredBy: 'serpapi', transport: 'http-keyless', error: 'operator terminal run' }) + '\\n');
+  }
+  fs.appendFileSync('research/raw/.usage.jsonl', JSON.stringify({ at: new Date().toISOString(), spent: mode === 'search-foreign' ? 1 : 0,
+    cached: 0, failed: 0, searchesUsed: 1, searchOutcomes: [outcome] }) + '\\n');
+}
 const plan = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 for (const query of plan.queries || []) console.log('search found 1 for "' + query.q + '"');
 if (mode === 'long-stopped' || mode === 'failed-long') {
@@ -216,7 +312,7 @@ if (mode === 'long-stopped' || mode === 'failed-long') {
   process.stderr.write('y'.repeat(300000));
 }
 const stopped = mode === 'stopped' || mode === 'long-stopped';
-const spent = Math.min(stopped ? 1 : 2, plan.maxScrapes);
+const spent = mode === 'search-foreign' ? 1 : mode === 'gone' || mode.startsWith('search-') ? 0 : mode === 'fetch-failed' ? 1 : mode === 'some-failed' ? 3 : Math.min(stopped ? 1 : 2, plan.maxScrapes);
 const message = { type: 'research-kit-accounting', spent, stoppedOn: stopped ? 'firecrawl' : '' };
 if (mode === 'malformed') message.spent = '2';
 function finish() {
@@ -761,6 +857,277 @@ test('auto-collect retries a failed push without collecting the request again', 
   assert(fs.existsSync(path.join(w.builder, 'research', 'raw', '.fetches.jsonl')), 'the corpus did not travel with the result');
 });
 
+test('a request whose every fetch failed is recorded as failed with the fetch error, not as collected (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'fetch-failed' });
+  saveAutoCollect({ mode: 'auto', perRequestPages: 4, dailyPages: 20 }, w.m.env);
+  builderPushes(w, 'nores', GOOD);
+  const auto = loop(w);
+  const status = await auto.cycle();
+  const row = status.requests.find((r) => r.id === 'nores');
+  assertEqual(row.status, 'failed', JSON.stringify(status));
+  assertEqual(row.pages, 1, 'the panel shows pages used, and the failed attempt was used');
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  const result = readJson(path.join(w.builder, 'research', 'requests', 'nores.result.json'));
+  assertEqual(result.status, 'failed');
+  assert(/https:\/\/docs\.example\.com\/limits - fetch failed \(getaddrinfo ENOTFOUND/.test(result.detail), result.detail);
+  assert(!/operator/.test(result.detail), `another run's failure was attributed to the request: ${result.detail}`);
+  assertEqual(result.pages, 0, 'a failed fetch was counted as a collected page');
+  assertEqual(result.failed, 1);
+  assert(/could not be fetched/.test(result.next) && /urls/.test(result.next), result.next);
+  const subject = git(w.builder, w.m.env, 'log', '-1', '--format=%s').trim();
+  assertEqual(subject, 'research: request nores failed');
+  assert(!/collect/.test(subject), subject);
+  await auto.cycle();
+  assertEqual(calls(w).length, 1, 'a failed result was collected again without a change to the request');
+});
+
+test('a request whose page the ledger says is gone is failed, not collected (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'gone' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  writeText(path.join(w.collector, 'research', 'raw', '.fetches.jsonl'), `${JSON.stringify({ op: 'fail', url: GOOD.urls[0], raw: '',
+    transport: 'http-keyless', error: 'the page answered HTTP 404 (Not Found) - an error page is not evidence' })}\n`);
+  git(w.collector, w.m.env, 'add', '-f', 'research/raw/.fetches.jsonl');
+  git(w.collector, w.m.env, '-c', 'core.hooksPath=', 'commit', '-q', '--no-verify', '-m', 'earlier 404');
+  git(w.collector, w.m.env, 'push', '-q');
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  builderPushes(w, 'gone', GOOD);
+  await loop(w).cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'gone.result.json'));
+  assertEqual(result.status, 'failed', JSON.stringify(result));
+  assert(/https:\/\/docs\.example\.com\/limits - not fetched again; its last fetch failed: the page answered HTTP 404/.test(result.detail), result.detail);
+  assertEqual(result.pages, 0);
+  assertEqual(git(w.collector, w.m.env, 'log', '-1', '--format=%s').trim(), 'research: request gone failed');
+});
+
+test('a search that finds only a page another request captured is collected and names it (#321)', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  const X = 'https://docs.example.com/rate-limits';
+  builderPushes(w, 'first', { ...GOOD, urls: [X] });
+  const auto = loop(w);
+  await auto.cycle();
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  w.m.env.STANDIN_MODE = 'search-cached';
+  builderPushes(w, 'second', { fact: 'What is the free plan rate limit?', blocks: 'the queue design', queries: ['free plan rate limits'] });
+  await auto.cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'second.result.json'));
+  assertEqual(result.status, 'collected', JSON.stringify(result));
+  assertEqual(result.pages, 0);
+  assertEqual(result.cached, 1);
+  assert(result.next.includes(`already captured (${X})`), result.next);
+});
+
+test('nothing fetched is failed only with evidence: an empty search fails, an off-topic one does not (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'search-empty' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  const asked = (q) => ({ fact: GOOD.fact, blocks: GOOD.blocks, queries: [q] });
+  builderPushes(w, 'empty', asked('x burst limit'));
+  const auto = loop(w);
+  await auto.cycle();
+  const empty = readJson(path.join(w.collector, 'research', 'requests', 'empty.result.json'));
+  assertEqual(empty.status, 'failed', JSON.stringify(empty));
+  assert(/the search "x burst limit" returned no results/.test(empty.detail), empty.detail);
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  w.m.env.STANDIN_MODE = 'search-offtopic';
+  builderPushes(w, 'offtopic', asked('y burst limit'));
+  await auto.cycle();
+  const offtopic = readJson(path.join(w.collector, 'research', 'requests', 'offtopic.result.json'));
+  assertEqual(offtopic.status, 'collected', 'results that matched nothing are not evidence that nothing exists');
+  assertEqual(offtopic.pages, 0);
+});
+
+test('another run\'s failure on a page its own search found is not this request\'s (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'search-foreign' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'found', { fact: GOOD.fact, blocks: GOOD.blocks, queries: ['x burst limit'] });
+  await loop(w).cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'found.result.json'));
+  assertEqual(result.status, 'collected', JSON.stringify(result));
+  assertEqual(result.pages, 1);
+  assertEqual(result.failed, undefined, 'a concurrent run\'s failure was counted against the request');
+});
+
+test('a request whose named page is already captured is collected, and told to read it (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'gone' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  // The corpus already holds the page: its ledger's last word on it is a fetch.
+  writeText(path.join(w.collector, 'research', 'raw', '.fetches.jsonl'), `${JSON.stringify({
+    op: 'scrape', url: GOOD.urls[0], raw: 'research/raw/2026-10-01-limits.md', transport: 'http-keyless' })}\n`);
+  writeText(path.join(w.collector, 'research', 'raw', '2026-10-01-limits.md'), 'captured earlier\n');
+  git(w.collector, w.m.env, 'add', '-f', 'research/raw');
+  git(w.collector, w.m.env, '-c', 'core.hooksPath=', 'commit', '-q', '--no-verify', '-m', 'earlier collection');
+  git(w.collector, w.m.env, 'push', '-q');
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  builderPushes(w, 'held', GOOD);
+  await loop(w).cycle();
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'held.result.json'));
+  assertEqual(result.status, 'collected', JSON.stringify(result));
+  assertEqual(result.cached, 1);
+  assert(result.next.includes(`already captured (${GOOD.urls[0]})`), result.next);
+});
+
+test('a request with some pages collected and some failed counts only the collected pages (#321)', async () => {
+  const w = world({ STANDIN_MODE: 'some-failed' });
+  saveAutoCollect({ mode: 'auto', perRequestPages: 4, dailyPages: 20 }, w.m.env);
+  builderPushes(w, 'mixed', GOOD);
+  const status = await loop(w).cycle();
+  assertEqual(status.requests.find((r) => r.id === 'mixed').status, 'collected', JSON.stringify(status));
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'mixed.result.json'));
+  assertEqual(result.status, 'collected');
+  assertEqual(result.pages, 2);
+  assertEqual(result.failed, 1);
+});
+
+test('a request processed again after the builder edits it reuses its contract row (#322)', async () => {
+  const w = world({ STANDIN_MODE: 'fetch-failed' });
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'nores', GOOD);
+  const auto = loop(w);
+  await auto.cycle();
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  builderPushes(w, 'nores', { ...GOOD, urls: ['https://docs.example.com/other'] });
+  w.m.env.STANDIN_MODE = '';
+  await auto.cycle();
+  assertEqual(calls(w).length, 2, 'the edited request was not processed again');
+  const result = readJson(path.join(w.collector, 'research', 'requests', 'nores.result.json'));
+  assertEqual(result.unknown, 'U-1');
+  const rows = parseTable(readText(path.join(w.collector, 'research', 'DISCOVERY.md')), HEADERS.unknowns).rows;
+  assertEqual(rows.length, 1, 'a second OPEN row was added for the same request');
+  const urls = readJson(path.join(w.collector, 'research', 'plan.json')).urls.filter((u) => / request nores$/.test(u.why));
+  assertEqual(JSON.stringify(urls.map((u) => u.url)), JSON.stringify(['https://docs.example.com/other']));
+});
+
+test('a fresh listener does not re-deliver results already upstream over the operator\'s edits (#325)', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'after', GOOD);
+  await loop(w).cycle();
+  assertEqual(calls(w).length, 1);
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  builderPushes(w, 'second', { ...GOOD, urls: ['https://docs.example.com/other'] });
+  const evidence = path.join(w.collector, 'research', 'EVIDENCE.md');
+  writeText(evidence, `${readText(evidence)}\noperator mid-edit\n`);
+
+  // A restarted panel: nothing in memory says "after" was delivered.
+  const status = await loop(w).cycle();
+  assertEqual(calls(w).length, 1, 'collection ran over uncommitted work');
+  assertEqual(git(w.collector, w.m.env, 'log', '-1', '--format=%s').trim(), 'request second', 'a delivery retry made a commit');
+  assert(/operator mid-edit/.test(readText(evidence)), 'the operator\'s edit was lost');
+  assert(git(w.collector, w.m.env, 'status', '--porcelain', '--', 'research/EVIDENCE.md').trim(), 'the operator\'s edit was committed');
+  assert(!/operator mid-edit/.test(git(w.collector, w.m.env, 'show', 'origin/main:research/EVIDENCE.md')), 'the operator\'s edit was pushed');
+  const second = status.requests.find((r) => r.id === 'second');
+  assertEqual(second.status, 'waiting');
+  assert(/uncommitted changes/.test(second.detail), second.detail);
+});
+
+test('a pending delivery stages only what it names and waits rather than sweep up the operator\'s edits (#325)', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'burst-limit', GOOD);
+  builderPushes(w, 'zbroken', '{ not json');
+  let refuseCommits = 2;
+  const restarted = () => createAutoCollect({
+    project: () => w.collector,
+    env: w.m.env,
+    kitRoot: w.kit,
+    exec: (command, args, options) => {
+      if (command === 'git' && args[0] === 'commit' && options.env.GIT_INDEX_FILE && refuseCommits > 0) {
+        refuseCommits -= 1;
+        return Promise.resolve({ code: 1, output: 'hook refused the commit\n' });
+      }
+      return execFile(command, args, options);
+    },
+  });
+  let status = await restarted().cycle();
+  assert(status.requests.every((r) => /commit refused/.test(r.git)), JSON.stringify(status.requests));
+  assertEqual(calls(w).length, 1);
+  const head = git(w.collector, w.m.env, 'rev-parse', 'HEAD').trim();
+  const evidence = path.join(w.collector, 'research', 'EVIDENCE.md');
+  writeText(evidence, `${readText(evidence)}\noperator mid-edit\n`);
+
+  status = await restarted().cycle();
+  assertEqual(calls(w).length, 1, 'a delivery retry collected again');
+  // The refusal is the result file alone: delivered, and nothing else staged with it.
+  assertEqual(git(w.collector, w.m.env, 'log', '-1', '--format=%s').trim(), 'research: refuse request zbroken');
+  assertEqual(git(w.collector, w.m.env, 'show', '--pretty=', '--name-only', 'HEAD').trim(), 'research/requests/zbroken.result.json');
+  assertEqual(git(w.collector, w.m.env, 'rev-parse', 'HEAD~1').trim(), head);
+  // The collection's corpus sits beside the operator's edit, and the two cannot be told apart.
+  const row = status.requests.find((r) => r.id === 'burst-limit');
+  assert(/research\/requests\/burst-limit\.result\.json and the corpus its run wrote are uncommitted/.test(row.git), row.git);
+  assert(!/discard/.test(row.git), row.git);
+  assert(git(w.collector, w.m.env, 'status', '--porcelain', '--', 'research/EVIDENCE.md').trim(), 'the operator\'s edit was committed');
+  assert(!/operator mid-edit/.test(git(w.collector, w.m.env, 'show', 'origin/main:research/EVIDENCE.md')), 'the operator\'s edit was pushed');
+});
+
+test('a delivery held back by an earlier request\'s failed push reaches the remote on the next cycle (#325)', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'a-first', GOOD);
+  builderPushes(w, 'b-second', { ...GOOD, urls: ['https://docs.example.com/other'] });
+  let failPush = 1;
+  const auto = createAutoCollect({
+    project: () => w.collector,
+    env: w.m.env,
+    kitRoot: w.kit,
+    exec: (command, args, options) => {
+      if (command === 'git' && args[0] === 'push' && failPush > 0) {
+        failPush -= 1;
+        return Promise.resolve({ code: 1, output: 'fatal: unable to access remote (simulated outage)\n' });
+      }
+      return execFile(command, args, options);
+    },
+  });
+  let status = await auto.cycle();
+  assertEqual(calls(w).length, 2);
+  assert(/unrelated local commit/.test(status.requests.find((r) => r.id === 'b-second').git), JSON.stringify(status.requests));
+  status = await auto.cycle();
+  assertEqual(calls(w).length, 2, 'a delivery retry collected again');
+  const remote = git(w.remote, w.m.env, 'ls-tree', '-r', '--name-only', 'main');
+  assert(remote.includes('research/requests/a-first.result.json'), remote);
+  assert(remote.includes('research/requests/b-second.result.json'), 'the second request never reached the builder');
+  assertEqual(git(w.collector, w.m.env, 'status', '--porcelain', '--', 'research').trim(), '');
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  builderPushes(w, 'c-third', { ...GOOD, urls: ['https://docs.example.com/third'] });
+  status = await auto.cycle();
+  assertEqual(calls(w).length, 3, 'the next request was held back');
+  assertEqual(status.requests.find((r) => r.id === 'c-third').status, 'collected');
+});
+
+test('a delivery retry neither pushes nor stages when the upstream moved past HEAD (#325)', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  builderPushes(w, 'after', GOOD);
+  await loop(w).cycle();
+  const evidence = path.join(w.collector, 'research', 'EVIDENCE.md');
+  writeText(evidence, `${readText(evidence)}\noperator mid-edit\n`);
+  const head = git(w.collector, w.m.env, 'rev-parse', 'HEAD').trim();
+  let raced = false;
+  const restarted = createAutoCollect({
+    project: () => w.collector,
+    env: w.m.env,
+    kitRoot: w.kit,
+    exec: (command, args, options) => {
+      // Between the pull and the delivery check, an editor's autofetch brings in the builder's
+      // deletion of the old result.
+      if (!raced && command === 'git' && args[0] === 'status' && args.includes('research/requests/after.result.json')) {
+        raced = true;
+        git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+        git(w.builder, w.m.env, 'rm', '-q', 'research/requests/after.result.json');
+        git(w.builder, w.m.env, '-c', 'core.hooksPath=', 'commit', '-q', '--no-verify', '-m', 'builder: re-ask after');
+        git(w.builder, w.m.env, 'push', '-q');
+        git(w.collector, w.m.env, 'fetch', '-q');
+      }
+      return execFile(command, args, options);
+    },
+  });
+  const status = await restarted.cycle();
+  assert(raced, 'the fixture never reached the delivery check');
+  assertEqual(git(w.collector, w.m.env, 'rev-parse', 'HEAD').trim(), head, 'a commit was made over the moved upstream');
+  assert(git(w.collector, w.m.env, 'status', '--porcelain', '--', 'research/EVIDENCE.md').trim(), 'the operator\'s edit was committed');
+  const row = status.requests.find((r) => r.id === 'after');
+  assert(/upstream changed research\/requests\/after\.result\.json/.test(row.git), row.git);
+});
+
 test('a malformed request arriving by git is refused with its reasons, and nothing is collected', async () => {
   const w = world();
   saveAutoCollect({ mode: 'auto' }, w.m.env);
@@ -1026,15 +1393,27 @@ test('a request over today\'s cap waits for tomorrow instead of being refused', 
   assert(/today's cap/.test(row.detail), row.detail);
 });
 
-test('a new topic is refused until the operator approves a folder for it', async () => {
+test('a new topic waits until the operator approves a folder for it, then runs unchanged (#323)', async () => {
   const w = world();
   saveAutoCollect({ mode: 'auto' }, w.m.env);
   builderPushes(w, 'new-topic', { ...GOOD, topic: 'Something else entirely' });
-  await loop(w).cycle();
+  const auto = loop(w);
+  let status = await auto.cycle();
   assertEqual(calls(w).length, 0);
-  const result = readJson(path.join(w.collector, 'research', 'requests', 'new-topic.result.json'));
-  assertEqual(result.status, 'refused');
-  assert(/no folder approved for new topics/.test(result.problems[0]), result.problems[0]);
+  const row = status.requests.find((r) => r.id === 'new-topic');
+  assertEqual(row.status, 'waiting');
+  assert(/no folder approved for new topics/.test(row.detail), row.detail);
+  const resultFile = path.join(w.collector, 'research', 'requests', 'new-topic.result.json');
+  assert(!fs.existsSync(resultFile), 'a collector-side condition was written as the request\'s final result');
+  assertEqual(git(w.collector, w.m.env, 'log', '-1', '--format=%s').trim(), 'request new-topic', 'the wait was committed');
+
+  // The operator approves a folder; the next cycle collects the same, unedited request.
+  saveAutoCollect({ topicsFolder: 'projects' }, w.m.env);
+  status = await auto.cycle();
+  assertEqual(calls(w).length, 1);
+  assertEqual(status.requests.find((r) => r.id === 'new-topic').status, 'collected');
+  const result = readJson(resultFile);
+  assert(/^projects\/\d{4}-\d{2}-\d{2}-new-topic$/.test(result.project), JSON.stringify(result));
 });
 
 test('mode off does nothing on the timer, and uncommitted work under research/ holds a run back', async () => {

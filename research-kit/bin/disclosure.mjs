@@ -6,13 +6,13 @@
 // that quietly authenticated would answer a different question and look like this one.
 //
 // Exit codes are the finding, so this can gate something later:
-//   0  only the SHAPE is public - names, sizes, timings
+//   0  nothing beyond the SHAPE is public - names, sizes, timings, if even those
 //   1  CONTENT is public - artifacts or logs can be read by a stranger
 //   2  the SUBJECT is public - the topic you passed was found in a public response
 //   3  could not measure - including any probe that never reached GitHub, unless an
 //      exposure was measured anyway
 
-import { parseFlags } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
 import { probeRun, render, exitCode } from '../lib/disclosure.mjs';
 
@@ -35,23 +35,30 @@ const { flags } = parseFlags(process.argv.slice(2));
 if (flags.help) { process.stdout.write(HELP); process.exit(0); }
 requireRuntime({ node: true });
 
-const known = new Set(['repository', 'run', 'topic', 'json', 'help']);
-const unknown = Object.keys(flags).filter((f) => !known.has(f));
-if (unknown.length) {
-  for (const f of unknown) {
-    process.stderr.write(`unknown option --${f}\n`);
-    if (/token|auth|key|secret/i.test(f)) {
-      process.stderr.write('This probe is unauthenticated by design. Authenticating it would answer a different question.\n');
-    }
-  }
-  process.stdout.write(HELP);
-  process.exit(3);
-}
+// The shared refusal, so a flag given twice or a stray argument is refused too (#286, #289).
+refuseUnknownFlags(flags, ['repository', 'run', 'topic', 'json', 'help'], {
+  help: HELP, exit: 3,
+  note: (f) => (/token|auth|key|secret/i.test(f)
+    ? 'This probe is unauthenticated by design. Authenticating it would answer a different question.' : ''),
+});
+checkFlagValues(flags, { repository: {}, run: {}, topic: {} }, { exit: 3 });
 
 const missing = ['repository', 'run'].filter((n) => flags[n] === undefined || flags[n] === true);
 if (missing.length) {
   process.stderr.write(`disclosure needs ${missing.map((m) => `--${m}`).join(' and ')}\n\n`);
   process.stdout.write(HELP);
+  process.exit(3);
+}
+
+// The arguments are checked before any request (#303): `--run abc` asked GitHub for
+// /actions/runs/NaN and `--repository Research-Kit` for a repository with no owner; every
+// probe was refused, and a run nobody looked at read as "only the shape is public", exit 0.
+// A repeated flag arrived as an array, which each value passing on its own does not make one
+// run: `--run 1 --run 2` became Number([...]), NaN, and probed /actions/runs/NaN. The shared
+// refusal above now refuses it by name (#286), before any value here is read.
+checkFlagValues(flags, { run: { int: true, min: 1 }, repository: 'value' }, { exit: 3 });
+if (!/^[^/\s]+\/[^/\s]+$/.test(String(flags.repository))) {
+  process.stderr.write(`--repository must be OWNER/REPO, not "${flags.repository}"\n`);
   process.exit(3);
 }
 

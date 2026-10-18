@@ -56,10 +56,15 @@ export function isEmptyArchitectureMap(text) {
   return foldLineEndings(text) === foldLineEndings(template);
 }
 
-/** One staged file's text: the index's bytes, or, outside a repository, the working tree's. */
-export function readStagedText(root, rel, { run = gitCapture } = {}) {
-  if (!isGitRepo(root)) return readText(resolve(root, rel));
-  return run(['show', `:${rel}`], { cwd: root });
+/**
+ * One staged file's text: the index's bytes, or, outside a repository, the working tree's.
+ * `top` is the repository's top level when the project is below it (#309): git runs there,
+ * and the index names the file by its path from there.
+ */
+export function readStagedText(root, rel, { run = gitCapture, top = null } = {}) {
+  const at = top ?? root;
+  if (!isGitRepo(at)) return readText(resolve(root, rel));
+  return run(['show', `:${projectPrefix(top, root)}${rel}`], { cwd: at });
 }
 
 /** A project is gated when ANY of the four markers exists. */
@@ -68,6 +73,141 @@ export function isGated(root) {
     const abs = resolve(root, marker);
     return marker.endsWith('/') || marker === PATHS.raw ? isDirectory(abs) : exists(abs);
   });
+}
+
+/** The project's path from the top level, as git spells it, with a trailing slash; '' at the top. */
+function projectPrefix(top, root) {
+  if (!top) return '';
+  const rel = path.relative(top, root).split(path.sep).join('/');
+  return rel ? `${rel}/` : '';
+}
+
+/**
+ * Whether a contract's text is one new-project rendered: the kit's heading, with the template's
+ * {{TOPIC}} token filled in. The kit's own template/ - vendored into other repositories - keeps
+ * the token; a markdown note that happens to be called DISCOVERY.md lacks the heading.
+ */
+export function isKitContract(text) {
+  if (typeof text !== 'string') return false;
+  const body = text.replace(/^﻿/, '');
+  return body.startsWith('# Discovery Contract - ') && !body.includes('{{TOPIC}}');
+}
+
+/**
+ * Whether a directory BELOW the repository's top level is a kit project (#309, ADR-0182): it
+ * holds research/DISCOVERY.md, and either research/raw/ or a contract new-project rendered
+ * (`isKitContract`). Any one of the four gate markers is not enough there: a data folder's
+ * research/raw/survey.csv or an experiment's research/plan.json, in a repository that never
+ * heard of the kit, made the machine-wide hook block its commits, and so did a vendored copy of
+ * the kit's template/ (review of #309, 2026-10-18). raw/ alone is not the second signal either:
+ * a repository that ignores raw/ folders never carries it to a clone, and the project escaped
+ * both gates on the builder's machine (second review, the same day). The top level keeps the
+ * four markers. `named` is the set of paths a caller already knows of, such as the staged list,
+ * whose deletions are still this project's: `git rm research/DISCOVERY.md` does not ungate it.
+ */
+export function isProjectBelowTop(dir, { named = null, rel = null } = {}) {
+  const contract = resolve(dir, PATHS.discovery);
+  const namedContract = Boolean(named && rel !== null && named.contracts.has(rel));
+  if (!exists(contract) && !namedContract) return false;
+  if (isDirectory(resolve(dir, PATHS.raw)) || Boolean(named && rel !== null && named.rawDirs.has(rel))) return true;
+  return isKitContract(readText(contract));
+}
+
+/**
+ * The gated projects a commit's staged paths belong to, when the top level the hook runs at
+ * is not one (#309): each path goes to its NEAREST project below `top` (`isProjectBelowTop`),
+ * and keeps its path relative to that project. A path under no project is in no group. Not a
+ * search: the directories asked about are the staged paths' own parents, remembered per
+ * directory. `contracts` - the directories whose research/DISCOVERY.md the index tracks
+ * (`trackedContracts`, one git call) - makes them string lookups: 30,000 staged paths in 9,060
+ * folders had cost 25 s on a loaded host at four existsSync calls each, near the hook's 120 s
+ * watchdog, in a repository that has no project at all. A candidate with no research/raw/ on
+ * disk has its contract read (`contractText`). Without `contracts` (git could not list them)
+ * each directory with a research/ folder is asked of the disk, one stat for one without.
+ *
+ * Found 2026-10-13: git runs pre-commit with the top level as cwd, which carried no marker, so
+ * the gate answered "not-gated" before it read a staged path - code staged in a failing
+ * packages/a, or in the README's docs/research/... example, was never judged.
+ */
+export function stagedProjects(top, stagedPaths, { contracts = null, readContract = (rel) => contractText(top, rel) } = {}) {
+  const normal = (name) => {
+    const text = String(name);
+    const slashed = text.includes('\\') ? text.split('\\').join('/') : text;
+    return slashed.includes('//') || slashed.startsWith('./') || slashed.includes('/./')
+      ? slashed.split('/').filter((p) => p && p !== '.').join('/') : slashed;
+  };
+  const names = stagedPaths.map(normal);
+  // What the staged list itself names, deletions included.
+  const named = { contracts: new Set(), rawDirs: new Set() };
+  const rawMark = `/${PATHS.raw}/`;
+  for (const n of names) {
+    if (n.endsWith(`/${PATHS.discovery}`)) named.contracts.add(n.slice(0, -(PATHS.discovery.length + 1)));
+    for (let at = n.indexOf(rawMark); at > 0; at = n.indexOf(rawMark, at + 1)) named.rawDirs.add(n.slice(0, at));
+  }
+  const candidates = Array.isArray(contracts) ? new Set([...contracts, ...named.contracts]) : null;
+  const known = new Map();
+  const isProject = (rel) => {
+    let answer = known.get(rel);
+    if (answer === undefined) {
+      if (candidates) {
+        // raw/ when it is there; otherwise the contract itself, read from the index - a clone
+        // whose repository ignores raw/ folders has none, and the project is still one.
+        answer = candidates.has(rel) && (named.rawDirs.has(rel) || isDirectory(resolve(resolve(top, rel), PATHS.raw))
+          || isKitContract(readContract(rel)));
+      } else {
+        const dir = resolve(top, rel);
+        answer = (isDirectory(resolve(dir, 'research')) || named.contracts.has(rel) || named.rawDirs.has(rel))
+          && isProjectBelowTop(dir, { named, rel });
+      }
+      known.set(rel, answer);
+    }
+    return answer;
+  };
+  const groups = new Map();
+  for (const n of names) {
+    // Each parent of the path, nearest first; the top level itself ('') is never one.
+    for (let cut = n.lastIndexOf('/'); cut > 0; cut = n.lastIndexOf('/', cut - 1)) {
+      const dir = n.slice(0, cut);
+      if (!isProject(dir)) continue;
+      if (!groups.has(dir)) groups.set(dir, { project: dir, root: resolve(top, dir), stagedPaths: [] });
+      groups.get(dir).stagedPaths.push(n.slice(cut + 1));
+      break;
+    }
+  }
+  return [...groups.values()];
+}
+
+/**
+ * The directories below `top` whose research/DISCOVERY.md the index tracks, top-relative, or
+ * null when git could not list them: one `git ls-files` for the whole repository (#309).
+ */
+export function trackedContracts(top, { run = gitCapture } = {}) {
+  // The pattern is magic on purpose. GIT_LITERAL_PATHSPECS=1 (or GIT_NOGLOB_PATHSPECS) in the
+  // committer's environment made it match nothing - an empty list, not a failure - and judging
+  // below the top level turned itself off (second review of #309, 2026-10-18).
+  const env = { ...process.env };
+  delete env.GIT_LITERAL_PATHSPECS;
+  delete env.GIT_NOGLOB_PATHSPECS;
+  const text = run(['ls-files', '-z', '--', `:(glob)**/${PATHS.discovery}`], { cwd: top, env });
+  if (typeof text !== 'string') return null;
+  return text.split('\0').filter((name) => name.endsWith(`/${PATHS.discovery}`))
+    .map((name) => name.slice(0, -(PATHS.discovery.length + 1)));
+}
+
+/**
+ * The contract of a project below `top`, as the commit would carry it: the index's bytes; HEAD's
+ * for a contract this commit deletes; the working tree's outside a repository. null if none.
+ */
+export function contractText(top, rel, { run = gitCapture } = {}) {
+  const name = `${rel}/${PATHS.discovery}`;
+  if (isGitRepo(top)) {
+    for (const spec of [`:${name}`, `HEAD:${name}`]) {
+      const text = run(['show', spec], { cwd: top });
+      if (typeof text === 'string') return text;
+    }
+    return null;
+  }
+  return readText(resolve(top, name));
 }
 
 /** Guarded paths are project configuration (ADR-0008). */
@@ -310,15 +450,6 @@ export function stdinIsReadable(stdin = process.stdin) {
   }
 }
 
-export function stagedPathsFromStdin(readSync) {
-  if (!stdinIsReadable()) return null;
-  try {
-    return splitPathList(readSync());
-  } catch {
-    return null;
-  }
-}
-
 /**
  * One actual, successful Git read, never a probe followed by an unchecked pipeline.
  * gitCapture returns null for nonzero exit and maxBuffer failure, so partial stdout
@@ -351,16 +482,22 @@ export function readStagedPaths(root, { run = gitCapture } = {}) {
  * the same verdict then runs over that. The working tree is never touched, and the edit
  * gate keeps reading it - an interactive research check is about what you have in front
  * of you, which is exactly the opposite question.
+ *
+ * A project below the top level (#309) passes `top`: git runs there - where the hook runs it,
+ * with the index git handed the hook - and the project's corpus is listed and written by its
+ * path from there. The returned `root` is where the project's own research/ landed.
  */
-export function materializeIndex(root, { run = gitCapture, tmp = tempBase() } = {}) {
-  if (!isGitRepo(root)) {
+export function materializeIndex(root, { run = gitCapture, tmp = tempBase(), top = null } = {}) {
+  const cwd = top ?? root;
+  if (!isGitRepo(cwd)) {
     return { ok: false, reason: 'not-a-repository', detail: 'no .git here, so there is no index to read' };
   }
 
   const dir = fs.mkdtempSync(path.join(tmp, 'research-kit-index-'));
+  const inRepo = projectPrefix(top, root);
   // Only the corpus is materialised. The gate judges research/, and copying a whole
   // checkout to answer a question about one directory is a cost paid on every commit.
-  const listed = run(['ls-files', '-z', '--', 'research'], { cwd: root });
+  const listed = run(['ls-files', '-z', '--', `${inRepo}research`], { cwd });
   if (listed === null) {
     fs.rmSync(dir, { recursive: true, force: true });
     return { ok: false, reason: 'git-failed', detail: 'could not list the index' };
@@ -368,7 +505,7 @@ export function materializeIndex(root, { run = gitCapture, tmp = tempBase() } = 
 
   const paths = String(listed).split('\0').map((p) => p.trim()).filter(Boolean);
   if (!paths.length) {
-    return { ok: true, dir, files: 0, empty: true };
+    return { ok: true, dir, root: dir, files: 0, empty: true };
   }
 
   // Chunked, because the whole path list used to go into one argv.
@@ -388,7 +525,7 @@ export function materializeIndex(root, { run = gitCapture, tmp = tempBase() } = 
   let written = '';
   for (let at = 0; at < paths.length; at += CHUNK) {
     const batch = paths.slice(at, at + CHUNK);
-    const result = run(['checkout-index', '--prefix', prefix, '-f', '--', ...batch], { cwd: root });
+    const result = run(['checkout-index', '--prefix', prefix, '-f', '--', ...batch], { cwd });
     if (result === null) { written = null; break; }
     written += result;
   }
@@ -396,12 +533,12 @@ export function materializeIndex(root, { run = gitCapture, tmp = tempBase() } = 
     fs.rmSync(dir, { recursive: true, force: true });
     return { ok: false, reason: 'git-failed', detail: 'could not materialise the index' };
   }
-  return { ok: true, dir, files: paths.length, empty: false };
+  return { ok: true, dir, root: inRepo ? path.join(dir, ...inRepo.split('/').filter(Boolean)) : dir, files: paths.length, empty: false };
 }
 
-function gitCapture(args, { cwd }) {
+function gitCapture(args, { cwd, env = process.env }) {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+    return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
   } catch {
     return null;
   }
@@ -424,8 +561,16 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   // Injectable so the index-read FAILURE can be tested. A gate whose behaviour on a
   // broken git is untestable is a gate whose most dangerous path is unexercised.
   materialize = materializeIndex,
+  // The repository's top level, when the project is below it (#309): where git runs, and
+  // what the index's paths are relative to. null: the project is the top level, as before.
+  top = null,
   // Injectable for the same reason: the staged text of one path (the architecture map).
-  stagedText = (rel) => readStagedText(root, rel),
+  stagedText = (rel) => readStagedText(root, rel, { top }),
+  // The staged deletions under the project's research/raw/, relative to the project, or null
+  // when git could not list them (#312). Injectable for the same reason as `materialize`.
+  listDeleted = () => stagedRawDeletions(root, { top }),
+  // HEAD's ledger text, or null when HEAD has none (#312): what the commit may not take away.
+  headLedger = () => readHeadLedger(root, { top }),
   // The suite rule's runner (ADR-0120); null means the checkout's own selftest.mjs. The
   // announcement runs right before it, so a caller can break the minutes of silence.
   runSuite = null, announceSuite = null } = {}) {
@@ -461,7 +606,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   let scratch = null;
 
   if (gate === 'commit' && !corpus) {
-    const materialised = materialize(root);
+    const materialised = materialize(root, { top });
     if (materialised.ok && materialised.empty) {
       // materializeIndex made its scratch dir before it knew the index held no corpus,
       // and this return happens before `scratch` is assigned - the finally below cleans
@@ -485,7 +630,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
     }
     if (materialised.ok) {
       scratch = materialised.dir;
-      snapshot = readCorpus(materialised.dir);
+      snapshot = readCorpus(materialised.root ?? materialised.dir);
       judged = 'index';
     } else if (materialised.reason === 'not-a-repository') {
       // No index exists to read, which is not a failure to read one. A gated project
@@ -536,6 +681,17 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   base.judged = judged;
   if (indexNote) base.indexNote = indexNote;
 
+  // A removal is an alteration of the evidence set (#312), and it is checked before the pass
+  // branch: a capture deleted with the ledger line that names it leaves a chain that verifies.
+  // A capture the ledger names and the commit removes from HEAD - `git rm`, the deleting half
+  // of a rename, `git rm -r research/raw` with its ledger - left a raw-missing no collecting
+  // can finish, since the ledger is append-only; it committed as phase-1 work while an edit to
+  // the same file was refused, and the builder's handoff then said "something did not travel".
+  // ADR-0093's two committable raw-missing cases stay so: a capture never in HEAD is
+  // mid-collection, and an unstaged one is part-staged.
+  const removal = gate === 'commit' && judged === 'index' ? evidenceRemoval(snapshot, stagedPaths, { listDeleted, headLedger }) : null;
+  if (removal) return { ...base, verdict: 'block', allow: false, preflight, ...removal, findings: preflight.failures };
+
   if (preflight.pass) {
     const breach = gate === 'commit' ? architectureMapBreach(root, stagedPaths) : null;
     if (breach) {
@@ -569,6 +725,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   // bytes or chain no longer match what was fetched is not unfinished, it is altered, and it
   // never enters history: whether it did used to depend on what else was staged.
   const altered = preflight.failures.filter((f) => f.check === 'provenance' && INTEGRITY_RULES.includes(f.rule));
+
   if (gate === 'commit' && altered.length) {
     return {
       ...base,
@@ -611,5 +768,94 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
  * (a claim recorded in an immutable chain; holding it would lock the project out for good).
  */
 export const INTEGRITY_RULES = Object.freeze(['body-unmodified', 'chain-intact', 'ledger-unparsed', 'fetch-entry-exists']);
+
+/**
+ * The staged deletions under a project's research/raw/ - in HEAD, gone from the index -
+ * relative to the project, or null when git could not list them (#312). `top` as for
+ * `materializeIndex`.
+ */
+export function stagedRawDeletions(root, { top = null, run = gitCapture } = {}) {
+  const inRepo = projectPrefix(top, root);
+  const text = run(['diff', '--cached', '--name-only', '--no-renames', '--diff-filter=D', '-z', '--', `${inRepo}${PATHS.raw}`], { cwd: top ?? root });
+  if (typeof text !== 'string') return null;
+  return text.split('\0').filter(Boolean).map((name) => ({ gitPath: name, rel: name.slice(inRepo.length) }));
+}
+
+/** HEAD's ledger text for a project, or null when HEAD has none (or there is no HEAD yet). */
+export function readHeadLedger(root, { top = null, run = gitCapture } = {}) {
+  const text = run(['show', `HEAD:${projectPrefix(top, root)}${PATHS.ledger}`], { cwd: top ?? root });
+  return typeof text === 'string' ? text : null;
+}
+
+/** A path as a shell reads one word: as it is when plain, else double-quoted. */
+export function shellWord(word) {
+  return /^[\w./@+=:,-]+$/.test(word) ? word : `"${String(word).replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function ledgerEntries(text) {
+  const entries = [];
+  for (const line of String(text ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) entries.push(entry);
+    } catch { /* an unparsed line is not an entry; ledger-unparsed judges it */ }
+  }
+  return entries;
+}
+
+/**
+ * What a commit takes away from the evidence HEAD holds (#312), as a block's reason and fix, or
+ * null when it takes nothing. Three ways: the ledger itself deleted; an entry HEAD records gone
+ * from the staged ledger (by seq and file, so the sanctioned `rebuildLedger` migration, which
+ * keeps both, passes); a staged deletion of a capture or its ADR-0140 source that HEAD's or the
+ * staged ledger names. git is asked only when the staged list names a path under research/raw/,
+ * or is unknown; deletions git cannot list block, since none can be assumed.
+ */
+function evidenceRemoval(snapshot, stagedPaths, { listDeleted, headLedger }) {
+  const posix = (p) => String(p).split('\\').join('/').replace(/^\.\//, '');
+  if (Array.isArray(stagedPaths) && !stagedPaths.some((p) => posix(p).startsWith(`${PATHS.raw}/`))) return null;
+  let headText;
+  try { headText = headLedger(); } catch { headText = null; }
+  const head = ledgerEntries(headText);
+  const staged = snapshot?.ledger?.present ? snapshot.ledger.entries : [];
+  const restore = (files) => `restore ${files.length === 1 ? 'it' : 'them'} (git checkout HEAD -- ${files.slice(0, 5).map(shellWord).join(' ')}); `
+    + 'collecting a page again adds a capture and a ledger line beside the old ones, and never replaces one';
+  const integrity = 'a capture is never removed, and an integrity failure is never committable, whatever else is staged';
+
+  if (head.length && !snapshot?.ledger?.present) {
+    return { reason: `${PATHS.ledger} is in HEAD and is being deleted - the ledger is the proof every capture was fetched; ${integrity}`,
+      fix: restore([PATHS.ledger]) };
+  }
+  const key = (entry) => `${entry.seq}\0${posix(entry.raw ?? '')}\0${posix(entry.source ?? '')}`;
+  const kept = new Set(staged.map(key));
+  const dropped = head.filter((entry) => !kept.has(key(entry)));
+  if (dropped.length) {
+    return { reason: `${PATHS.ledger} loses ${dropped.length === 1 ? 'the entry' : 'entries'} HEAD records (seq ${dropped.slice(0, 5).map((e) => e.seq).join(', ')}${dropped.length > 5 ? ', ...' : ''}) - the ledger is append-only; ${integrity}`,
+      fix: restore([PATHS.ledger, ...dropped.flatMap((e) => [e.raw, e.source]).filter((f) => typeof f === 'string' && f).map(posix)]) };
+  }
+  const named = new Map();
+  for (const entry of [...head, ...staged]) {
+    if (entry.op === 'fail') continue;
+    for (const file of [entry.raw, entry.source]) {
+      if (typeof file === 'string' && file && !named.has(posix(file))) named.set(posix(file), entry.seq);
+    }
+  }
+  if (!named.size) return null;
+  let deletions;
+  try { deletions = listDeleted(); } catch { deletions = null; }
+  if (!Array.isArray(deletions)) {
+    return { reason: 'the commit stages changes under research/raw/, and git could not list which of them are deletions - a ledgered capture is never removed, so the gate cannot assume none is',
+      fix: 'check that git works here (git diff --cached --name-only --diff-filter=D), then commit again; '
+        + 'git commit --no-verify overrides, and records nothing - say so in your reply' };
+  }
+  const deleted = deletions.filter((d) => named.has(d.rel)).map((d) => ({ file: d.rel, seq: named.get(d.rel) }));
+  if (!deleted.length) return null;
+  const one = deleted.length === 1;
+  return {
+    reason: `${deleted.slice(0, 3).map((d) => `${d.file} (seq ${d.seq})`).join(', ')}${deleted.length > 3 ? ` and ${deleted.length - 3} more` : ''} ${one ? 'is' : 'are'} recorded in the ledger and being deleted - ${integrity}`,
+    fix: restore(deleted.map((d) => d.file)),
+  };
+}
 
 export { GATE_MARKERS, fixCommand };

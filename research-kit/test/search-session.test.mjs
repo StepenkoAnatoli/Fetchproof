@@ -88,6 +88,42 @@ test('a failed ask is one failure on its provider, and the fetch provider is ask
   ]);
 });
 
+// #317: a failed query on an explicitly chosen SearXNG instance went to the fetch provider's
+// search - on the keyless route, lite.duckduckgo.com, the route SearXNG exists to avoid
+// (ADR-0104). An operator who named the provider said where their queries may go: a failure
+// on it is kept, never degraded (ADR-0033). The automatic path keeps RR-1.
+test('an explicitly chosen provider that fails is not degraded: one failure on it, the fetch provider never asked', () => {
+  const search = provider({ name: 'searxng', fail: ['searxng returned HTTP 429'] });
+  const fetch = provider({ name: 'http-keyless', results: rows('fetch', 3) });
+  const { s, lines, recorded } = session({ adapter: fetch, searchAdapter: search, searchExplicit: true });
+  const found = s.ask('q');
+  assert.equal(found.ok, false);
+  assert.notEqual(found.degraded, true, 'a kept failure is no degrade');
+  assert.equal(found.error, 'searxng returned HTTP 429');
+  assert.equal(found.provider, 'searxng');
+  assert.equal(search.calls.length, 1);
+  assert.equal(fetch.calls.length, 0, 'the query went to the fetch provider\'s search');
+  const m = s.meters();
+  assert.equal(m.searchFailures, 1);
+  assert.deepEqual(m.searchFailuresOn, { searxng: 1 });
+  assert.equal(m.degraded, 0);
+  assert.deepEqual(recorded, [{ query: 'q', error: 'searxng returned HTTP 429', provider: 'searxng' }]);
+  assert.deepEqual(lines, [
+    '  search failed on searxng: searxng returned HTTP 429 - not degraded: searxng was chosen explicitly',
+    '  search failed: q - searxng returned HTTP 429',
+  ]);
+
+  // The same provider selected automatically still degrades once (RR-1).
+  const auto = provider({ name: 'searxng', fail: ['searxng returned HTTP 429'] });
+  const autoFetch = provider({ name: 'http-keyless', results: rows('fetch', 3) });
+  const { s: automatic } = session({ adapter: autoFetch, searchAdapter: auto });
+  const answered = automatic.ask('q');
+  assert.equal(answered.ok, true);
+  assert.equal(answered.degraded, true);
+  assert.equal(autoFetch.calls.length, 1);
+  assert.equal(automatic.meters().degraded, 1);
+});
+
 test('ONE accounting rule: usage an adapter reports on a FAILED ask is still counted - the vendor charged for it', () => {
   // Today's adapters report no usage on a failure; a provider that did would be counted,
   // because the meter is the vendor's and not the outcome's (ADR-0135).
@@ -390,4 +426,55 @@ test('an async provider is a failed ask that says so, and a throw that cannot be
 test('searchPatiently and mergeByRank live here and stay importable from research-run', () => {
   assert.equal(viaResearchRun, mergeByRank);
   assert.equal(patientlyViaResearchRun, searchPatiently);
+});
+
+// #313 (2026-10-11): the keyless search refused with a 429 and its Retry-After was never read -
+// the patience loop understood only Firecrawl's error text. The provider's own `retryAfterMs`
+// is asked first; a server that asked past the cap gets one more try, not the loop's bound.
+test('searchPatiently waits the retryAfterMs a provider read from the server', () => {
+  let asks = 0;
+  const slept = [];
+  const keyless = { name: 'http-keyless', search: (q) => {
+    asks += 1;
+    return asks === 1
+      ? { ok: false, query: q, results: [], retryAfterMs: 2000, error: 'HTTP 429 - rate limited, the server asks for a retry after 2s' }
+      : { ok: true, query: q, results: rows('k', 1) };
+  } };
+  const r = searchPatiently(keyless, 'rate limits', { limit: 8, sleep: (ms) => slept.push(ms) });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(asks, 2);
+  assert.deepEqual(slept, [2000]);
+
+  let tries = 0;
+  const waited = [];
+  const busy = { name: 'http-keyless', search: (q) => { tries += 1; return { ok: false, query: q, results: [], retryAfterMs: 60_000, retryAfterCapped: true, error: 'HTTP 503 - the server asks for a retry after 3600s' }; } };
+  const gaveUp = searchPatiently(busy, 'q', { limit: 8, sleep: (ms) => waited.push(ms) });
+  assert.equal(gaveUp.ok, false);
+  assert.equal(tries, 2, 'one wait at the cap, one more ask');
+  assert.deepEqual(waited, [60_000]);
+});
+
+// Review of #313 (2026-10-18): each query waited its own two retries, so ten queries to a
+// provider answering a bare 429 slept twenty minutes. A provider that ran out of retries is
+// noted for the run, and a later query to it is asked once without waiting, until it answers.
+test('a provider that ran out of rate-limit retries is not waited on again in the same run', () => {
+  let open = false;
+  const slept = [];
+  const limited = new Set();
+  const keyless = { name: 'http-keyless', search: (q) => (open
+    ? { ok: true, query: q, results: rows('k', 1) }
+    : { ok: false, query: q, results: [], retryAfterMs: 60_000, error: 'HTTP 429 - rate limited, the server named no retry time' }) };
+  const ask = (q) => searchPatiently(keyless, q, { limit: 8, sleep: (ms) => slept.push(ms), limited });
+  for (const q of ['one', 'two', 'three']) assert.equal(ask(q).ok, false);
+  assert.deepEqual(slept, [60_000, 60_000], 'the first query waited; the next two did not');
+  open = true;
+  assert.equal(ask('four').ok, true);
+  assert.equal(limited.size, 0, 'an answer clears the note');
+  // The session keeps one note for its run when it builds the patient call itself.
+  open = false;
+  const waits = [];
+  const session = searchSession({ adapter: keyless, limit: 8, sleep: (ms) => waits.push(ms) });
+  session.ask('a');
+  session.ask('b');
+  assert.deepEqual(waits, [60_000, 60_000]);
 });

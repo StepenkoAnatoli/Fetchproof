@@ -953,6 +953,18 @@ test('an explicitly pinned provider stays a single provider', () => {
   assert.equal(search.name, 'serpapi');
 });
 
+// #317: the session keeps a failure on a provider the operator named, rather than degrading
+// it to the fetch provider's search; the selection is what knows it was named.
+test('a search provider named by flag, environment or machine config is marked explicit; an automatic one is not', () => {
+  const probe = () => ({ ok: true, authenticated: true });
+  const url = { SEARXNG_URL: 'http://127.0.0.1:9' };
+  assert.equal(selectSearch({ explicit: 'searxng', env: url, config: {}, probe }).explicit, true);
+  assert.equal(selectSearch({ env: { ...url, RESEARCH_KIT_SEARCH_TRANSPORT: 'searxng' }, config: {}, probe }).explicit, true);
+  assert.equal(selectSearch({ env: url, config: { searchTransport: 'searxng' }, probe }).explicit, true);
+  assert.notEqual(selectSearch({ env: {}, config: {}, probe }).explicit, true);
+  assert.notEqual(selectSearch({ env: { SERPAPI_API_KEY: ['4', '7'].join('') + 'd'.repeat(62) }, config: {}, probe }).explicit, true);
+});
+
 // Found 2026-09-27: four decompose searches cost about 7 credits and one plan query about 2,
 // measured on the account's own balance - and the kit recorded `searchesUsed: 0`, because only
 // the SerpAPI adapter reported a count. The estimate follows the documented rule (E-03, E-14):
@@ -1201,4 +1213,105 @@ test('ADR-0140: the Firecrawl adapter asks for rawHtml beside markdown and retur
   // A payload with Markdown alone (the 1.25.3 fixture) has no source to keep.
   const fixture = readText(path.join(KIT_ROOT, 'test', 'fixtures', 'firecrawl-scrape-1.25.3.json'));
   assert.equal(firecrawl.normalizeScrape(fixture, 'https://docs.firecrawl.dev/sdks/cli').source, '');
+});
+
+// #313 (2026-10-11): the keyless child reported a 429 as "HTTP 429" and never read Retry-After,
+// so the collector's wait loop - which understood only Firecrawl's error text - recorded a
+// one-second window as a failed page. The child hands the server's number over, capped as the
+// vendor's is.
+test('Retry-After is read as delta-seconds or an HTTP-date, capped, and defaulted for a bare 429', () => {
+  const { retryAfter } = httpKeyless;
+  assert.deepEqual(retryAfter(429, '2'), { ms: 2000, capped: false, said: '2s' });
+  assert.deepEqual(retryAfter(429, '99999'), { ms: firecrawl.MAX_RATE_LIMIT_WAIT_MS, capped: true, said: '99999s' });
+  const now = Date.parse('2026-10-11T10:00:00Z');
+  assert.deepEqual(retryAfter(503, 'Sun, 11 Oct 2026 10:00:30 GMT', { now }), { ms: 30_000, capped: false, said: '30s' });
+  assert.deepEqual(retryAfter(429, 'Sun, 11 Oct 2026 09:00:00 GMT', { now }), { ms: 0, capped: false, said: '0s' }, 'a date in the past is no wait');
+  assert.deepEqual(retryAfter(429, ''), { ms: firecrawl.MAX_RATE_LIMIT_WAIT_MS, capped: false, said: '' }, 'a 429 with no header waits the minute');
+  assert.deepEqual(retryAfter(429, 'soon'), { ms: firecrawl.MAX_RATE_LIMIT_WAIT_MS, capped: false, said: '' });
+  assert.equal(retryAfter(503, ''), null, 'a 503 is an instruction to wait only when it says so');
+  // What is neither delta-seconds nor a date is no header at all, not a date long past.
+  assert.equal(retryAfter(429, '1.5').ms, firecrawl.MAX_RATE_LIMIT_WAIT_MS);
+  assert.equal(retryAfter(429, '+5').ms, firecrawl.MAX_RATE_LIMIT_WAIT_MS);
+  assert.equal(retryAfter(429, '5, 10').ms, firecrawl.MAX_RATE_LIMIT_WAIT_MS);
+  assert.equal(retryAfter(503, '-5'), null);
+  assert.equal(retryAfter(503, '1.5'), null);
+  // The three HTTP-date forms RFC 9110 accepts, each read as UTC, whatever this machine's zone:
+  // the asctime form names no zone, and Date.parse read it as local time - an hour-ahead date
+  // was "now" on a +0300 PC (review, 2026-10-18). The clock is fixed, so this runs anywhere.
+  const { httpDate } = httpKeyless;
+  const at = Date.UTC(2026, 9, 21, 7, 28, 0);
+  const clock = Date.UTC(2026, 9, 21, 7, 27, 0);
+  assert.equal(httpDate('Wed, 21 Oct 2026 07:28:00 GMT', clock), at, 'IMF-fixdate');
+  assert.equal(httpDate('Wednesday, 21-Oct-26 07:28:00 GMT', clock), at, 'RFC 850, a two-digit year');
+  assert.equal(httpDate('Wed Oct 21 07:28:00 2026', clock), at, 'asctime, read as UTC');
+  assert.equal(httpDate('Sun Nov  6 08:49:37 1994', clock), Date.UTC(1994, 10, 6, 8, 49, 37), 'asctime pads a one-digit day with a space');
+  assert.equal(httpDate('Sunday, 06-Nov-94 08:49:37 GMT', clock), Date.UTC(1994, 10, 6, 8, 49, 37), 'more than 50 years ahead is the previous century');
+  for (const junk of ['-5', '1.5', '+5', '5, 10', 'soon', 'Wed, 31 Feb 2026 07:28:00 GMT', 'Wed, 21 Oct 2026 07:28:00 +0300', '2026-10-21T07:28:00Z', '']) {
+    assert.equal(httpDate(junk, clock), null, `${JSON.stringify(junk)} read as a date`);
+  }
+  assert.deepEqual(retryAfter(429, 'Wed Oct 21 07:28:00 2026', { now: clock }), { ms: 60_000, capped: false, said: '60s' });
+  assert.deepEqual(retryAfter(503, 'Wednesday, 21-Oct-26 07:28:00 GMT', { now: clock }), { ms: 60_000, capped: false, said: '60s' });
+  assert.equal(retryAfter(500, '5'), null);
+  assert.equal(retryAfter(404, '5'), null);
+  // The loops read the result's number first, then the vendor's text.
+  assert.equal(firecrawl.retryWaitMs({ retryAfterMs: 1000, error: 'Rate limit exceeded. please retry after 13s' }), 1000);
+  assert.equal(firecrawl.retryWaitMs({ error: 'Rate limit exceeded. please retry after 13s' }), 14_000);
+  assert.equal(firecrawl.retryWaitMs({ retryAfterMs: 10 ** 9 }), firecrawl.MAX_RATE_LIMIT_WAIT_MS);
+  assert.equal(firecrawl.retryWaitMs({ error: 'HTTP 500' }), null);
+});
+
+test('the keyless child answers a 429 with the server\'s Retry-After as retryAfterMs, capped', async () => {
+  const { spawn } = await import('node:child_process');
+  const file = path.join(tempDir('research-kit-limiting-server-'), 'server.mjs');
+  writeText(file, `
+import http from 'node:http';
+const server = http.createServer((req, res) => {
+  if (req.url === '/two') { res.writeHead(429, { 'content-type': 'text/plain', 'retry-after': '2' }); res.end('Too many'); return; }
+  if (req.url === '/long') { res.writeHead(503, { 'content-type': 'text/plain', 'retry-after': '99999' }); res.end('Unavailable'); return; }
+  if (req.url === '/bare') { res.writeHead(429, { 'content-type': 'text/plain' }); res.end('Too many'); return; }
+  res.writeHead(503, { 'content-type': 'text/plain' }); res.end('Unavailable');
+});
+server.listen(0, '127.0.0.1', () => process.stdout.write('PORT ' + server.address().port + '\\n'));
+`);
+  const proc = spawn(process.execPath, [file], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const port = await new Promise((resolve, reject) => {
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d; const m = out.match(/PORT (\d+)/); if (m) resolve(Number(m[1])); });
+    proc.on('exit', (code) => reject(new Error(`the limiting server exited ${code}`)));
+  });
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([name]) => !['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].includes(name)));
+  try {
+    const two = httpKeyless.scrape(`http://127.0.0.1:${port}/two`, { env, timeout: 20_000 });
+    assert.equal(two.ok, false);
+    assert.equal(two.retryAfterMs, 2000, JSON.stringify(two));
+    assert.equal(two.retryAfterCapped, undefined);
+    assert.match(two.error, /^HTTP 429 - rate limited, the server asks for a retry after 2s - the server said: "Too many"/, two.error);
+    const long = httpKeyless.scrape(`http://127.0.0.1:${port}/long`, { env, timeout: 20_000 });
+    assert.equal(long.retryAfterMs, firecrawl.MAX_RATE_LIMIT_WAIT_MS, JSON.stringify(long));
+    assert.equal(long.retryAfterCapped, true);
+    assert.match(long.error, /^HTTP 503 - the server asks for a retry after 99999s/, long.error);
+    const bare = httpKeyless.scrape(`http://127.0.0.1:${port}/bare`, { env, timeout: 20_000 });
+    assert.equal(bare.retryAfterMs, firecrawl.MAX_RATE_LIMIT_WAIT_MS, 'a 429 with no header waits the minute');
+    const plain = httpKeyless.scrape(`http://127.0.0.1:${port}/plain`, { env, timeout: 20_000 });
+    assert.equal(plain.retryAfterMs, undefined, 'a 503 without Retry-After is a plain failure');
+    assert.match(plain.error, /^HTTP 503 - the server said: "Unavailable"/, plain.error);
+  } finally {
+    proc.kill();
+  }
+});
+
+// #316 (2026-10-11): `{"success": false, "error": "..."}` was recorded as "firecrawl's payload
+// held no page text" - the vendor said why, and the ledger said something else.
+test('a Firecrawl payload with success: false is a failure naming the vendor\'s own error', () => {
+  const exec = (stdout) => () => ({ ok: true, status: 0, stdout, stderr: '' });
+  const failed = firecrawl.scrape('https://x.invalid/p', { execFn: exec('{"success":false,"error":"Page could not be fetched: timeout"}') });
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /firecrawl reported the scrape of https:\/\/x\.invalid\/p failed: Page could not be fetched: timeout/, failed.error);
+  assert.doesNotMatch(failed.error, /no page text/);
+  const silent = firecrawl.scrape('https://x.invalid/p', { execFn: exec('{"success":false}') });
+  assert.match(silent.error, /failed, and gave no reason/);
+  // The vendor's own words reach the exhaustion matcher now, as they reach a person.
+  const dry = firecrawl.scrape('https://x.invalid/p', { execFn: exec('{"success":false,"error":"Insufficient credits to perform this request."}') });
+  assert.equal(firecrawl.creditsExhausted(dry.error), true);
 });
