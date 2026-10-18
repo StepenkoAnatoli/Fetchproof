@@ -558,6 +558,19 @@ test('researcher-release names a file given where a directory is expected, exit 
     writeJson(noPointerPath, noPointer);
     named(cli('validate', '--root', root, '--package', 'R28', '--registry', noPointerPath, '--roles', inputs.rolesPath, '--pointers', afile), 'PTR-MISSING', 'directory');
     named(cli(...validate, '--pointers', inputs.pointersDir, '--ledger', inputs.ledgerPath, '--checkpoints', afile), 'LEDGER-PATH', 'directory');
+    // A ledger directory's own segments/ or checkpoints/ as a file: segments reached readdirSync
+    // unchecked (re-review of the #342 fix, 2026-10-18).
+    for (const child of ['segments', 'checkpoints']) {
+      const ledgerDir = path.join(root, `ledger-${child}-file`);
+      fs.mkdirSync(ledgerDir);
+      fs.writeFileSync(path.join(ledgerDir, child), 'not a directory\n', 'utf8');
+      named(cli(...validate, '--pointers', inputs.pointersDir, '--ledger', ledgerDir), 'LEDGER-PATH', `ledger ${child} must name a directory`);
+    }
+    // ...and a library caller, which has no validateRelease to refuse it first.
+    const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+    const pointer = JSON.parse(fs.readFileSync(path.join(inputs.pointersDir, 'R28-04.json'), 'utf8'));
+    const direct = verifyQualificationLedger({ ledgerPath: path.join(root, 'ledger-segments-file'), pointer });
+    assert(direct.errors.some((error) => error.code === 'LEDGER-PATH' && error.message.includes('segments')), JSON.stringify(direct.errors));
     named(cli('validate', '--root', afile, '--package', 'R28', '--registry', inputs.registryPath, '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir), 'INPUT-ROOT', 'directory');
   } finally {
     cleanup(root);

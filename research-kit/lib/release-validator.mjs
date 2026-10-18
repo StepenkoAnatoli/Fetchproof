@@ -217,6 +217,7 @@ export function computeDescendantInvalidation({ pointers = [], invalidationRoots
 
 function readQualificationLedger(ledgerPath) {
   const files = [];
+  const errors = [];
   if (ledgerPath && fs.existsSync(ledgerPath)) {
     const stat = fs.statSync(ledgerPath);
     if (stat.isDirectory()) {
@@ -227,14 +228,15 @@ function readQualificationLedger(ledgerPath) {
         if (item.isFile() && item.name.endsWith('.qlog')) files.push(path.join(ledgerPath, item.name));
       }
       const segments = path.join(ledgerPath, 'segments');
-      if (fs.existsSync(segments)) for (const item of fs.readdirSync(segments, { withFileTypes: true })) {
+      // A library caller has no validateRelease to refuse a segments FILE first (#342).
+      if (fs.existsSync(segments) && !isDirectory(segments)) errors.push({ code: 'LEDGER-PATH', message: 'ledger segments must name a directory', path: segments, status: 'INCOMPLETE' });
+      else if (fs.existsSync(segments)) for (const item of fs.readdirSync(segments, { withFileTypes: true })) {
         if (item.isFile() && item.name.endsWith('.qlog')) files.push(path.join(segments, item.name));
       }
     } else files.push(ledgerPath);
   }
   const uniqueFiles = [...new Set(files)].sort(compareText);
   const records = [];
-  const errors = [];
   for (const file of uniqueFiles) {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
@@ -1060,10 +1062,14 @@ export function validateRelease({ root, package: packageName, registryPath, role
   // link among them led outside the root unchecked - with or without a refused --checkpoints
   // naming the same link (review of #344). Each that exists is held to the same rule, or the
   // ledger is not read. Links further down are not followed: the walks take only real entries.
+  // checkpoints/ and segments/ must be directories too: a segments FILE reached readdirSync
+  // and crashed with an ENOTDIR stack and exit 1 (re-review of #342).
   if (ledgerPath && isDirectory(ledgerPath)) {
     for (const child of ['genesis.json', 'checkpoints', 'segments']) {
       const at = path.join(ledgerPath, child);
-      if (fs.existsSync(at) && !within(at)) { add(errors, 'LEDGER-PATH', `ledger ${child} must stay below record root`, at, 'INCOMPLETE'); ledgerPath = null; break; }
+      if (!fs.existsSync(at)) continue;
+      if (!within(at)) { add(errors, 'LEDGER-PATH', `ledger ${child} must stay below record root`, at, 'INCOMPLETE'); ledgerPath = null; break; }
+      if (child !== 'genesis.json' && !isDirectory(at)) { add(errors, 'LEDGER-PATH', `ledger ${child} must name a directory`, at, 'INCOMPLETE'); ledgerPath = null; break; }
     }
   }
   if (headPath && (!fs.existsSync(headPath) || !within(headPath))) { add(errors, 'LEDGER-PATH', 'head path must exist below record root', headPath, 'INCOMPLETE'); headPath = null; }
