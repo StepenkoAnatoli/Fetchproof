@@ -332,6 +332,28 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `fi-validate` reads the completed workbook through the artifact package reader's bounds:
+  an entry over the per-entry ceiling or the 200:1 ratio, an entry whose declared size lies,
+  and an entry running past the end of the file are `WB-PACKAGE-UNTRUSTED` with the ZIP
+  reason, before anything is inflated. A 1 MB workbook holding 1 GiB of zeros had taken
+  15 s and 3 GB before failing on V8's string limit. Each entry is inflated and each sheet
+  parsed at most once, and the workbook's XML is read in linear time: 256 KiB of unclosed
+  `<c>` in an 871-byte file had taken 55 s (#318).
+- `fi-validate` reads a self-closing workbook element as empty. A styled empty cell such as
+  `<c r="G5" s="1"/>`, the form spreadsheet writers use for one, was read as an opening that
+  ran to the next cell's `</c>`: G5 took H5's value and the status in H5 read as missing.
+  `<si/>` and `<t/>` are read the same way (#318).
+- The remote client's artifact download is bounded at the package ceiling plus the wrapper's
+  headers: a declared `content-length` over it is `TOO_LARGE` before the body is read, and a
+  chunked body is cut when it passes it; nothing is written. `unwrapArtifact` takes the
+  download for GitHub's wrapper only when its one `.zip` is at the root and there is no
+  `manifest.json`, so a package carrying an audit bundle is no longer replaced by it (#329).
+- `buildZip` refuses by name more than 65,534 entries before any entry is hashed or
+  deflated, a name over 65,535 bytes or an entry of 0xFFFFFFFF bytes or more before that
+  entry is, and an archive offset or central directory reaching 0xFFFFFFFF as soon as it is
+  reached, so the kit no longer writes an archive its own reader refuses as ZIP64 or fails
+  with a raw `ERR_OUT_OF_RANGE`. A `Uint8Array` payload is stored as its bytes; any other non-string
+  payload is refused instead of stored as its text (#348).
 
 ## 0.9.5 — 2026-10-04
 

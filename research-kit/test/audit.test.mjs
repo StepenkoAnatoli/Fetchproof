@@ -10,6 +10,8 @@ import { test, describe, assert, makePassingProject, corrupt, fs, tempDir } from
 import { PATHS, resolve, readText, readJson, writeText, makeSlug } from '../lib/core.mjs';
 import { writeAudit, listVersions, resolveVersion, nextVersion, zipAudit, fingerprintOf, readManifest, TOPIC_SLUG, SUBTOPIC_SLUG } from '../lib/audit.mjs';
 import { crc32, buildZip, entryName } from '../lib/archive.mjs';
+import { readCentralDirectory, ZIP_LIMITS } from '../lib/artifact-zip.mjs';
+import { rawZip } from './artifact-fixtures.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { holdsLock } from '../lib/provenance.mjs';
 
@@ -102,6 +104,34 @@ test('entryName refuses anything that could unpack outside the folder', () => {
 
 test('an archive with no entries is refused, not written empty', () => {
   assert.throws(() => buildZip([]), /no entries/);
+});
+
+// #348: the writer met the ZIP field limits only when Buffer refused a write - a raw
+// ERR_OUT_OF_RANGE after every entry was hashed and deflated - and at exactly 65,535 entries
+// it wrote the ZIP64 sentinel as a count, an archive its own reader then refused. The bounds
+// are now refused by name, before any work, and exclude the sentinels.
+test('#348 an archive the ZIP format cannot carry is refused by name, never as ERR_OUT_OF_RANGE', () => {
+  const byName = (pattern) => (err) => {
+    assert.notEqual(err.code, 'ERR_OUT_OF_RANGE', `a raw RangeError escaped: ${err.message}`);
+    assert.match(err.message, pattern);
+    return true;
+  };
+  const many = Array.from({ length: 65_535 }, (_, i) => ({ name: `f${i}`, data: 'x' }));
+  assert.throws(() => buildZip(many), byName(/65535 entries.*65534/));
+  assert.throws(() => buildZip([{ name: 'a'.repeat(65_536), data: 'x' }]), byName(/name is 65536 bytes.*65535/));
+  assert.throws(() => buildZip([{ name: '\u65e5'.repeat(21_846), data: 'x' }]), byName(/name is 65538 bytes/));
+  // 65,534 entries is the most the writer may emit, and the kit's reader must open a count
+  // that high. Built stored by rawZip: deflating 65,534 entries through buildZip took 100 s.
+  const most = rawZip(many.slice(1));
+  assert.equal(readCentralDirectory(most, { limits: { ...ZIP_LIMITS, maxEntries: 65_534 } }).totalEntries, 65_534);
+});
+
+test('#348 entry data is a string or bytes - a Uint8Array is stored as its bytes, anything else is refused', () => {
+  const [entry] = readZip(buildZip([{ name: 'bytes.bin', data: new Uint8Array([1, 2, 3]) }]));
+  assert.equal(entry.text, '\u0001\u0002\u0003', 'a Uint8Array was stored as its decimal digits');
+  for (const data of [null, undefined, 42, { a: 1 }]) {
+    assert.throws(() => buildZip([{ name: 'x.md', data }]), /data must be a string or bytes/, `${JSON.stringify(data)} was stored`);
+  }
 });
 
 /** A minimal reader, standing in for the operator's unzip tool. */

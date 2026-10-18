@@ -25,8 +25,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeBytes, tempBase } from './core.mjs';
 import { fetchFailure } from './runtime.mjs';
-import { openZip } from './artifact-zip.mjs';
-import { validateArtifact } from './artifact-validator.mjs';
+import { openZip, ZIP_LIMITS } from './artifact-zip.mjs';
+import { validateArtifact, MANIFEST_PATH } from './artifact-validator.mjs';
 
 /** The version whose dispatch response carries the run id. Changing this is a decision. */
 export const API_VERSION = '2026-03-10';
@@ -367,6 +367,45 @@ export async function listArtifacts({ repository, runId, token, fetch: doFetch =
   return body.artifacts ?? [];
 }
 
+/**
+ * The most bytes a download may hold: the one package GitHub's wrapper carries, which the
+ * package reader refuses past its per-entry ceiling anyway, plus room for the wrapper's own
+ * headers. Every other remote body the kit reads is bounded before it is held (ADR-0082,
+ * artifact-zip.mjs); this one comes from a repository the operator may not control (#329).
+ */
+export const MAX_ARTIFACT_BYTES = ZIP_LIMITS.maxEntryBytes + 1024 * 1024;
+
+/**
+ * The body, refused when Content-Length declares it over the bound - before a byte is read -
+ * or when a body that declared nothing (chunked) grows past it, mid-stream. `response.body` is
+ * a stream on every real fetch; one without it (an empty body, a test double) is read whole
+ * and judged after.
+ */
+async function boundedDownload(response, artifactId) {
+  const tooLarge = (size) => new DispatchError('TOO_LARGE', `artifact ${artifactId} is ${size} bytes, over the ${MAX_ARTIFACT_BYTES}-byte limit for a corpus package - not read`, {
+    remedy: 'nothing was written. A package that large cannot be validated either - re-collect with fewer pages',
+  });
+  const declared = Number(response.headers?.get?.('content-length'));
+  if (declared > MAX_ARTIFACT_BYTES) {
+    await response.body?.cancel?.().catch(() => {});
+    throw tooLarge(declared);
+  }
+  if (!response.body) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_ARTIFACT_BYTES) throw tooLarge(bytes.length);
+    return bytes;
+  }
+  const chunks = [];
+  let size = 0;
+  // Throwing out of the loop cancels the stream, so the rest of an oversized body is never fetched.
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > MAX_ARTIFACT_BYTES) throw tooLarge(`more than ${MAX_ARTIFACT_BYTES}`);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, size);
+}
+
 export async function downloadArtifact({ repository, artifactId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API }) {
   const [owner, name] = splitRepository(repository);
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/artifacts/${artifactId}/zip`, {
@@ -380,20 +419,26 @@ export async function downloadArtifact({ repository, artifactId, token, fetch: d
     });
   }
   if (!response.ok) throw new DispatchError('HTTP', `could not download artifact ${artifactId}: HTTP ${response.status}`, { status: response.status });
-  return Buffer.from(await response.arrayBuffer());
+  return boundedDownload(response, artifactId);
 }
 
 /**
  * GitHub wraps every uploaded artifact in a ZIP of its own, so downloading ours yields a
  * ZIP containing a ZIP. Unwrapped here rather than in the validator, which should judge
  * one format and not guess how many layers of packaging a transport added.
+ *
+ * The wrapper is the download's only `.zip`, AT THE ROOT, beside no manifest.json (#329). A
+ * package that carries an audit bundle (`audit --zip`) also holds exactly one `.zip`, three
+ * folders down beside its manifest - and taking that for the wrapper wrote the bundle as the
+ * corpus.
  */
 export function unwrapArtifact(bytes) {
   let zip;
   try { zip = openZip(bytes); } catch { return { bytes, unwrapped: false }; }
   if (zip.problems.length) return { bytes, unwrapped: false };
+  if (zip.has(MANIFEST_PATH)) return { bytes, unwrapped: false };
   const inner = zip.names.filter((n) => n.endsWith('.zip'));
-  if (inner.length !== 1) return { bytes, unwrapped: false };
+  if (inner.length !== 1 || inner[0].includes('/')) return { bytes, unwrapped: false };
   // An inner package that cannot be read is handed on as it came, as a wrapper that cannot be
   // opened is: judging such bytes is the validator's job, and a ZIP-READ thrown from here went
   // past it (found 2026-10-01, break-test).
