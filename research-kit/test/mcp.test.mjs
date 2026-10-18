@@ -528,6 +528,102 @@ test('a line over the cap is refused at once, dropped, and the next message is s
   assert.equal(JSON.parse(lines[2]).error.code, ERRORS.INVALID_REQUEST);
 });
 
+// #346 (2026-10-17). The cap above held only BETWEEN calls: the 'data' handler appended
+// every chunk and left the check to `drain`, which waited on the chain behind the call in
+// flight. 150 MB without a newline during a hung `fetch_corpus` sat in memory (526 MB RSS)
+// until the call ended. The refusal has to come while the call is still pending.
+test('a line over the cap is refused while a call is in flight, not when it ends', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const lines = [];
+  output.on('data', (c) => lines.push(...String(c).split('\n').filter(Boolean)));
+
+  const loop = createStdioLoop({
+    input,
+    output,
+    onMessage: async (m) => {
+      await new Promise((r) => setTimeout(r, 150));
+      return { jsonrpc: '2.0', id: m.id, result: {} };
+    },
+    maxLine: 1000,
+  });
+  input.write(`${JSON.stringify(call('fetch_corpus', { repository: 'o/r', workflow_run_id: 1 }, 21))}\n`);
+  for (let i = 0; i < 5; i += 1) input.write('x'.repeat(600));
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(lines.length, 1, `nothing was refused while the call was pending: [${lines.join(' | ')}]`);
+  assert.equal(JSON.parse(lines[0]).error.code, ERRORS.INVALID_REQUEST);
+  assert.equal(JSON.parse(lines[0]).id, null);
+
+  // The dropped bytes were dropped, not held: what follows their newline is a message again.
+  input.write(`${'x'.repeat(600)}\n${JSON.stringify({ jsonrpc: '2.0', id: 22, method: 'ping' })}\n`);
+  await new Promise((r) => setTimeout(r, 20));
+  await loop.settled();
+  const ids = lines.map((l) => JSON.parse(l).id);
+  assert.deepEqual([...ids].sort(), [21, 22, null].sort(), `the call or the ping went missing: ${ids.join(', ')}`);
+});
+
+// #347 (2026-10-17). Every message went through one promise chain and `drain` awaited the
+// handler, so a `ping` - the keep-alive this file documents for a long operation - waited
+// for the `fetch_corpus` in front of it. Measured: no reply to two pings in nine seconds.
+test('ping and tools/list are answered while a tool call is in flight', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const lines = [];
+  output.on('data', (c) => lines.push(...String(c).split('\n').filter(Boolean)));
+
+  const loop = createStdioLoop({
+    input,
+    output,
+    onMessage: async (m) => {
+      if (m.method === 'tools/call') await new Promise((r) => setTimeout(r, 200));
+      return handle(m, deps());
+    },
+  });
+  input.write(`${JSON.stringify(call('collect', { repository: 'o/r', topic: 't' }, 31))}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 32, method: 'ping' })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 33, method: 'tools/list' })}\n`);
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.deepEqual(lines.map((l) => JSON.parse(l).id), [32, 33],
+    `the keep-alive waited behind the call: [${lines.join(' | ')}]`);
+
+  // `settled` still means EVERY answer, not just the chain: it resolves after the call's.
+  await loop.settled();
+  assert.deepEqual(lines.map((l) => JSON.parse(l).id), [32, 33, 31]);
+  assert.equal(JSON.parse(lines[2]).result.structuredContent.workflowRunId, 42);
+});
+
+// Calls stay in arrival order among themselves: two `fetch_corpus` for one run write the
+// same file, and nothing gains from running them side by side over one stdio client.
+test('tool calls are still answered one after another, in the order they came', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const lines = [];
+  output.on('data', (c) => lines.push(...String(c).split('\n').filter(Boolean)));
+
+  let running = 0;
+  let overlap = false;
+  const loop = createStdioLoop({
+    input,
+    output,
+    onMessage: async (m) => {
+      running += 1;
+      if (running > 1) overlap = true;
+      await new Promise((r) => setTimeout(r, m.id === 41 ? 60 : 10));
+      running -= 1;
+      return { jsonrpc: '2.0', id: m.id, result: {} };
+    },
+  });
+  input.write(`${JSON.stringify(call('collect', { repository: 'o/r', topic: 't' }, 41))}\n`);
+  input.write(`${JSON.stringify(call('collect', { repository: 'o/r', topic: 't' }, 42))}\n`);
+  await new Promise((r) => setTimeout(r, 10));
+  await loop.settled();
+
+  assert.equal(overlap, false, 'two tool calls ran at once');
+  assert.deepEqual(lines.map((l) => JSON.parse(l).id), [41, 42]);
+});
+
 test('the loop has a default line cap', () => {
   assert.ok(Number.isInteger(MAX_LINE) && MAX_LINE >= 1024 * 1024, `MAX_LINE is ${MAX_LINE}`);
 });

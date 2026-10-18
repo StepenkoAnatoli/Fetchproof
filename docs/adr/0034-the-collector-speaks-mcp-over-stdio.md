@@ -1,7 +1,7 @@
 # ADR-0034 — The collector speaks MCP over stdio, and the brief that decided it passed the gate first
 
 - **Date:** 2026-09-21
-- **Status:** accepted
+- **Status:** accepted; the `createStdioLoop` consequence (one promise chain for every chunk) is superseded by ADR-0172 (2026-10-17): framing is synchronous, `tools/call` keeps its own chain and every other answer is served while a call is in flight (#346, #347)
 - **Area:** agent interface, protocol, credentials
 - **Evidence basis:** `docs/decisions/2026-09-21-agent-interface/research/BRIEF.md` — gate PASS, 7 unknowns closed, 5 cited captures, chain verifies
 - **Depends on:** ADR-0030 (decision research lives in a nested project), ADR-0032 (the artifact contract), ADR-0033 (no token in an argument)
