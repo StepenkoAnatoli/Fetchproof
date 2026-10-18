@@ -332,6 +332,17 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `prior` decides its refusal on the ledger it appends to, inside one section of the lock, and the
+  success line reads the entry's position instead of asserting it. A registration that waited on a
+  collector holding the lock was appended after that collector's scrape and reported as made
+  "before any page was collected" with exit 0; it is now refused with exit 2 (#352).
+- `prior` refuses a corpus whose ledger is missing or empty while captures or evidence rows are on
+  disk, naming the files and both remedies; `provenance/prior-precedes-collection`, `prior`'s
+  read-back and the brief no longer present a prior on such a ledger as made "before anything was
+  collected". A stray capture beside scrapes on record stays a hygiene warning (#353).
+- `prior ""` (or a blank positional) is a registration attempt refused by the length floor with exit
+  2, not the read-back path with exit 0; `--file` over the 10 MB capture bound is refused by name
+  before it is read, so the brief no longer inlines a prior of any size (#355).
 
 ## 0.9.5 — 2026-10-04
 

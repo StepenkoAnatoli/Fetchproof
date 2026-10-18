@@ -6,7 +6,7 @@
 
 import { PATHS, resolve, readText, writeText, today, documentCommand, exists, sha256, foldLineEndings } from './core.mjs';
 import { readCorpus, sectionOf, claimOf, captureOf } from './corpus.mjs';
-import { readPrior } from './prior.mjs';
+import { readPrior, onDiskOf, unrecordedDetail } from './prior.mjs';
 import { renderGateWarnings } from './render.mjs';
 
 /** `judged: true` marks a section the corpus cannot fill - it needs the reviewer's call. */
@@ -228,12 +228,24 @@ function knownUnknowns(corpus) {
  * from becoming a scoreboard.
  */
 function priorBlock(root, snapshot) {
-  const prior = readPrior(root, { entries: snapshot.ledger?.entries ?? [] });
+  const prior = readPrior(root, { entries: snapshot.ledger?.entries ?? [], onDisk: onDiskOf(snapshot) });
   if (!prior.present || !prior.text.trim()) return '';
-  const late = prior.scrapesBefore
-    ? `\n\n**Registered late**, at ledger seq ${prior.entry.seq}, after ${prior.scrapesBefore} page(s) were `
-      + 'already collected. Read it as hindsight, not as a prediction.'
-    : '';
+  const quoted = `> ${prior.text.trim().split('\n').join('\n> ')}`;
+  // The heading and its italic line claim the order, so a prior the gate fails for its order
+  // gets neither - a lost ledger's prior read "registered before anything was collected"
+  // until 2026-10-18 (review of #353), as a late one still did under its own warning.
+  if (!prior.precedes) {
+    const why = prior.scrapesBefore
+      ? `**Registered late**, at ledger seq ${prior.entry.seq}, after ${prior.scrapesBefore} page(s) were already collected.`
+      : `**Not placed before the evidence**: at ledger seq ${prior.entry.seq}, ${unrecordedDetail(prior.unrecorded)}.`;
+    return `
+## The prior
+
+${quoted}
+
+${why} Read it as hindsight, not as a prediction.
+`;
+  }
   return `
 ## The prior, registered before anything was collected
 
@@ -241,7 +253,7 @@ _Ledger seq ${prior.entry.seq}, chained: neither this text nor its place before 
 can be changed now. Read it against the findings below - it may well be wrong, and a wrong
 prior that was recorded in advance is worth more than a right one remembered afterwards._
 
-> ${prior.text.trim().split('\n').join('\n> ')}${late}
+${quoted}
 `;
 }
 

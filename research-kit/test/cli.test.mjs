@@ -367,6 +367,19 @@ test('--plan and prior --file take an absolute path as it is', () => {
   assert.match(fs.readFileSync(path.join(root, 'research', 'PRIOR.md'), 'utf8'), /outside file to be read/);
 });
 
+// Found 2026-10 (#355): a blank positional was read as "no argument" and printed the prior on
+// record with exit 0, so `prior "$PREDICTION"` with the variable unset succeeded and
+// registered nothing.
+test('prior with a blank positional is a registration attempt, refused by the floor', () => {
+  const root = project('blank prior');
+  for (const blank of ['', '   ']) {
+    const result = run('prior.mjs', [blank], { root });
+    assert.equal(result.status, 2, result.out + result.err);
+    assert.match(result.err, /a prior of 0 character\(s\) is not a prediction/);
+    assert.ok(!fs.existsSync(path.join(root, 'research', 'PRIOR.md')), 'a refused prior wrote PRIOR.md');
+  }
+});
+
 test('pages left out by the budget are named, and --status states the budget the run will use', () => {
   const root = project('budget');
   fs.writeFileSync(path.join(root, 'research', 'plan.json'), JSON.stringify({
