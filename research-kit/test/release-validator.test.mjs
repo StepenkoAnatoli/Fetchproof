@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, cleanup, tempDir } from './harness.mjs';
+import { test, describe, assert, assertEqual, cleanup, tempDir, requireSymlink } from './harness.mjs';
 
 // Ported 2026-09-20 under ADR-0029. The source tree's runner labelled by file
 // automatically; this one is told, so a failure names release-validator rather than
@@ -527,6 +527,162 @@ test('validate refuses a genesis or checkpoints path it would not read', async (
     assert(noLedger.status !== 'PASS', JSON.stringify(noLedger));
   } finally {
     cleanup(root);
+  }
+});
+
+// Found 2026-10-11 (#342): a file where a directory was expected reached readdirSync, and
+// its ENOTDIR stack exited 1 - this command's code for FAIL - for what is a usage error.
+test('researcher-release names a file given where a directory is expected, exit 2 and no stack', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const afile = path.join(root, 'afile');
+    fs.writeFileSync(afile, 'not a directory\n', 'utf8');
+    const cli = (...args) => spawnSync(process.execPath, ['research-kit/bin/researcher-release.mjs', ...args, '--json'], { encoding: 'utf8' });
+    const named = (run, code, word) => {
+      const output = `${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, output);
+      assert(!/ENOTDIR|scandir|\n\s+at /.test(output), `a stack reached the operator: ${output}`);
+      const errors = JSON.parse(run.stdout).errors;
+      assert(errors.some((error) => error.code === code && error.message.includes(word)), `${code} "${word}" not named: ${JSON.stringify(errors)}`);
+    };
+    const schema = path.resolve('research-kit/schemas/r28-r32-envelope.schema.json');
+    named(cli('conform', '--schema', schema, '--root', afile), 'INPUT-ROOT', 'directory');
+    named(cli('conform', '--schema', schema, '--root', path.join(root, 'nope')), 'INPUT-ROOT', 'does not exist');
+    const validate = ['validate', '--root', root, '--package', 'R28', '--registry', inputs.registryPath, '--roles', inputs.rolesPath];
+    named(cli(...validate, '--pointers', afile), 'PTR-MISSING', 'directory');
+    // A package with no pointer entry never reached the walk, so the same mistake was PASS.
+    const noPointer = registryFor('R28-04');
+    noPointer.artifacts[0].ownerRoles = ['evidence-custodian'];
+    const noPointerPath = path.join(root, 'registry-no-pointer.json');
+    writeJson(noPointerPath, noPointer);
+    named(cli('validate', '--root', root, '--package', 'R28', '--registry', noPointerPath, '--roles', inputs.rolesPath, '--pointers', afile), 'PTR-MISSING', 'directory');
+    named(cli(...validate, '--pointers', inputs.pointersDir, '--ledger', inputs.ledgerPath, '--checkpoints', afile), 'LEDGER-PATH', 'directory');
+    named(cli('validate', '--root', afile, '--package', 'R28', '--registry', inputs.registryPath, '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir), 'INPUT-ROOT', 'directory');
+  } finally {
+    cleanup(root);
+  }
+});
+
+// Found 2026-10-11 (#344): the flag paths were held inside the record root by NAME only, so
+// a link below the root that leads outside it was read. A junction needs no privilege on
+// Windows, so the directory cases run everywhere; the ledger FILE link needs requireSymlink.
+test('validate refuses a pointers or ledger link that leads outside the record root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    // A pointer set outside the root: if it were read, promotion.pointer would name it.
+    fs.mkdirSync(path.join(outside, 'ptrs'));
+    fs.copyFileSync(path.join(inputs.pointersDir, 'R28-04.json'), path.join(outside, 'ptrs', 'R28-04.json'));
+    const ptrlink = path.join(root, 'ptrlink');
+    fs.symlinkSync(path.join(outside, 'ptrs'), ptrlink, 'junction');
+    const viaLink = validateRelease({ ...inputs, pointersDir: ptrlink, ledgerPath: null });
+    assert(viaLink.errors.some((error) => error.code === 'PATH-CONTAINMENT' && error.path === ptrlink), `a pointer link outside the root was accepted: ${JSON.stringify(viaLink.errors)}`);
+    assertEqual(viaLink.promotion.pointer, null, 'the pointer behind the link was read');
+    assert(viaLink.status !== 'PASS', JSON.stringify(viaLink));
+
+    // A ledger directory outside the root, holding a line that would be reported if read.
+    fs.mkdirSync(path.join(outside, 'ledger'));
+    fs.writeFileSync(path.join(outside, 'ledger', 'ledger.qlog'), 'not json\n', 'utf8');
+    const ledgerlink = path.join(root, 'ledgerlink');
+    fs.symlinkSync(path.join(outside, 'ledger'), ledgerlink, 'junction');
+    const viaLedgerDir = validateRelease({ ...inputs, ledgerPath: ledgerlink });
+    assert(viaLedgerDir.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === ledgerlink), `a ledger link outside the root was accepted: ${JSON.stringify(viaLedgerDir.errors)}`);
+    assertEqual(viaLedgerDir.ledger.checked, false, 'the ledger behind the link was read');
+    assert(!viaLedgerDir.errors.some((error) => String(error.path).startsWith(ledgerlink) && error.code !== 'LEDGER-PATH'), JSON.stringify(viaLedgerDir.errors));
+
+    // The lexical case keeps its refusal, and is no longer read either.
+    const byName = validateRelease({ ...inputs, pointersDir: path.join(outside, 'ptrs'), ledgerPath: path.join(outside, 'ledger', 'ledger.qlog') });
+    assert(byName.errors.some((error) => error.code === 'PATH-CONTAINMENT' && error.message === 'pointer directory escapes record root'), JSON.stringify(byName.errors));
+    assert(byName.errors.some((error) => error.code === 'LEDGER-PATH' && error.message.includes('ledger')), JSON.stringify(byName.errors));
+    assertEqual(byName.promotion.pointer, null, 'a pointer outside the root by name was read');
+    assertEqual(byName.ledger.checked, false, 'a ledger outside the root by name was read');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+// Review of the #344 fix (2026-10-18): a ledger DIRECTORY brings children the verifier reads
+// without their being named - checkpoints/, segments/, genesis.json - and a link among them
+// led outside the root unchecked, with or without an explicit --checkpoints naming it.
+async function writeLedgerDirRelease(root, outside) {
+  const inputs = await writePointerRelease(root);
+  const ledgerDir = path.join(root, 'ledgerdir');
+  // A real, unsigned genesis inside: checkpoints are verified - and so reported - only beside one.
+  writeJson(path.join(ledgerDir, 'genesis.json'), { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+  writeJson(path.join(outside, 'checkpoints', 'checkpoint-1.json'), { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+  fs.mkdirSync(path.join(outside, 'segments'));
+  fs.writeFileSync(path.join(outside, 'segments', '00000001.qlog'), 'not json\n', 'utf8');
+  return { ...inputs, ledgerPath: ledgerDir };
+}
+
+test('validate refuses a ledger directory whose checkpoints or segments lead outside the root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writeLedgerDirRelease(root, outside);
+    const unread = (result, link, what) => {
+      assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === link), `${what} was not refused: ${JSON.stringify(result.errors)}`);
+      assertEqual(result.ledger.checked, false, `the ledger beside ${what} was read`);
+      assert(!result.errors.some((error) => String(error.path).startsWith('.checkpoints[') || error.code === 'LEDGER-JSON'), `bytes behind ${what} were read: ${JSON.stringify(result.errors)}`);
+    };
+    const checkpointsLink = path.join(inputs.ledgerPath, 'checkpoints');
+    fs.symlinkSync(path.join(outside, 'checkpoints'), checkpointsLink, 'junction');
+    unread(validateRelease(inputs), checkpointsLink, 'a checkpoints link in the ledger directory');
+    // The same link named by --checkpoints: refusing the flag left the default to read it.
+    unread(validateRelease({ ...inputs, checkpointsDir: checkpointsLink }), checkpointsLink, 'a checkpoints link given by flag');
+    fs.rmSync(checkpointsLink, { recursive: true, force: true });
+    assert(fs.existsSync(path.join(outside, 'checkpoints', 'checkpoint-1.json')), 'removing the link removed its target');
+
+    const segmentsLink = path.join(inputs.ledgerPath, 'segments');
+    fs.symlinkSync(path.join(outside, 'segments'), segmentsLink, 'junction');
+    unread(validateRelease(inputs), segmentsLink, 'a segments link in the ledger directory');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+test('validate refuses a ledger directory whose genesis.json leads outside the root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writeLedgerDirRelease(root, outside);
+    const genesisLink = path.join(inputs.ledgerPath, 'genesis.json');
+    fs.rmSync(genesisLink);
+    writeJson(path.join(outside, 'genesis.json'), { ledgerVersion: '1.0.0', releaseId: 'outside' });
+    requireSymlink(path.join(outside, 'genesis.json'), genesisLink, 'a genesis.json link in the ledger directory');
+    const result = validateRelease(inputs);
+    assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === genesisLink), `a genesis link outside the root was accepted: ${JSON.stringify(result.errors)}`);
+    assertEqual(result.ledger.checked, false, 'the genesis behind the link was read');
+    assert(!result.errors.some((error) => String(error.path).startsWith('.genesis')), JSON.stringify(result.errors));
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+test('validate refuses a ledger file link that leads outside the record root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const target = path.join(outside, 'ledger.qlog');
+    fs.writeFileSync(target, 'not json\n', 'utf8');
+    const link = path.join(root, 'ledgerlink.qlog');
+    requireSymlink(target, link, 'a ledger file link outside the record root');
+    const result = validateRelease({ ...inputs, ledgerPath: link });
+    assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === link), `a ledger file link outside the root was accepted: ${JSON.stringify(result.errors)}`);
+    assertEqual(result.ledger.checked, false, 'the ledger behind the link was read');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
   }
 });
 

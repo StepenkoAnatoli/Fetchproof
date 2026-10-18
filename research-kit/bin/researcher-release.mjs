@@ -89,8 +89,18 @@ function main(argv = process.argv.slice(2)) {
   } else if (parsed.command === 'conform') {
     if (!parsed.schema) { console.error(usage()); return 2; }
     const root = parsed.root ? path.resolve(parsed.root) : process.cwd();
-    const files = parsed.files?.length ? parsed.files.map((file) => path.resolve(file)) : listJsonFiles(root);
-    result = runSchemaConformance({
+    // A root that is missing or a file is a usage error, named (#342): a file crashed with an
+    // ENOTDIR stack and exit 1, FAIL; a missing one was reported as holding no JSON files.
+    const refuseRoot = (message) => ({ status: 'INCOMPLETE', files: [], errors: [{ code: 'INPUT-ROOT', message, path: parsed.root, status: 'INCOMPLETE' }] });
+    let files = parsed.files?.length ? parsed.files.map((file) => path.resolve(file)) : null;
+    if (!files && !fs.existsSync(root)) result = refuseRoot('root does not exist');
+    else if (!files) {
+      try { files = listJsonFiles(root); } catch (error) {
+        if (error.code !== 'NOT-A-DIRECTORY') throw error;
+        result = refuseRoot('root must name a directory, not a file');
+      }
+    }
+    if (!result) result = runSchemaConformance({
       files,
       schemaPath: path.resolve(parsed.schema),
     });

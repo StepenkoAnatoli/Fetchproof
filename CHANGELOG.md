@@ -332,6 +332,16 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `researcher-release` names a file given where a directory is expected - `conform --root`,
+  `validate --pointers` or `--checkpoints` - as `INPUT-ROOT`, `PTR-MISSING` or `LEDGER-PATH`
+  with exit 2, instead of an `ENOTDIR` stack with exit 1, its code for FAIL; a `--pointers` file
+  is refused even for a package with no pointer entry, where it had been PASS. `validate --root`
+  requires a directory, and `conform --root` on a missing directory says it does not exist (#342).
+- `validate` holds `--pointers`, `--ledger`, `--head`, `--genesis` and `--checkpoints` inside
+  the record root by realpath as well as by name, so a link below the root that leads outside
+  it is refused - and so are a ledger directory's own `genesis.json`, `checkpoints/` and
+  `segments/`, which the verifier reads unnamed. A refused path is no longer read after the
+  refusal is reported (#344).
 
 ## 0.9.5 — 2026-10-04
 

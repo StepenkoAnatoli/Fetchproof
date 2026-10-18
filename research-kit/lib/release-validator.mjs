@@ -448,10 +448,18 @@ export function verifyQualificationLedger({ records: suppliedRecords, ledgerPath
   const resolvedPrepares = new Set();
   const committed = [];
   let checkpoints = Array.isArray(suppliedCheckpoints) ? [...suppliedCheckpoints] : [];
-  if (!checkpoints.length && checkpointsDir && fs.existsSync(checkpointsDir)) checkpoints = collectJsonFiles(checkpointsDir).map((file) => readJson(file)).filter((entry) => !entry.error).map((entry) => entry.value);
+  const readCheckpoints = (dir) => {
+    try { return collectJsonFiles(dir).map((file) => readJson(file)).filter((entry) => !entry.error).map((entry) => entry.value); }
+    catch (error) {
+      if (error.code !== 'NOT-A-DIRECTORY') throw error;
+      add(errors, 'LEDGER-PATH', 'checkpoints path must name a directory', dir, 'INCOMPLETE');
+      return [];
+    }
+  };
+  if (!checkpoints.length && checkpointsDir && fs.existsSync(checkpointsDir)) checkpoints = readCheckpoints(checkpointsDir);
   if (!checkpoints.length && ledgerPath && fs.existsSync(ledgerPath) && fs.statSync(ledgerPath).isDirectory()) {
     const dir = path.join(ledgerPath, 'checkpoints');
-    if (fs.existsSync(dir)) checkpoints = collectJsonFiles(dir).map((file) => readJson(file)).filter((entry) => !entry.error).map((entry) => entry.value);
+    if (fs.existsSync(dir)) checkpoints = readCheckpoints(dir);
   }
   const embeddedCheckpoints = rows.map((row) => row.record).filter((record) => record?.recordKind === 'checkpoint');
   if (embeddedCheckpoints.length) checkpoints = [...checkpoints, ...embeddedCheckpoints];
@@ -932,8 +940,22 @@ function validatePointer(pointer, entry, context, errors) {
   if (promotion.state === 'revoked' && !HASH.test(String(promotion.rollbackRecordHash ?? ''))) add(errors, 'PTR-ROLLBACK', 'revoked pointer requires rollbackRecordHash', '.promotion.rollbackRecordHash', 'INCOMPLETE');
 }
 
+// A file where a directory was expected is the operator's mistake, not a failed package:
+// readdirSync's ENOTDIR stack exited 1, the CLI's code for FAIL (#342). Thrown by name, so
+// each caller can report it under its own code as INCOMPLETE.
+function notADirectory(dir) {
+  const error = new Error(`must name a directory, not a file: ${dir}`);
+  error.code = 'NOT-A-DIRECTORY';
+  return error;
+}
+
+function isDirectory(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
 function collectJsonFiles(dir) {
   if (!dir || !fs.existsSync(dir)) return [];
+  if (!isDirectory(dir)) throw notADirectory(dir);
   const result = [];
   const walk = (current) => {
     for (const item of fs.readdirSync(current, { withFileTypes: true })) {
@@ -995,7 +1017,7 @@ export function validateRelease({ root, package: packageName, registryPath, role
     add(errors, 'INPUT-SNAPSHOT-MAX-AGE', 'snapshot age allowance must be a finite non-negative number', '--snapshot-max-age-ms', 'INCOMPLETE');
     return output;
   }
-  if (!root || !fs.existsSync(root) || !inside(process.cwd(), root) && !path.isAbsolute(root)) add(errors, 'INPUT-ROOT', 'root must name an existing directory', '--root', 'INCOMPLETE');
+  if (!root || !isDirectory(root) || !inside(process.cwd(), root) && !path.isAbsolute(root)) add(errors, 'INPUT-ROOT', 'root must name an existing directory', '--root', 'INCOMPLETE');
   if (!PACKAGES.has(packageName)) add(errors, 'INPUT-PACKAGE', 'package must be R28, R29, R30, R31, or R32', '--package', 'INCOMPLETE');
   const registryLoaded = readJson(registryPath);
   const rosterLoaded = readJson(rolesPath);
@@ -1017,14 +1039,36 @@ export function validateRelease({ root, package: packageName, registryPath, role
   }
   const allArtifacts = normalizeArtifacts(registry);
   const artifacts = allArtifacts.filter((entry) => entry.package === packageName);
-  if (pointersDir && fs.existsSync(pointersDir) && !inside(root, pointersDir)) add(errors, 'PATH-CONTAINMENT', 'pointer directory escapes record root', pointersDir);
-  if (ledgerPath && (!fs.existsSync(ledgerPath) || !inside(root, ledgerPath))) add(errors, 'LEDGER-PATH', 'ledger path must exist below record root', ledgerPath, 'INCOMPLETE');
-  if (headPath && (!fs.existsSync(headPath) || !inside(root, headPath))) add(errors, 'LEDGER-PATH', 'head path must exist below record root', headPath, 'INCOMPLETE');
-  if (genesisPath && (!fs.existsSync(genesisPath) || !inside(root, genesisPath))) add(errors, 'LEDGER-PATH', 'genesis path must exist below record root', genesisPath, 'INCOMPLETE');
-  if (checkpointsDir && (!fs.existsSync(checkpointsDir) || !inside(root, checkpointsDir))) add(errors, 'LEDGER-PATH', 'checkpoints path must exist below record root', checkpointsDir, 'INCOMPLETE');
   // Only the ledger branch reads them: given without --ledger they would be dropped in silence,
   // which is how both flags went unread before 2026-10-11.
   if ((genesisPath || checkpointsDir) && !ledgerPath) add(errors, 'LEDGER-PATH', 'genesis and checkpoints are verified only with --ledger', genesisPath ?? checkpointsDir, 'INCOMPLETE');
+  // Below the root by name AND by realpath (#344): `inside` alone is lexical, so a link below
+  // the root that leads outside it passed and was read. These are the inputs that can arrive
+  // from another machine, so they get the check safePath gives record paths. A refused path is
+  // dropped, not handed on: until 2026-10-17 it was reported and then read all the same.
+  const rootReal = fs.realpathSync(root);
+  const within = (p) => { try { return inside(root, p) && inside(rootReal, fs.realpathSync(p)); } catch { return false; } };
+  let pointersRefused = false;
+  // A file is refused here whether or not the package has a pointer entry: without one it
+  // never reached the walk below, and the same usage error was PASS (review of #342).
+  if (pointersDir && fs.existsSync(pointersDir)) {
+    if (!within(pointersDir)) { add(errors, 'PATH-CONTAINMENT', 'pointer directory escapes record root', pointersDir); pointersRefused = true; }
+    else if (!isDirectory(pointersDir)) { add(errors, 'PTR-MISSING', 'pointer path must name a directory', pointersDir, 'INCOMPLETE'); pointersRefused = true; }
+  }
+  if (ledgerPath && (!fs.existsSync(ledgerPath) || !within(ledgerPath))) { add(errors, 'LEDGER-PATH', 'ledger path must exist below record root', ledgerPath, 'INCOMPLETE'); ledgerPath = null; }
+  // A ledger DIRECTORY brings children the verifier reads without their being named, and a
+  // link among them led outside the root unchecked - with or without a refused --checkpoints
+  // naming the same link (review of #344). Each that exists is held to the same rule, or the
+  // ledger is not read. Links further down are not followed: the walks take only real entries.
+  if (ledgerPath && isDirectory(ledgerPath)) {
+    for (const child of ['genesis.json', 'checkpoints', 'segments']) {
+      const at = path.join(ledgerPath, child);
+      if (fs.existsSync(at) && !within(at)) { add(errors, 'LEDGER-PATH', `ledger ${child} must stay below record root`, at, 'INCOMPLETE'); ledgerPath = null; break; }
+    }
+  }
+  if (headPath && (!fs.existsSync(headPath) || !within(headPath))) { add(errors, 'LEDGER-PATH', 'head path must exist below record root', headPath, 'INCOMPLETE'); headPath = null; }
+  if (genesisPath && (!fs.existsSync(genesisPath) || !within(genesisPath))) { add(errors, 'LEDGER-PATH', 'genesis path must exist below record root', genesisPath, 'INCOMPLETE'); genesisPath = null; }
+  if (checkpointsDir && (!isDirectory(checkpointsDir) || !within(checkpointsDir))) { add(errors, 'LEDGER-PATH', 'checkpoints path must name a directory below record root', checkpointsDir, 'INCOMPLETE'); checkpointsDir = null; }
   if (!artifacts.length) add(errors, 'INPUT-ARTIFACTS', `registry has no artifacts for ${packageName}`, '.artifacts', 'INCOMPLETE');
   if (!HASH.test(String(roster.rosterSha256 ?? ''))) add(errors, 'ROLE-ROSTER', 'role roster hash is invalid', '.rosterSha256');
   const records = new Map();
@@ -1056,9 +1100,10 @@ export function validateRelease({ root, package: packageName, registryPath, role
     const meta = metaOf(item.record);
     if (meta.ownerRole && meta.ownerId) output.roles.checked.push(`${meta.artifactId}:${meta.ownerRole}:${meta.ownerId}`);
   }
-  const pointerEntries = artifacts.filter((entry) => entry.pointer === true);
+  const pointerEntries = pointersRefused ? [] : artifacts.filter((entry) => entry.pointer === true);
+  const pointerListing = pointerEntries.length ? collectJsonFiles(pointersDir) : [];
   for (const entry of pointerEntries) {
-    const pointerFiles = collectJsonFiles(pointersDir).filter((file) => path.basename(file, '.json') === entry.artifactId || path.basename(file, '.pointer.json') === entry.artifactId);
+    const pointerFiles = pointerListing.filter((file) => path.basename(file, '.json') === entry.artifactId || path.basename(file, '.pointer.json') === entry.artifactId);
     if (pointerFiles.length === 0) { add(errors, 'PTR-MISSING', `current pointer for ${entry.artifactId} is missing`, entry.artifactId, 'INCOMPLETE'); continue; }
     if (pointerFiles.length > 1) add(errors, 'PTR-SOLE', `multiple current pointers for ${entry.artifactId}`, entry.artifactId);
     const pointer = readJson(pointerFiles[0]);
