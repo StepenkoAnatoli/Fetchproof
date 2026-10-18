@@ -7,14 +7,15 @@
 // a hook file that no longer exists, is a gate that silently gates nothing.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
-  exists, readText, writeText, ensureDir, readJson, today, sha256File, parseJson, isDirectory,
+  exists, readText, writeText, ensureDir, readJson, today, sha256, sha256File, parseJson, isDirectory,
 } from './core.mjs';
 import {
   KIT_HOME, EDIT_GATE_HOOK, RETIRED_EDIT_GATE_HOOKS, RETIRED_KIT_FILES, SKILL_NAME,
   hooksPath, setHooksPath, setPreviousHooksPath, localHooksPathOverride, runtimePaths, skillLocations, skillRoots, readInstallState, writeInstallState,
-  saveConfig, loadConfig, ROLES, namesHook, repoTopLevel,
+  saveConfig, loadConfig, ROLES, namesHook, repoTopLevel, runGit, gitFailure, INSTALL_STATE_PATH,
 } from './machine.mjs';
 import { KIT_ROOT, HOOK_MODE, hookExecutability } from './scaffold.mjs';
 
@@ -49,18 +50,51 @@ export function installCommitGate({ kitHome = KIT_HOME, env = process.env, dryRu
   // 2026-10-01, break-test: `--dry-run` printed "would set core.hooksPath=..." and exited 0
   // on a machine with nothing deployed, while the real run exited 1 and set nothing).
   if (!exists(hook)) return { ok: false, dryRun, reason: `${hook} is not deployed - run bin/install.mjs first` };
+  // And git has to be able to write its global config (#363). Every reader above folds a failure
+  // into "unset", so with a global gitconfig git cannot parse the install read nothing, set
+  // nothing, and said "installed" with exit 0 - the dry run promising the same. Asked of the dry
+  // run too, for the reason above.
+  const refusal = globalConfigRefusal(gitPaths);
+  if (refusal) return { ok: false, dryRun, reason: `${refusal} - the commit gate cannot install` };
   // `ok: true` on the preview as well, so the result has one shape whichever way it went and
   // a caller can ask `result.ok` without knowing whether it was a dry run.
   if (dryRun) return { ok: true, dryRun: true, would: dir, previous, displaced };
   if (process.platform !== 'win32') { try { fs.chmodSync(hook, HOOK_MODE); } catch { /* best effort */ } }
 
-  setHooksPath(dir, { scope: 'global', ...gitPaths });
+  // Checked before the install state is touched: a state recording a gate git never set made a
+  // later `--uninstall` say the kit had not set it.
+  const set = setHooksPath(dir, { scope: 'global', ...gitPaths });
+  if (!set.ok) return { ok: false, reason: set.missing ? gitFailure(set) : `git config --global failed: ${set.message}` };
   const state = readInstallState(env) ?? {};
   const base = repoTopLevel({ ...gitPaths, cwd }) ?? cwd;
   const replaced = [state.previousHooksPath, previous].find((p) => handsOnTo(p, { own: dir, base })) ?? null;
   setPreviousHooksPath(replaced, gitPaths);
   writeInstallState({ ...state, kitHome, hooksPath: dir, previousHooksPath: replaced }, env);
   return { ok: true, hooksPath: dir, previous, executable: hookExecutability(hook), displaced };
+}
+
+/**
+ * Why git cannot write its global config, or '' when it can (#363) - asked before an install or an
+ * uninstall answers, its dry run included. `git --version` fails on a global config git cannot
+ * parse, but runs on one that is a directory (`git config --global --list`: "Permission denied")
+ * or whose `.lock` another git holds (only the write fails: "could not lock config file"), and a
+ * dry run there promised a gate the real run could not set. A global config that does not exist
+ * yet is a fresh machine: git cannot list it, and creates it on the write. Judged by the file's
+ * existence, not by git's wording, which is translated.
+ */
+function globalConfigRefusal(gitPaths = {}) {
+  const env = gitPaths.env ?? process.env;
+  const version = runGit(['--version'], gitPaths);
+  if (!version.ok) return gitFailure(version);
+  const home = env.HOME || env.USERPROFILE || os.homedir();
+  const files = env.GIT_CONFIG_GLOBAL
+    ? [env.GIT_CONFIG_GLOBAL]
+    : [path.join(home, '.gitconfig'), path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'git', 'config')];
+  const held = files.find((file) => exists(`${file}.lock`));
+  if (held) return `${held}.lock exists - another git is writing the global config, or one stopped part-way; remove the lock once no git is running`;
+  const list = runGit(['config', '--global', '--list'], gitPaths);
+  if (!list.ok && files.some((file) => exists(file))) return `git cannot read its global config: ${list.message}`;
+  return '';
 }
 
 /**
@@ -114,7 +148,15 @@ export function removeCommitGate({ env = process.env, gitPaths = {}, dryRun = fa
   // have set it (an install refused for want of a deployed hook), or the operator may have
   // changed it since - either way it is theirs, and "restoring" it deleted it
   // (found 2026-09-27: a machine's /opt/myhooks was unset by an uninstall).
-  const current = hooksPath('global', gitPaths);
+  //
+  // Read and written only where git can (#363): a global config git could not parse read as
+  // "unset", and a held `.lock` failed the unset silently - either way the state was cleared while
+  // core.hooksPath still named the kit's gate, and from then on the kit could not remove it.
+  const refusal = globalConfigRefusal(gitPaths);
+  if (refusal) return { ok: false, dryRun, reason: `${refusal} - the commit gate was not removed, and the install state is unchanged` };
+  const read = runGit(['config', '--global', '--includes', '--get', 'core.hooksPath'], gitPaths);
+  if (!read.ok && read.status !== 1) return { ok: false, dryRun, reason: `${gitFailure(read)} - the commit gate was not removed, and the install state is unchanged` };
+  const current = read.ok ? read.out : null;
   if (!state.hooksPath || current !== state.hooksPath) {
     // The preview answers before anything is written, on this branch as on the next: a dry
     // run that UNSET the installed gate was found on 2026-10-03 (outside audit) - `--dry-run`
@@ -124,7 +166,10 @@ export function removeCommitGate({ env = process.env, gitPaths = {}, dryRun = fa
     return { ok: true, restored: undefined, left: current ?? null };
   }
   if (dryRun) return { ok: true, dryRun: true, restored: previous };
-  setHooksPath(previous ?? null, { scope: 'global', ...gitPaths });
+  const set = setHooksPath(previous ?? null, { scope: 'global', ...gitPaths });
+  if (!set.ok) {
+    return { ok: false, reason: `git config --global failed: ${set.message} - core.hooksPath still names the kit's gate, and the install state is unchanged` };
+  }
   setPreviousHooksPath(null, gitPaths);
   writeInstallState({ ...state, hooksPath: null, previousHooksPath: null }, env);
   return { ok: true, restored: previous };
@@ -495,17 +540,81 @@ function recordedSetSkills(env) {
 }
 
 /**
- * The set-skill targets a deploy would write, split into the kit's and somebody else's.
- * `into` adds the project skill directory beside the bound research-first skill.
+ * The project skill directories a deploy binds (#328): this run's `--into`, and every one the
+ * install state records. ADR-0006 says re-running install.mjs updates all of them; a plain re-run
+ * updated the personal root only, and the state held one bound project - the last - so a kit
+ * update never reached a project bound earlier, whose copy a cloud session there reads.
+ *
+ * A recorded research-first folder is dropped when the kit can see it is gone: the skill folder is
+ * not there (ENOENT) and either the project is (unbound by hand) or the folder that held the
+ * project is (the project deleted - #328 drops it). Anything else - the folder that held it gone
+ * too, which is what an unmounted drive or an offline share looks like, a refusal to look
+ * (EACCES), a file where the folder was - is `skipped`: kept in the record, not written, and said.
+ * The installer refuses what it can positively identify, not what it merely fails to find
+ * (`handsOnTo`, above): a first cut dropped every project it could not see, for good, and a second
+ * kept a deleted project for good.
  */
-function setSkillTargets({ from, env, into }) {
+function boundProjects({ env, into }) {
+  const skillDir = runtimePaths(env).projectSkillDir.split('/');
+  const own = into ? path.join(into, ...skillDir) : '';
+  const same = (a, b) => path.resolve(a) === path.resolve(b);
+  const dirs = [];
+  const dropped = [];
+  const skipped = [];
+  for (const recorded of readInstallState(env)?.boundProjects ?? []) {
+    const dir = path.dirname(recorded);
+    if (dirs.some((d) => same(d, dir)) || skipped.some((s) => same(path.dirname(s.dir), dir)) || dropped.some((d) => same(d, recorded))) continue;
+    if (own && same(dir, own)) { dirs.push(own); continue; }
+    // 'dir', 'other', or the error code that seeing it gave.
+    const look = (p) => { try { return fs.statSync(p).isDirectory() ? 'dir' : 'other'; } catch (err) { return err.code ?? 'unreadable'; } };
+    const seen = look(recorded);
+    const project = path.resolve(recorded, ...skillDir.map(() => '..'), '..');
+    const holder = seen === 'ENOENT' ? look(project) : '';
+    if (seen === 'dir') dirs.push(dir);
+    else if (seen === 'ENOENT' && (holder === 'dir' || (holder === 'ENOENT' && look(path.dirname(project)) === 'dir'))) dropped.push(recorded);
+    else if (seen === 'ENOENT') skipped.push({ dir: recorded, why: holder === 'ENOENT' ? `${path.dirname(project)} is not reachable` : `${project}: ${holder === 'other' ? 'not a folder' : holder}` });
+    else skipped.push({ dir: recorded, why: seen === 'other' ? 'not a folder' : seen });
+  }
+  const ownRecorded = Boolean(own) && dirs.some((d) => same(d, own));
+  if (own && !ownRecorded) dirs.push(own);
+  return { own, ownRecorded, dirs, dropped, skipped };
+}
+
+/**
+ * Whether the research-first copy in a project bound EARLIER may be refreshed (#328): its SKILL.md is
+ * the one the kit last wrote there (`skillSetHashes`), the one it would write now, or the deployed
+ * kit's own - what the install that bound it wrote, for a binding recorded before the kit kept a
+ * hash per copy. A copy the project edited is left as it is, as a set skill is, and reported; the
+ * first cut copied over it in every bound project on every plain install. `--into` that project,
+ * an explicit request, still replaces it. `{ kits }`, or `{ error }` when the copy cannot be read.
+ */
+function boundSkillState(dir, src, hashes, deployed) {
+  const file = path.join(dir, 'SKILL.md');
+  // A SKILL.md the kit cannot read is not an edit: it was reported as one, with `--into` as the
+  // remedy, and `--into` then failed on the same file. It is a failure, with the reason.
+  // A SKILL.md the project deleted is written again, as a set skill it deleted is.
+  let bytes;
+  try {
+    if (!fs.statSync(file).isFile()) return { error: `${file} is not a file` };   // a folder, a fifo
+    bytes = fs.readFileSync(file);
+  } catch (err) {
+    return err.code === 'ENOENT' ? { kits: true } : { error: err.code ?? err.message };
+  }
+  const current = sha256(bytes);
+  return { kits: current === hashes[path.resolve(dir)] || current === sha256File(path.join(src, 'SKILL.md')) || current === deployed };
+}
+
+/**
+ * The set-skill targets a deploy would write, split into the kit's and somebody else's.
+ * `projectDirs` adds each bound project skill directory, beside its research-first skill.
+ */
+function setSkillTargets({ from, env, projectDirs = [] }) {
   const set = shippedSkills(from);
   const recorded = recordedSetSkills(env);
-  const roots = exists(path.join(from, 'skill')) ? [...skillRoots(env)] : [];
-  const projectDir = into ? path.join(into, ...runtimePaths(env).projectSkillDir.split('/')) : '';
+  const skill = exists(path.join(from, 'skill'));
   const targets = [];
-  for (const root of roots) for (const name of set) targets.push({ name, target: path.join(root, name), bound: false });
-  if (projectDir) for (const name of set) targets.push({ name, target: path.join(projectDir, name), bound: true });
+  for (const root of skill ? skillRoots(env) : []) for (const name of set) targets.push({ name, target: path.join(root, name), bound: false });
+  for (const projectDir of skill ? projectDirs : []) for (const name of set) targets.push({ name, target: path.join(projectDir, name), bound: true, projectDir });
   const write = [];
   const conflicts = [];
   for (const t of targets) {
@@ -535,45 +644,52 @@ function setSkillTargets({ from, env, into }) {
  * acts, and a health check that quietly rewrote the thing it was measuring would destroy
  * the evidence of the problem it found.
  */
-export function deployedDrift({ from = KIT_ROOT, kitHome = KIT_HOME, env = process.env } = {}) {
-  const compare = (src, dest) => {
-    const missing = [];
-    const changed = [];
-    for (const rel of listTree(src)) {
-      const target = path.join(dest, ...rel.split('/'));
-      if (!exists(target)) { missing.push(rel); continue; }
-      if (sha256File(path.join(src, ...rel.split('/'))) !== sha256File(target)) changed.push(rel);
-    }
-    const shipped = new Set(listTree(src));
-    const extra = listTree(dest).filter((rel) => !shipped.has(rel) && !RETIRED_KIT_FILES.includes(rel));
-    return { missing, changed, extra };
-  };
+function compareTree(src, dest) {
+  const missing = [];
+  const changed = [];
+  for (const rel of listTree(src)) {
+    const target = path.join(dest, ...rel.split('/'));
+    if (!exists(target)) { missing.push(rel); continue; }
+    if (sha256File(path.join(src, ...rel.split('/'))) !== sha256File(target)) changed.push(rel);
+  }
+  const shipped = new Set(listTree(src));
+  const extra = listTree(dest).filter((rel) => !shipped.has(rel) && !RETIRED_KIT_FILES.includes(rel));
+  return { missing, changed, extra };
+}
 
+/**
+ * The skill set (ADR-0146) drifts per skill. A root that holds research-first is a root the
+ * kit deploys to, so a set skill absent there is missing - an install from before the set.
+ * A folder of the same name that is not the kit's is somebody else's skill: not drift.
+ */
+function setSkillDrift(root, from, recorded) {
+  const out = [];
+  for (const name of shippedSkills(from)) {
+    const location = path.join(root, name);
+    const src = path.join(from, SKILL_SET_DIR, name);
+    if (!setSkillIsKits(location, src, recorded)) continue;
+    // `set`: the kit mirrors a set skill, so a file it no longer ships is drift (orphaned);
+    // research-first is copied over, and its extras are not counted.
+    out.push(isDirectory(location)
+      ? { location, set: true, ...compareTree(src, location) }
+      : { location, set: true, missing: listTree(src), changed: [], extra: [] });
+  }
+  return out;
+}
+
+export function deployedDrift({ from = KIT_ROOT, kitHome = KIT_HOME, env = process.env } = {}) {
   // `isDirectory`, not `exists`: a FILE at kitHome is not a deployment, and `exists` is
   // true for one - which sent `listTree` into `readdirSync` on a regular file and took
   // `doctor` down with an ENOTDIR stack trace. Absent means "not deployed here", which is
   // what the operator is told and what `install.mjs` fixes.
-  const kit = isDirectory(kitHome) ? compare(from, kitHome) : { missing: listTree(from), changed: [], extra: [], absent: true };
+  const kit = isDirectory(kitHome) ? compareTree(from, kitHome) : { missing: listTree(from), changed: [], extra: [], absent: true };
   const skillSource = path.join(from, 'skill');
   const skills = exists(skillSource)
-    ? skillLocations(env).filter((l) => isDirectory(l)).map((location) => ({ location, ...compare(skillSource, location) }))
+    ? skillLocations(env).filter((l) => isDirectory(l)).map((location) => ({ location, ...compareTree(skillSource, location) }))
     : [];
-  // The skill set (ADR-0146) drifts per skill. A root that holds research-first is a root the
-  // kit deploys to, so a set skill absent there is missing - an install from before the set.
-  // A folder of the same name that is not the kit's is somebody else's skill: not drift.
   const recorded = recordedSetSkills(env);
   for (const root of skillRoots(env)) {
-    if (!isDirectory(path.join(root, SKILL_NAME))) continue;
-    for (const name of shippedSkills(from)) {
-      const location = path.join(root, name);
-      const src = path.join(from, SKILL_SET_DIR, name);
-      if (!setSkillIsKits(location, src, recorded)) continue;
-      // `set`: the kit mirrors a set skill, so a file it no longer ships is drift (orphaned);
-      // research-first is copied over, and its extras are not counted.
-      skills.push(isDirectory(location)
-        ? { location, set: true, ...compare(src, location) }
-        : { location, set: true, missing: listTree(src), changed: [], extra: [] });
-    }
+    if (isDirectory(path.join(root, SKILL_NAME))) skills.push(...setSkillDrift(root, from, recorded));
   }
 
   const total = (d) => d.missing.length + d.changed.length + d.extra.length;
@@ -601,6 +717,21 @@ export function driftNote(drift) {
 }
 
 /**
+ * The skills `install --into` bound into the project at `root`, measured against `from` as
+ * `deployedDrift` measures a personal root (#328), or [] when the project binds none. doctor had
+ * checked only the personal roots, so inside a bound project it said `pass` while the project's
+ * copy - committed there, and the protocol a cloud session in it reads - differed. Reported,
+ * never repaired, for the reason `deployedDrift` gives.
+ */
+export function boundDrift({ from = KIT_ROOT, root = process.cwd(), env = process.env } = {}) {
+  const projectDir = path.join(root, ...runtimePaths(env).projectSkillDir.split('/'));
+  const location = path.join(projectDir, SKILL_NAME);
+  const skillSource = path.join(from, 'skill');
+  if (!isDirectory(location) || !exists(skillSource)) return [];
+  return [{ location, ...compareTree(skillSource, location) }, ...setSkillDrift(projectDir, from, recordedSetSkills(env))];
+}
+
+/**
  * Files every kit version has shipped, since the repository's first commit: a folder holding all
  * three is a deployment of some kit. One was not enough - a project of somebody's own with a
  * `lib/core.mjs` was taken for a kit, and its other files were pruned (found 2026-10-01).
@@ -614,26 +745,37 @@ const KIT_MARKERS = Object.freeze(['lib/core.mjs', 'bin/gate.mjs', 'bin/prefligh
  * first: RESEARCH_KIT_HOME naming a folder of somebody's own files - a typo, a parent folder, a
  * shared tools directory - had them deleted and reported as "retired" (found 2026-10-01,
  * break-test). A folder may be mirrored into when it holds nothing, when it holds a kit, or when
- * the install state says the kit was deployed there.
+ * the install state says the kit was deployed there and the folder still holds some of it.
+ *
+ * The record vouches for a deployment that lost a marker, never for a folder that lost all of the
+ * kit (#327): the state file is per machine and outlives anything done to the folder, so a kit
+ * removed and its path reused for the operator's own files read as "deployed here", and the
+ * mirror pruned `notes.txt` as a retired file.
  */
 function mirrorRefusal(kitHome, env) {
   const isFile = (rel) => { try { return fs.statSync(path.join(kitHome, ...rel.split('/'))).isFile(); } catch { return false; } };
   if (KIT_MARKERS.every(isFile)) return null;
-  const recorded = readInstallState(env)?.kitHome;
-  if (typeof recorded === 'string' && path.resolve(recorded) === path.resolve(kitHome)) return null;
+  const recordedValue = readInstallState(env)?.kitHome;
+  const recorded = typeof recordedValue === 'string' && path.resolve(recordedValue) === path.resolve(kitHome);
+  if (recorded && KIT_MARKERS.some(isFile)) return null;
   // A few files are all the refusal names. Listing every one to count them took 1.6 s for /usr
   // (77,000 files), and a home directory holds millions (found 2026-10-01).
   const present = listTree(kitHome, { limit: 4 });
   if (present.length === 0) return null;
   const sample = present.slice(0, 3).join(', ');
+  const stale = recorded
+    // Not "remove the record": deleting the state file does not make the folder a kit's, and it
+    // loses the hooks, bound projects and skill hashes recorded beside the deployment.
+    ? `${env.RESEARCH_KIT_INSTALL_STATE || INSTALL_STATE_PATH} records a deployment here, but the folder holds none of the kit's files - move those files out of it, or point RESEARCH_KIT_HOME at an empty folder. `
+    : '';
   return `${kitHome} is not a kit deployment - it holds files the kit does not ship (${sample}${present.length > 3 ? ', ...' : ''}), `
     + 'and a deploy mirrors, removing every file it does not ship. Nothing was changed. '
-    + 'Point RESEARCH_KIT_HOME at an empty or new folder, or unset it to use the default.';
+    + (stale || 'Point RESEARCH_KIT_HOME at an empty or new folder, or unset it to use the default.');
 }
 
 /**
- * Copy the kit to `~/.agents/research-kit` and the skill to the personal root(s).
- * Overwrites by default - a stale deployed copy silently defeats an update - and prunes
+ * Copy the kit to `~/.agents/research-kit` and the skill to the personal root(s), and to every
+ * project bound with `--into`, this run's and earlier ones (`boundProjects`). Overwrites by default - a stale deployed copy silently defeats an update - and prunes
  * kit files a past version shipped, because a copy-over deploy never removes anything.
  * Refuses, touching nothing, a folder that is not a kit deployment (`mirrorRefusal`).
  */
@@ -651,6 +793,23 @@ export function deploy({ from = KIT_ROOT, kitHome = KIT_HOME, env = process.env,
   }
   const refused = mirrorRefusal(kitHome, env);
   if (refused) return { ok: false, dryRun, from, to: kitHome, refused };
+  const skillSource = path.join(from, 'skill');
+  const binding = boundProjects({ env, into });
+  const projectDirs = exists(skillSource) ? binding.dirs : [];
+  // Decided before anything is written, from the state as it was: a set skill goes only where
+  // the folder is absent or already the kit's; a same-named folder of somebody else's is left.
+  // A project bound earlier gets research-first by the same rule (`boundSkillState`), judged
+  // against the deployed kit's copy before the mirror below replaces it. One whose copy cannot be
+  // read is not written at all, and is reported as failed with the reason.
+  const hashes = recordedSetSkills(env);
+  const deployedSkill = sha256File(path.join(kitHome, 'skill', 'SKILL.md'));
+  const refresh = projectDirs.filter((d) => d !== binding.own).map((d) => path.join(d, SKILL_NAME));
+  const judged = new Map(refresh.map((dir) => [dir, boundSkillState(dir, skillSource, hashes, deployedSkill)]));
+  const unreadable = refresh.filter((dir) => judged.get(dir).error).map((dir) => ({ dir, why: judged.get(dir).error }));
+  const edited = refresh.filter((dir) => !judged.get(dir).error && !judged.get(dir).kits);
+  const writable = projectDirs.filter((d) => !judged.get(path.join(d, SKILL_NAME))?.error);
+  const { set, write, conflicts: setConflicts } = setSkillTargets({ from, env, projectDirs: writable });
+  const conflicts = [...edited, ...setConflicts];
   // What the deploy below would prune, computed the same way: retired files that are there, and
   // the mirror's extras. It listed every retired name whether or not it existed, and none of the
   // extras (2026-09-29, Arena break test: "would prune" three files on a machine never installed).
@@ -658,48 +817,98 @@ export function deploy({ from = KIT_ROOT, kitHome = KIT_HOME, env = process.env,
     const shipped = new Set(listTree(from));
     const retired = RETIRED_KIT_FILES.filter((rel) => exists(path.join(kitHome, ...rel.split('/'))));
     const extra = listTree(kitHome).filter((rel) => !shipped.has(rel) && !retired.includes(rel));
-    return { dryRun: true, from, to: kitHome, prune: [...retired, ...extra], skillConflicts: setSkillTargets({ from, env, into }).conflicts };
+    return {
+      dryRun: true, from, to: kitHome, prune: [...retired, ...extra], skillConflicts: conflicts,
+      refresh: refresh.filter((dir) => judged.get(dir).kits), failed: unreadable, dropped: binding.dropped, skipped: binding.skipped,
+    };
   }
 
   const copied = copyTree(from, kitHome, { prune: RETIRED_KIT_FILES, mirror: true });
   const skills = [];
-  const skillSource = path.join(from, 'skill');
-  // Decided before anything is written, from the state as it was: a set skill goes only where
-  // the folder is absent or already the kit's; a same-named folder of somebody else's is left.
-  const { set, write, conflicts } = setSkillTargets({ from, env, into });
-  if (exists(skillSource)) {
-    for (const target of skillLocations(env)) {
-      copyTree(skillSource, target);
-      skills.push(target);
-    }
-  }
-  // Each set skill is a sibling of research-first under the root, never inside it: a runtime
-  // discovers subdirectories of a skills root that hold SKILL.md (ADR-0146).
-  // Mirrored: the folder is the kit's (`setSkillTargets`), so a reference or script a later kit
-  // no longer ships is removed rather than left to steer the skill (ADR-0146 decision 5).
-  for (const t of write.filter((w) => !w.bound)) {
-    copyTree(path.join(from, SKILL_SET_DIR, t.name), t.target, { mirror: true });
-    skills.push(t.target);
-  }
-
+  const written = [];
   let bound = '';
-  const boundSet = [];
-  if (into) {
-    const projectDir = path.join(into, ...runtimePaths(env).projectSkillDir.split('/'));
-    const dir = path.join(projectDir, SKILL_NAME);
-    copyTree(skillSource, dir);
-    bound = dir;
-    for (const t of write.filter((w) => w.bound)) {
-      copyTree(path.join(from, SKILL_SET_DIR, t.name), t.target, { mirror: true });
-      boundSet.push(t.target);
+  const refreshed = [];
+  const failed = [...unreadable];
+  const boundSetWritten = [];
+  let ownBound = false;
+  // Everything after the mirror runs inside try/finally: whatever throws - an explicit `--into` a
+  // project that cannot be written - the state is still written with the hashes of what WAS
+  // written, then the error goes on. The personal set skills were written, their hashes never
+  // reached the state, and from the next kit update on they read as copies the operator edited.
+  try {
+    if (exists(skillSource)) {
+      for (const target of skillLocations(env)) {
+        copyTree(skillSource, target);
+        skills.push(target);
+      }
     }
-  }
+    // Each set skill is a sibling of research-first under the root, never inside it: a runtime
+    // discovers subdirectories of a skills root that hold SKILL.md (ADR-0146).
+    // Mirrored: the folder is the kit's (`setSkillTargets`), so a reference or script a later kit
+    // no longer ships is removed rather than left to steer the skill (ADR-0146 decision 5).
+    for (const t of write.filter((w) => !w.bound)) {
+      copyTree(path.join(from, SKILL_SET_DIR, t.name), t.target, { mirror: true });
+      skills.push(t.target);
+      written.push(t.target);
+    }
 
-  const skillSetHashes = recordedSetSkills(env);
-  for (const t of write) skillSetHashes[path.resolve(t.target)] = sha256File(path.join(t.target, 'SKILL.md'));
-  const state = readInstallState(env) ?? {};
-  writeInstallState({ ...state, kitHome, deployedFrom: from, skills, bound, boundSet, skillSetHashes }, env);
-  return { ok: true, from, to: kitHome, files: copied.written.length, pruned: copied.pruned, skills, bound, boundSet, skillSet: set, skillConflicts: conflicts };
+    // This run's `--into` project first, then every project bound before it (#328). A project
+    // bound earlier is written inside its own try: one that cannot be written - a read-only mount,
+    // a locked file - had thrown out of every later install, `--into` another project included.
+    // It is reported, kept in the record, and the deploy goes on. An explicit `--into` still throws.
+    const ordered = [...writable.filter((d) => d === binding.own), ...writable.filter((d) => d !== binding.own)];
+    for (const projectDir of ordered) {
+      const dir = path.join(projectDir, SKILL_NAME);
+      const own = projectDir === binding.own;
+      const bind = () => {
+        if (own || !edited.includes(dir)) { copyTree(skillSource, dir); written.push(dir); }
+        for (const t of write.filter((w) => w.bound && w.projectDir === projectDir)) {
+          copyTree(path.join(from, SKILL_SET_DIR, t.name), t.target, { mirror: true });
+          written.push(t.target);
+          boundSetWritten.push(t.target);
+        }
+      };
+      if (own) { bind(); bound = dir; ownBound = true; continue; }
+      try {
+        bind();
+        if (!edited.includes(dir)) refreshed.push(dir);
+      } catch (err) {
+        failed.push({ dir, why: err.code ?? err.message });
+      }
+    }
+  } finally {
+    // The hash of what was written, and only of that: research-first in a bound project is judged
+    // by it next time, as a set skill is (`boundSkillState`, `setSkillIsKits`).
+    const skillSetHashes = { ...hashes };
+    for (const target of written) {
+      const hash = sha256File(path.join(target, 'SKILL.md'));
+      if (hash) skillSetHashes[path.resolve(target)] = hash;
+    }
+    const state = readInstallState(env) ?? {};
+    // `boundProjects` is the list, in the order bound; `bound` stays the one last bound, the string
+    // an older kit reads (it would drop a list, and keeps a key it does not know), and never names
+    // a dropped project, which reading the state would otherwise fold back in. An `--into` that
+    // failed is not recorded unless it already was. A source without a skill binds nothing, and
+    // forgets no project bound by one that had it.
+    const next = { ...state, kitHome, deployedFrom: from, skills, skillSetHashes };
+    if (exists(skillSource)) {
+      const same = (a, b) => path.resolve(a) === path.resolve(b);
+      const boundDirs = [
+        ...projectDirs.filter((d) => d !== binding.own || ownBound || binding.ownRecorded).map((d) => path.join(d, SKILL_NAME)),
+        ...binding.skipped.map((s) => s.dir),
+      ];
+      const last = bound || (state.bound && boundDirs.some((d) => same(d, state.bound)) ? state.bound : boundDirs.at(-1));
+      Object.assign(next, { boundProjects: boundDirs, boundSet: boundSetWritten });
+      if (last) next.bound = last; else delete next.bound;
+    }
+    writeInstallState(next, env);
+  }
+  // `boundSet` in the result is this run's --into project's, for the line install.mjs prints.
+  const boundSet = binding.own ? boundSetWritten.filter((t) => path.dirname(t) === binding.own) : [];
+  return {
+    ok: true, from, to: kitHome, files: copied.written.length, pruned: copied.pruned, skills, bound, boundSet,
+    refreshed, failed, dropped: binding.dropped, skipped: binding.skipped, skillSet: set, skillConflicts: conflicts,
+  };
 }
 
 export function uninstall({ env = process.env, gitPaths = {}, dryRun = false } = {}) {

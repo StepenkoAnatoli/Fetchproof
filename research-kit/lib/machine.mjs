@@ -372,12 +372,35 @@ export function evidencePolicy(env = process.env) {
 
 // ---------------------------------------------------------------- git
 
-function git(args, { cwd = process.cwd(), env = process.env } = {}) {
+/**
+ * git, with its failure told apart from its answer (#363): `{ ok: true, out }`, or
+ * `{ ok: false, missing, status, message }` - `missing` only when git could not be started, and
+ * `message` the line git wrote to say why. The readers below fold every failure into null, which
+ * is their answer for "unset"; a WRITE cannot, because `core.hooksPath` that git refused to set
+ * (a global gitconfig that does not parse: `fatal: bad config line 1`, exit 128) was reported
+ * installed, recorded in the install state, and diagnosed by doctor as "git is not on PATH".
+ */
+export function runGit(args, { cwd = process.cwd(), env = process.env } = {}) {
   try {
-    return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return null;
+    return { ok: true, out: execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { ok: false, missing: true, status: null, message: 'git is not on PATH' };
+    // git's cause is its `fatal:` or `error:` line; a warning can come first (an unreadable
+    // GIT_CONFIG_GLOBAL warns, then fails), so the last line is the fallback, not the first.
+    const lines = String(err.stderr ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const message = lines.find((line) => /^(fatal|error):/.test(line)) ?? lines.at(-1) ?? `git exited ${err.status ?? 'abnormally'}`;
+    return { ok: false, missing: false, status: err.status ?? null, message };
   }
+}
+
+/** A failed `runGit`, in words: git missing, or git that ran and said why it could not. */
+export function gitFailure(result) {
+  return result.missing ? 'git is not on PATH' : `git cannot run here: ${result.message}`;
+}
+
+function git(args, opts = {}) {
+  const result = runGit(args, opts);
+  return result.ok ? result.out : null;
 }
 
 export function gitVersion(opts = {}) {
@@ -394,10 +417,11 @@ export function hooksPathEffective(opts = {}) {
   return git(['config', '--get', 'core.hooksPath'], opts);
 }
 
+/** Sets or unsets `core.hooksPath`; the `runGit` result, so a caller can see that git refused. */
 export function setHooksPath(value, { scope = 'global', ...opts } = {}) {
   const flag = { global: '--global', local: '--local', system: '--system' }[scope] ?? '--global';
-  if (value === null) return git(['config', flag, '--unset', 'core.hooksPath'], opts);
-  return git(['config', flag, 'core.hooksPath', value], opts);
+  if (value === null) return runGit(['config', flag, '--unset', 'core.hooksPath'], opts);
+  return runGit(['config', flag, 'core.hooksPath', value], opts);
 }
 
 /**
@@ -455,8 +479,15 @@ export function readInstallState(env = process.env) {
   for (const key of ['kitHome', 'hooksPath', 'previousHooksPath', 'bound', 'deployedFrom']) {
     if (!isPath(state[key])) delete state[key];
   }
-  for (const key of ['skills', 'boundSet']) {
+  for (const key of ['skills', 'boundSet', 'boundProjects']) {
     if (key in state) state[key] = Array.isArray(state[key]) ? state[key].filter(isPath) : [];
+  }
+  // `boundProjects` is every research-first folder `--into` bound (#328). `bound` stays the one
+  // last bound, a string, because that is what an older kit's install reads and writes: it keeps
+  // a key it does not know and rewrites `bound`, so a project bound by an older kit is folded in.
+  if (isPath(state.bound) || 'boundProjects' in state) {
+    const list = state.boundProjects ?? [];
+    state.boundProjects = isPath(state.bound) && !list.some((p) => path.resolve(p) === path.resolve(state.bound)) ? [...list, state.bound] : list;
   }
   if ('skillSetHashes' in state) {
     const hashes = state.skillSetHashes;

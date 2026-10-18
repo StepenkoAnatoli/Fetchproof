@@ -880,6 +880,44 @@ test('install names a refused folder and exits 2', () => {
   assert.equal(fs.existsSync(skills), false, 'a refused deploy still installed the skill');
 });
 
+// #327: the install state's record of a deployment let the mirror into a folder that had lost
+// all of the kit and gained the operator's own files - `notes.txt` was pruned as "retired". The
+// record vouches only for a folder that still holds some of the kit.
+test('a stale install record does not vouch for a reused folder that holds none of the kit', async () => {
+  const { deploy } = await import('../lib/installer.mjs');
+  const source = tempDir('research-kit-src-');
+  for (const rel of ['lib/core.mjs', 'bin/gate.mjs', 'bin/preflight.mjs', 'README.md']) writeText(path.join(source, ...rel.split('/')), `// ${rel}\n`);
+  const home = tempDir('research-kit-stale-home-');
+  const state = path.join(home, 'install.json');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'absent.json'), RESEARCH_KIT_INSTALL_STATE: state };
+
+  const reused = path.join(home, 'research-kit');
+  assert.equal(deploy({ from: source, kitHome: reused, env }).ok, true);
+  fs.rmSync(reused, { recursive: true, force: true });
+  writeText(path.join(reused, 'notes.txt'), 'secret\n');
+  for (const dryRun of [true, false]) {
+    const result = deploy({ from: source, kitHome: reused, env, dryRun });
+    assert.equal(result.ok, false, `dryRun=${dryRun}: the stale record let the mirror into the operator's folder`);
+    assert.match(result.refused, /not a kit deployment/);
+    assert.match(result.refused, /records a deployment here, but the folder holds none of the kit's files - move those files out of it, or point RESEARCH_KIT_HOME at an empty folder/);
+    // Deleting the record would not make the folder a kit's, and loses the hooks and bindings it holds.
+    assert.doesNotMatch(result.refused, /remove the record/);
+    assert.ok(result.refused.includes(state), 'the refusal does not name the stale record');
+  }
+  assert.equal(readText(path.join(reused, 'notes.txt')), 'secret\n', 'the operator\'s file was pruned');
+  assert.equal(fs.existsSync(path.join(reused, 'lib', 'core.mjs')), false, 'the kit was written into it anyway');
+
+  // A recorded deployment that lost a marker but kept the rest of the kit keeps ADR-0111's allowance.
+  const damaged = path.join(home, 'damaged-kit');
+  assert.equal(deploy({ from: source, kitHome: damaged, env }).ok, true);
+  fs.rmSync(path.join(damaged, 'bin', 'gate.mjs'));
+  writeText(path.join(damaged, 'lib', 'left-behind.mjs'), 'old\n');
+  const repaired = deploy({ from: source, kitHome: damaged, env });
+  assert.equal(repaired.ok, true, repaired.refused);
+  assert.ok(fs.existsSync(path.join(damaged, 'bin', 'gate.mjs')), 'the lost marker was not restored');
+  assert.deepEqual(repaired.pruned, ['lib/left-behind.mjs']);
+});
+
 test('deploy does NOT mirror a skill root - it holds other people\'s skills too', async () => {
   const { deploy } = await import('../lib/installer.mjs');
   const source = tempDir('research-kit-src2-');
@@ -996,6 +1034,37 @@ test('the drift check reports and never repairs', async () => {
     'deployedDrift installed the missing file instead of reporting it');
   assert.equal(readText(path.join(target, 'lib', 'core.mjs')), 'export const a = 1;\n',
     'deployedDrift overwrote the stale file instead of reporting it');
+});
+
+// #328: run inside a project bound with `install --into`, doctor checked only the personal root
+// and said pass while the project's copy - the protocol a cloud session there reads - differed.
+test('doctor inside a bound project compares the project\'s copy and names it when it differs', async () => {
+  const { shippedSkills } = await import('../lib/installer.mjs');
+  const { dir, env } = machine();
+  const gitEnv = { ...env, HOME: dir, USERPROFILE: dir, GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  const project = tempDir('research-kit-bound-project-');
+  writeText(path.join(project, 'AGENTS.md'), '# a project\n');
+  const skills = path.join(project, '.claude', 'skills');
+  const bind = () => {
+    fs.cpSync(path.join(KIT_ROOT, 'skill'), path.join(skills, 'research-first'), { recursive: true });
+    for (const name of shippedSkills(KIT_ROOT)) fs.cpSync(path.join(KIT_ROOT, 'skills', name), path.join(skills, name), { recursive: true });
+  };
+  const projectSkill = (report) => report.findings.filter((x) => x.name === 'skill').find((x) => x.detail.includes(project));
+
+  bind();
+  const current = projectSkill(runDoctor(project, { env: gitEnv, gitPaths: { env: gitEnv }, probe: READY, record: false }));
+  assert.equal(current?.severity, 'pass', 'a bound copy that matches this tree was not reported');
+
+  fs.appendFileSync(path.join(skills, 'research-first', 'SKILL.md'), 'edited again\n');
+  const stale = projectSkill(runDoctor(project, { env: gitEnv, gitPaths: { env: gitEnv }, probe: READY, record: false }));
+  assert.equal(stale?.severity, 'warn', 'the project\'s differing copy was not looked at');
+  assert.ok(stale.detail.includes(path.join(skills, 'research-first')), 'the stale copy is not named by path');
+  assert.match(stale.fix, /install\.mjs.* --into \./);
+
+  // A project that binds nothing gets no project finding at all.
+  const unbound = tempDir('research-kit-unbound-project-');
+  const plain = runDoctor(unbound, { env: gitEnv, gitPaths: { env: gitEnv }, probe: READY, record: false });
+  assert.equal(plain.findings.some((x) => x.name === 'skill' && x.detail.includes(unbound)), false, 'a project that binds nothing was reported');
 });
 
 // --- a registration must point at the DEPLOYED kit, not merely name the hook ------
@@ -1132,6 +1201,97 @@ test('doctor reports the Node line: supported, odd and short-lived, or below the
   for (const ok of ['22.12.0', '22.22.1', '22.23.3']) {
     assert.equal(find(nodeFindings(ok), 'node').severity, 'pass', `${ok} decodes windows-1252 correctly`);
   }
+});
+
+// #363: with a global gitconfig git cannot parse, `git config --global` exits 128 and writes
+// nothing, and the install said "core.hooksPath=..." with exit 0 and an install state recording
+// a gate that was never set; doctor then named the broken file "git is not on PATH".
+test('a global gitconfig git cannot read is a refused install, and doctor names it rather than a missing git', () => {
+  requireGit('a global gitconfig that does not parse');
+  const { dir, env } = machine();
+  const globalFile = path.join(dir, 'gitconfig');
+  writeText(globalFile, '[core\n');
+  const gitEnv = { ...env, HOME: dir, USERPROFILE: dir, GIT_CONFIG_GLOBAL: globalFile, GIT_CONFIG_NOSYSTEM: '1' };
+  const gitPaths = { env: gitEnv };
+
+  for (const dryRun of [true, false]) {
+    const result = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: dir, dryRun });
+    assert.equal(result.ok, false, `dryRun=${dryRun}: the commit gate was reported installed while git config failed`);
+    assert.match(String(result.reason), /bad config/, 'the refusal does not carry git\'s own message');
+  }
+  assert.equal(fs.existsSync(env.RESEARCH_KIT_INSTALL_STATE), false, 'the install state records a gate git never set');
+  assert.equal(readText(globalFile), '[core\n');
+
+  const broken = find(machineHealth({ env: gitEnv, gitPaths, probe: READY }), 'git');
+  assert.equal(broken.severity, 'fail');
+  assert.doesNotMatch(broken.detail, /not on PATH/, 'a git that ran and failed on its config was called missing');
+  assert.match(broken.detail, /bad config/);
+
+  // A git that cannot be started at all is still "not on PATH".
+  const noPath = Object.fromEntries(Object.entries(gitEnv).filter(([key]) => key.toUpperCase() !== 'PATH'));
+  noPath.PATH = path.join(dir, 'no-git-here');
+  const missing = find(machineHealth({ env: noPath, gitPaths: { env: noPath }, probe: READY }), 'git');
+  assert.equal(missing.severity, 'fail');
+  assert.match(missing.detail, /not on PATH/);
+});
+
+// #363, second review: `git --version` runs where only the write fails - a global config that is a
+// directory, or whose `.lock` another git holds - so the dry run still promised the gate.
+test('the commit gate\'s dry run refuses where git cannot write its global config, and a fresh machine still installs', () => {
+  requireGit('a global gitconfig git cannot write');
+  for (const kind of ['directory', 'lock', 'fresh']) {
+    const { dir, env } = machine();
+    const globalFile = path.join(dir, 'gitconfig');
+    if (kind === 'directory') fs.mkdirSync(globalFile);
+    if (kind === 'lock') { writeText(globalFile, '[user]\n\tname = t\n'); writeText(`${globalFile}.lock`, ''); }
+    const gitPaths = { env: { ...env, HOME: dir, USERPROFILE: dir, GIT_CONFIG_GLOBAL: globalFile, GIT_CONFIG_NOSYSTEM: '1' } };
+    for (const dryRun of [true, false]) {
+      const result = installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: dir, dryRun });
+      if (kind === 'fresh') { assert.equal(result.ok, true, `fresh dryRun=${dryRun}: ${result.reason}`); continue; }
+      assert.equal(result.ok, false, `${kind} dryRun=${dryRun}: the commit gate was promised where git cannot write`);
+      assert.match(String(result.reason), kind === 'lock' ? /\.lock exists/ : /cannot read its global config/);
+    }
+    if (kind !== 'fresh') assert.equal(fs.existsSync(env.RESEARCH_KIT_INSTALL_STATE), false, `${kind}: the install state was written`);
+  }
+});
+
+// #363, second review: uninstall ignored git refusing the write. With the global config's lock held,
+// or the config unparseable, it cleared the state while core.hooksPath still named the kit's gate,
+// and from then on the kit could not remove its own gate.
+test('uninstall refuses where git cannot write, and keeps the state that lets it try again', () => {
+  requireGit('a global gitconfig git cannot write');
+  const { dir, env, configFile } = machine();
+  const globalFile = path.join(dir, 'gitconfig');
+  const gitEnv = { ...env, HOME: dir, USERPROFILE: dir, GIT_CONFIG_GLOBAL: globalFile, GIT_CONFIG_NOSYSTEM: '1' };
+  const gitPaths = { env: gitEnv };
+  const kitHooks = path.join(KIT_ROOT, 'githooks');
+  assert.equal(installCommitGate({ kitHome: KIT_ROOT, env, gitPaths, cwd: dir }).ok, true);
+  const recorded = () => readJson(env.RESEARCH_KIT_INSTALL_STATE).hooksPath;
+
+  writeText(`${globalFile}.lock`, '');
+  const locked = removeCommitGate({ env, gitPaths });
+  assert.equal(locked.ok, false, 'an uninstall git could not write was reported done');
+  assert.match(locked.reason, /\.lock exists/);
+  assert.equal(recorded(), kitHooks, 'the state forgot the gate that is still installed');
+  const cli = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'install-hooks.mjs'), '--uninstall'], {
+    cwd: dir, env: { ...gitEnv, RESEARCH_KIT_CONFIG: configFile }, encoding: 'utf8', timeout: 60_000, windowsHide: true,
+  });
+  assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+  assert.match(cli.stderr, /commit gate: .*\.lock exists/);
+  fs.rmSync(`${globalFile}.lock`);
+
+  const good = readText(globalFile);
+  writeText(globalFile, '[core\n');
+  const broken = removeCommitGate({ env, gitPaths });
+  assert.equal(broken.ok, false, 'an unparseable config read as "unset", and the state was cleared');
+  assert.equal(recorded(), kitHooks);
+  writeText(globalFile, good);
+
+  assert.equal(hooksPath('global', gitPaths), kitHooks, 'the refused uninstalls changed core.hooksPath');
+  const removed = removeCommitGate({ env, gitPaths });
+  assert.equal(removed.ok, true, removed.reason);
+  assert.equal(hooksPath('global', gitPaths), null);
+  assert.equal(recorded() ?? null, null);
 });
 
 // Found 2026-09-27: a machine had core.hooksPath=/opt/myhooks. install-hooks refused the

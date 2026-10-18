@@ -22,7 +22,8 @@ if (flags.help) {
 
   node research-kit/bin/install.mjs [--dry-run] [--into <project>]
 
-  --into <project>   also bind the skill and the skill set into that project's skill directory
+  --into <project>   also bind the skill and the skill set into that project's skill directory;
+                     a later install refreshes every project bound this way
 
 Overwrites by default: a stale deployed copy silently defeats an update. Files a past
 version shipped are pruned, because a copy-over deploy never removes anything. A folder
@@ -45,6 +46,13 @@ try {
   process.exit(2);
 }
 
+const UNBOUND = 'its project is there and the skill folder is not';
+const KEPT = 'kept in the bound projects, in case it is a drive or share that comes back';
+// A project's research-first copy is protocol text it chose to edit; --into replaces it on request.
+const leftBecause = (target) => (path.basename(target) === 'research-first'
+  ? 'this project edited its copy of the skill since the kit wrote it. To take the kit\'s: install --into that project'
+  : 'a skill of the same name that is not the kit\'s, or the kit\'s copy edited since it was deployed. Rename or remove it, then run install again, to get the kit\'s.');
+
 if (result.refused) {
   process.stderr.write(`install: refused - ${result.refused}\n`);
   process.exit(2);
@@ -52,7 +60,11 @@ if (result.refused) {
 
 if (result.dryRun) {
   process.stdout.write(`would deploy ${result.from}\n           -> ${result.to}\nwould prune: ${result.prune.join(', ') || '(nothing)'}\n`);
-  for (const target of result.skillConflicts) process.stderr.write(`would leave ${target} as it is: a skill of the same name that is not the kit's, or the kit's copy edited since it was deployed\n`);
+  for (const target of result.skillConflicts) process.stderr.write(`would leave ${target} as it is: ${leftBecause(target)}\n`);
+  for (const dir of result.refresh) process.stdout.write(`would refresh bound project -> ${dir}\n`);
+  for (const dir of result.dropped) process.stdout.write(`would drop ${dir} from the bound projects: ${UNBOUND}\n`);
+  for (const s of result.skipped) process.stderr.write(`would skip bound project ${s.dir}: ${s.why} - ${KEPT}\n`);
+  for (const f of result.failed) process.stderr.write(`could not refresh bound project ${f.dir}: ${f.why} - it stays bound\n`);
   process.exit(0);
 }
 
@@ -63,11 +75,14 @@ for (const location of result.skills.filter((l) => !setNames.has(path.basename(l
 const perRoot = new Map();
 for (const l of result.skills.filter((s) => setNames.has(path.basename(s)))) perRoot.set(path.dirname(l), (perRoot.get(path.dirname(l)) ?? 0) + 1);
 for (const [root, n] of perRoot) process.stdout.write(`skill set (${n} of ${result.skillSet.length}) -> ${root}\n`);
-for (const target of result.skillConflicts) {
-  process.stderr.write(`left ${target} as it is: a skill of the same name that is not the kit's, or the kit's copy edited since it was deployed. `
-    + 'Rename or remove it, then run install again, to get the kit\'s.\n');
-}
+for (const target of result.skillConflicts) process.stderr.write(`left ${target} as it is: ${leftBecause(target)}\n`);
 if (result.bound) process.stdout.write(`bound into project -> ${result.bound}${result.boundSet.length ? ` (+ ${result.boundSet.length} set skills beside it)` : ''}\n`);
+// Every project bound earlier is refreshed too (ADR-0006, #328); one unbound by hand is forgotten,
+// one that cannot be seen or written is kept, and each is said.
+for (const dir of result.refreshed) process.stdout.write(`refreshed bound project -> ${dir}\n`);
+for (const dir of result.dropped) process.stdout.write(`dropped ${dir} from the bound projects: ${UNBOUND}\n`);
+for (const s of result.skipped) process.stderr.write(`skipped bound project ${s.dir}: ${s.why} - ${KEPT}\n`);
+for (const f of result.failed) process.stderr.write(`could not refresh bound project ${f.dir}: ${f.why} - it stays bound, and the next install tries again\n`);
 
 // The next steps name the copy just installed, never the download this ran from: the operator
 // may delete that as soon as this returns (found 2026-09-27).

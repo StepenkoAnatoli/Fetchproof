@@ -44,6 +44,27 @@ test('install state keeps typed paths, arrays and skill hashes without changing 
   assert.equal(readText(file), before);
 });
 
+// #328: the bound projects are a list under `boundProjects`; `bound` stays the last-bound string an
+// older kit reads and rewrites, and a project an older kit bound there is folded into the list.
+test('install state keeps every bound project, and folds in the one an older kit recorded', () => {
+  const file = path.join(tempDir('rk-state-bound-'), 'install.json');
+  const env = { RESEARCH_KIT_INSTALL_STATE: file };
+  writeText(file, JSON.stringify({ bound: '/old/.claude/skills/research-first' }));
+  assert.deepEqual(readInstallState(env).boundProjects, ['/old/.claude/skills/research-first'], 'a state from before the list lost its project');
+  writeText(file, JSON.stringify({ bound: '/b', boundProjects: ['/a', 7, '/b', ''] }));
+  let state = readInstallState(env);
+  assert.equal(state.bound, '/b');
+  assert.deepEqual(state.boundProjects, ['/a', '/b'], 'the last-bound project was counted twice, or a non-path kept');
+  writeText(file, JSON.stringify({ bound: '/c', boundProjects: ['/a'] }));
+  assert.deepEqual(readInstallState(env).boundProjects, ['/a', '/c'], 'a project an older kit bound was dropped');
+  writeText(file, JSON.stringify({ bound: '', boundProjects: '/a' }));
+  state = readInstallState(env);
+  assert.equal(state.bound, undefined);
+  assert.deepEqual(state.boundProjects, []);
+  writeText(file, JSON.stringify({ kitHome: '/k' }));
+  assert.equal('boundProjects' in readInstallState(env), false, 'a state that never bound grew a key');
+});
+
 function envWith(contents, { snapshot = null, extra = {} } = {}) {
   const dir = tempDir('research-kit-config-');
   const file = path.join(dir, 'research-kit.config.json');

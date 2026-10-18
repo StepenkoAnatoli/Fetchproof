@@ -14,7 +14,7 @@ import { verdictContext, runPreflight } from './preflight.mjs';
 import { isGated } from './gate.mjs';
 import { verifyHandoff, handoffRemedy } from './handoff.mjs';
 import { validateProject, hookExecutability, GATE_MARKERS, KIT_ROOT } from './scaffold.mjs';
-import { settingsState, deployedDrift, driftNote, handOnState } from './installer.mjs';
+import { settingsState, deployedDrift, driftNote, handOnState, boundDrift } from './installer.mjs';
 import { recordOverride } from './provenance.mjs';
 import { probeFirecrawl, selectTransport } from './transport.mjs';
 import { loadConfig, configPath } from './machine.mjs';
@@ -24,7 +24,7 @@ import { verifyBundle, bundleSummary } from './bundle.mjs';
 import {
   posture, machineRole, collectionPolicy, readMachineConfig, retiredEnvNotes,
   hooksPath, hooksPathEffective, runtimePaths, skillLocations,
-  readInstallState, gitVersion, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
+  readInstallState, runGit, gitFailure, isGitRepo, localHooksPathOverride, previousHooksPath, repoTopLevel, RETIRED_CONFIG_KEYS, RETIRED_EDIT_GATE_HOOKS,
   EDIT_GATE_HOOK, KIT_HOME, INSTALL_STATE_PATH, namesHook,
 } from './machine.mjs';
 
@@ -108,10 +108,15 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
         'upgrade to Node 22.21 or later on the 22 line, or to 24 or 26'));
   }
 
-  const version = gitVersion(gitPaths);
-  out.push(version
-    ? f('pass', 'git', version)
-    : f('fail', 'git', 'git is not on PATH - the commit gate cannot install', 'install git 2.9 or newer'));
+  // "Not on PATH" only when git could not be started (#363): a git that ran and refused - a
+  // global gitconfig it cannot parse, `fatal: bad config line 1` - was named missing, and the
+  // fix offered was to install the git that was already there.
+  const version = runGit(['--version'], gitPaths);
+  out.push(version.ok
+    ? f('pass', 'git', version.out)
+    : version.missing
+      ? f('fail', 'git', 'git is not on PATH - the commit gate cannot install', 'install git 2.9 or newer')
+      : f('fail', 'git', `${gitFailure(version)} - the commit gate cannot install`, 'repair the file git names (often the global gitconfig), then run doctor again'));
 
   const state = probe();
   // A collector that CHOSE a route without Firecrawl is configured, not broken (ADR-0095).
@@ -579,6 +584,18 @@ export function runDoctor(root, { env = process.env, gitPaths = {}, probe = prob
     findings.push(stale
       ? f('warn', 'skill', `${location} is STALE - ${stale} file(s) differ from this tree, so the protocol an agent reads is not the one here`)
       : f('pass', 'skill', `${location}`));
+  }
+  // The copy `install --into` bound into THIS project (#328), compared the way the personal root
+  // is: it is committed here and is the protocol a cloud or Cowork session here reads (ADR-0006),
+  // and doctor had looked only at the personal root and said pass while this one differed.
+  const bound = boundDrift({ root, env }).filter((s) => !skillLocations(env).some((l) => samePath(l, s.location)));
+  if (bound.length) {
+    const stale = bound.filter((s) => s.missing.length + s.changed.length + (s.set ? s.extra.length : 0));
+    const named = stale.slice(0, 3).map((s) => s.location).join(', ') + (stale.length > 3 ? ` and ${stale.length - 3} more` : '');
+    findings.push(stale.length
+      ? f('warn', 'skill', `${named} - bound into this project, and STALE: it differs from this tree, so the protocol a session here reads is not the one here`,
+        `node ${path.join(KIT_ROOT, 'bin', 'install.mjs')} --into .`)
+      : f('pass', 'skill', `${bound[0].location} - bound into this project${bound.length > 1 ? `, with ${bound.length - 1} set skill(s) beside it` : ''}, and current`));
   }
 
   const blocking = findings.filter((x) => x.severity === 'fail' || x.severity === 'critical');

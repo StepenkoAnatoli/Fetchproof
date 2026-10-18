@@ -332,6 +332,26 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `install` no longer mirrors into a folder the install state records as the kit's home when
+  that folder holds none of the kit's marker files: a removed kit whose path was reused for
+  other files is refused as any unrecorded folder is (ADR-0111), naming the stale record and
+  saying to move those files out, instead of having them pruned as retired. A recorded deployment that lost one marker
+  is still updated (#327).
+- A plain `install` refreshes every project bound with `--into`, as ADR-0006 says. The install
+  state lists them under `boundProjects`; `bound` stays the last-bound path an older kit reads,
+  and a project an older kit bound is folded into the list. A research-first or set skill copy
+  the project edited is left as it is and named (`--into` that project replaces it); a project
+  deleted, or whose skill folder was removed by hand, is dropped; one whose folder cannot be
+  reached at all (an unmounted drive, an offline share) is kept and skipped; one that cannot be
+  read or written is reported and the install goes on, and the state is written with what was
+  written even when an explicit `--into` fails. `doctor` run inside a bound project compares that project's copy too, and
+  warns with `install.mjs --into .` when it differs (#328).
+- `install-hooks` refuses the commit gate, exit 1 with git's own message and no install state
+  written, when git cannot run or write its global config (one it cannot parse, a directory, a
+  held `.lock`), the dry run included; it had reported the gate installed. `--uninstall` refuses
+  the same way, exit 1, and keeps the install state, instead of clearing it while
+  `core.hooksPath` still named the kit's gate. `doctor` says "git is not on PATH" only when git
+  cannot be started, and otherwise "git cannot run here" with git's message (#363).
 
 ## 0.9.5 — 2026-10-04
 
