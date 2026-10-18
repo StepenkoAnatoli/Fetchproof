@@ -332,6 +332,29 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `research` refuses a plan url whose `type` is not P, S or L (read trimmed and in any case, as
+  the gate reads it; a blank type is absent and runs as P), and a query or url whose `why` names
+  an unknown `research/DISCOVERY.md` does not declare, before anything is fetched and on
+  `--dry-run`: both were collected and recorded, and only the gate - after the spend - said the
+  row was unusable. A `why` is judged once the contract declares an unknown, and only the
+  contract is read to judge it; a missing `why`, or one naming no unknown, is said on a `note:`
+  line ("the row will not support any closure"), not refused, since an exploratory query is
+  allowed. The browser-transport decision project's plan named an undeclared `U-04` for the
+  ArchiveBox page its contract cites under U-03, and now names U-03 (#291).
+- `research` searches a query listed twice in a plan once - compared trimmed and case-folded -
+  and names the copy (`skipped   search "Same Question" - same query as "same question",
+  searched once`), on `--dry-run` too: each copy was a paid call on a metered provider whose
+  results the first had already returned. Each later copy is still ranked from that one answer
+  with its own `prefer` and `why`, so it takes pages of its own for its own unknown, as before;
+  a copy skipped because its unknowns are closed, or whose search failed, does not stand in for
+  the next (#300).
+- A URL carrying a user name or password is refused in a plan (`planProblems`, naming the host,
+  never the secret; a URL that does not parse is repeated with its user information masked),
+  dropped as a search result (`isWebUrl`, so `decompose` and `research` neither list nor scrape
+  it), and refused by `collect-remote` and the MCP `collect` tool before dispatch (`queriesInput`)
+  in either list - `collect.yml` fetches any line that is an http(s) URL, a query included - and
+  when it only looks like one: it was queued, and a real run would have written the credential
+  into the ledger, which is never edited, and handed it to the fetch transport (#308).
 
 ## 0.9.5 — 2026-10-04
 

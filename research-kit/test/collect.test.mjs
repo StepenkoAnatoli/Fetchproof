@@ -11,7 +11,7 @@ import { topicMatch } from '../lib/research-run.mjs';
 import { verifyLedger, entryHash } from '../lib/provenance.mjs';
 import * as checksModule from '../lib/checks.mjs';
 import { supersededRows } from '../lib/checks.mjs';
-import { runResearch, readPlan, rankCandidate, selectCandidates, parsePreference, urlKey, DEPTH_SCRAPES, usageSummary } from '../lib/research-run.mjs';
+import { runResearch, readPlan, rankCandidate, selectCandidates, parsePreference, urlKey, DEPTH_SCRAPES, usageSummary, planProblems, planWarnings, contractUnknownIds, isWebUrl } from '../lib/research-run.mjs';
 
 describe('collect');
 
@@ -627,6 +627,138 @@ test('a search whose unknowns are all CLOSED is not run again; --force runs it; 
   const third = searching();
   runResearch(untagged, { adapter: third.counted });
   assert.equal(third.count(), 1, 'a query that names no unknown runs as before');
+});
+
+// #300: URLs were queued once per page; a query written twice was searched once per copy, and
+// on a metered provider each copy is a paid call that buys results the first already returned.
+test('the same query written twice, in any case, is searched once and the copy says so', () => {
+  const dir = makeProject();
+  writeJson(resolve(dir, PATHS.plan), {
+    topic: 'Fixture', depth: 'quick', refreshDays: 30, limit: 8, perQuery: 1, maxScrapes: 10, prefer: [], urls: [],
+    queries: ['same question', 'same question', { q: ' Same Question ' }],
+  });
+  let searches = 0;
+  const base = stubAdapter({ results: [{ url: 'https://docs.example.com/same-question' }] });
+  const adapter = { ...base, search: (q) => { searches += 1; return base.search(q); } };
+  const lines = [];
+  const preview = runResearch(dir, { adapter, dryRun: true, log: (line) => lines.push(line) });
+  assert.equal(preview.wouldSearch, 1, lines.join('\n'));
+  assert.ok(lines.includes('  skipped   search "same question" - same query as "same question", searched once'), lines.join('\n'));
+  assert.ok(lines.includes('  skipped   search " Same Question " - same query as "same question", searched once'), lines.join('\n'));
+  assert.match(String(preview.discovered[2]?.note), /^not run - same query as "same question", searched once$/);
+
+  runResearch(dir, { adapter });
+  assert.equal(searches, 1, 'a copy of the query was paid for again');
+});
+
+// Review of the first #300 fix: merging the copies into ONE selection of perQuery pages lost
+// what searching each copy had given - a page of its own, ranked by its own prefer, used for
+// its own unknown. The one answer is now ranked once per copy.
+test('two entries sharing a query search once, and each still takes its own page for its own unknown', () => {
+  const results = ['https://docs.alpha.com/free-tier-limits', 'https://blog.other.com/free-tier-limits',
+    'https://github.com/beta/free-tier-limits', 'https://news.x.com/free-tier-limits'].map((url) => ({ url, title: 'free tier limits' }));
+  const collect = (perQuery, queries) => {
+    const dir = makeProject();
+    writeJson(resolve(dir, PATHS.plan), { topic: 'Fixture', depth: 'normal', refreshDays: 30, limit: 8, perQuery, maxScrapes: 10, prefer: [], urls: [], queries });
+    let searches = 0;
+    const base = stubAdapter({ results });
+    const run = runResearch(dir, { adapter: { ...base, search: (q) => { searches += 1; return base.search(q); } } });
+    return { searches, collected: run.results.filter((r) => r.status === 'collected') };
+  };
+  const preferred = collect(1, [
+    { q: 'free tier limits', why: 'U-1', prefer: ['docs.alpha.com'] },
+    { q: 'Free tier limits', why: 'U-2', prefer: ['github.com/beta'] },
+  ]);
+  assert.equal(preferred.searches, 1, 'the copy was searched again');
+  assert.deepEqual(preferred.collected.map((r) => [r.url, r.usedFor]), [
+    ['https://docs.alpha.com/free-tier-limits', 'U-1'],
+    ['https://github.com/beta/free-tier-limits', 'U-2'],
+  ]);
+  const plain = collect(2, [{ q: 'free tier limits', why: 'U-1' }, { q: 'free tier limits', why: 'U-2' }]);
+  assert.equal(plain.searches, 1);
+  assert.equal(plain.collected.length, 4, 'each copy keeps its own perQuery pages');
+});
+
+// Review of the first #300 fix: the query was marked searched before the closed-unknown skip,
+// so a copy naming no unknown never ran when the first copy's unknown was closed.
+test('a copy whose unknown is closed does not stand in for a copy that still needs the search', () => {
+  const dir = makeProject();
+  contractWith(dir, 'CLOSED');
+  writeJson(resolve(dir, PATHS.plan), {
+    topic: 'Fixture', depth: 'quick', refreshDays: 30, limit: 8, perQuery: 1, maxScrapes: 10, urls: [],
+    queries: [{ q: 'free tier limits', why: 'U-1' }, 'Free tier limits'],
+  });
+  let searches = 0;
+  const base = stubAdapter({ results: [] });
+  const lines = [];
+  runResearch(dir, { adapter: { ...base, search: (q) => { searches += 1; return base.search(q); } }, log: (line) => lines.push(line) });
+  assert.equal(searches, 1, lines.join('\n'));
+  assert.ok(!lines.some((line) => /searched once/.test(line)), lines.join('\n'));
+});
+
+// #291 and #308: what planProblems refuses before anything is spent, and what it only says.
+test('a plan url typed outside P, S and L, or for an undeclared unknown, is a problem before the run', () => {
+  const unknowns = ['U-1', 'U-2', 'U-3'];
+  const plan = (url, query = { q: 'ok', why: 'U-1' }) => ({ topic: 'probe', queries: [query], urls: [url] });
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'U-2', type: 'P' }), { unknowns }), []);
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'U-2: the pricing page', type: 'S' }), { unknowns }), []);
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', type: 'Z' }), { unknowns }),
+    ['urls[0] has source type "Z" - expected P, S, or L']);
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'U-99', type: 'P' }), { unknowns }),
+    ['urls[0] is for "U-99", which research/DISCOVERY.md does not declare']);
+  assert.deepEqual(planProblems(plan('https://x.invalid/a', { q: 'ok', why: 'U-1, U-7' }), { unknowns }),
+    ['queries[0] is for "U-7", which research/DISCOVERY.md does not declare']);
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'u-2' }), { unknowns }), [], 'an id is read in any case, as the gate reads it');
+  // A type is read as the gate reads a row's - trimmed, any case - and a blank one is absent.
+  for (const type of ['p', ' S ', 'l', '', null]) {
+    assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'U-1', type }), { unknowns }), [], `type ${JSON.stringify(type)}`);
+  }
+  assert.deepEqual(planProblems(plan({ url: 'https://x.invalid/a', why: 'U-99' })), [], 'no contract to judge against: why is not judged');
+
+  // A missing why, or one naming no unknown, is said - never refused.
+  const unnamed = { topic: 'probe', queries: ['bare', { q: 'context only', why: 'background reading' }], urls: [{ url: 'https://x.invalid/a' }] };
+  assert.deepEqual(planProblems(unnamed, { unknowns }), []);
+  assert.deepEqual(planWarnings(unnamed), [
+    'queries[0] names no unknown - the row will not support any closure',
+    'queries[1] names no unknown - the row will not support any closure',
+    'urls[0] names no unknown - the row will not support any closure',
+  ]);
+  assert.deepEqual(planWarnings(plan({ url: 'https://x.invalid/a', why: 'U-2' })), []);
+});
+
+test('a plan url carrying a user name or password is refused, and the problem never repeats the secret', () => {
+  for (const url of ['https://user:hunter2@x.invalid/secret', 'https://hunter2@x.invalid/secret', 'https://:hunter2@x.invalid/secret']) {
+    const problems = planProblems({ topic: 'probe', urls: [{ url, why: 'U-1' }] });
+    assert.equal(problems.length, 1, `${url}: ${problems.join('; ')}`);
+    assert.match(problems[0], /^urls\[0\] carries credentials \(…@x\.invalid\) - the ledger records every URL and command verbatim/);
+    assert.doesNotMatch(problems[0], /hunter2/, 'the refusal printed the credential');
+  }
+  // A URL that does not parse is repeated in its problem - with what precedes its `@` masked.
+  const unparsed = planProblems({ topic: 'probe', urls: ['https://user:hunter2@a.example:99999/x'] });
+  assert.deepEqual(unparsed, ['urls[0] is not an http(s) URL: https://…@a.example:99999/x']);
+  assert.ok(!isWebUrl('https://user:pass@docs.example.com/a'), 'a search result with userinfo is not a page to fetch');
+  assert.deepEqual(selectCandidates([{ url: 'https://user:pass@docs.example.com/a' }, { url: 'https://docs.example.com/b' }], { perQuery: 3 })
+    .map((c) => c.url), ['https://docs.example.com/b']);
+});
+
+test('the contract\'s unknown ids are read from DISCOVERY.md alone, and none declared is nothing to judge', () => {
+  const dir = makeProject();
+  assert.equal(contractUnknownIds(dir), null, 'no contract');
+  contractWith(dir, 'OPEN');
+  assert.deepEqual(contractUnknownIds(dir), ['U-1', 'U-2']);
+});
+
+// Review of #291: the browser-transport project's plan named U-04, which its contract never
+// declared, and `research --dry-run` there began to refuse. Every plan in this repository is
+// held to the rule it now enforces, against its own contract.
+test('every plan in this repository passes planProblems against its own contract', () => {
+  const repo = path.resolve(KIT_ROOT, '..');
+  const decisions = path.join(repo, 'docs', 'decisions');
+  const projects = [repo, ...(fs.existsSync(decisions) ? fs.readdirSync(decisions).map((d) => path.join(decisions, d)) : [])]
+    .filter((d) => fs.existsSync(path.join(d, PATHS.plan)));
+  const problems = projects.flatMap((d) => planProblems(JSON.parse(fs.readFileSync(path.join(d, PATHS.plan), 'utf8')), { unknowns: contractUnknownIds(d) })
+    .map((p) => `${path.relative(repo, d) || '.'}: ${p}`));
+  assert.deepEqual(problems, []);
 });
 
 test('two queries that find the same page each still contribute a page of their own', () => {

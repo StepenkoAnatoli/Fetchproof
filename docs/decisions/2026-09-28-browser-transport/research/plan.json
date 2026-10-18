@@ -7,6 +7,6 @@
     {"url": "https://developer.chrome.com/blog/headless-chrome", "type": "P", "why": "U-01: command-line dump-dom, virtual time"},
     {"url": "https://www.chromium.org/developers/design-documents/network-settings/", "type": "P", "why": "U-02: how Chromium picks up a proxy on Linux"},
     {"url": "https://chromium.googlesource.com/chromium/src/+/main/docs/linux/sandboxing.md", "type": "P", "why": "U-03: sandbox and running as root"},
-    {"url": "https://github.com/ArchiveBox/ArchiveBox/wiki/Chromium-Install", "type": "S", "why": "U-04: how an archiver locates and runs Chromium"}
+    {"url": "https://github.com/ArchiveBox/ArchiveBox/wiki/Chromium-Install", "type": "S", "why": "U-03: how an archiver locates and runs Chromium"}
   ]
 }

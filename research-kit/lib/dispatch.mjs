@@ -70,6 +70,15 @@ export function redact(text) {
  * text. `value` is undefined when there is nothing to send, so a dispatch without either
  * looks exactly like one from before these options existed.
  */
+function credentialHost(line) {
+  try {
+    const url = new URL(line);
+    if (['http:', 'https:'].includes(url.protocol) && (url.username || url.password)) return `…@${url.host}`;
+  } catch { /* judged by its spelling below */ }
+  const spelled = /^https?:[\\/]*[^\\/?#\s]*@([^\\/?#\s]*)/i.exec(line);
+  return spelled ? `…@${spelled[1]}` : '';
+}
+
 export function queriesInput({ queries = [], urls = [] } = {}) {
   const items = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? ''));
   const searches = items(queries);
@@ -81,6 +90,15 @@ export function queriesInput({ queries = [], urls = [] } = {}) {
   }
   const clean = (list) => list.map((item) => item.trim()).filter(Boolean);
   const pages = clean(addresses);
+  // A user name or password in a URL would become a workflow input anyone who can read the
+  // collector repository sees, and a ledger line nobody may edit (#308). Every line is read,
+  // searches too: collect.yml fetches any line that is an http(s) URL, whichever list it came
+  // in. A line that only looks like one - `https://user:pass@host:99999/` does not parse - is
+  // refused as well, since it would be published as a search. Named by host, never the secret.
+  const credentialed = [...clean(searches), ...pages].map(credentialHost).filter(Boolean);
+  if (credentialed.length) {
+    return { value: undefined, error: `a URL carries credentials (${credentialed.join(', ')}) - a page behind a login is a KNOWN-UNKNOWN, not a fetch` };
+  }
   const bad = pages.filter((page) => {
     if (!/^https?:\/\/./i.test(page)) return true;
     try { new URL(page); return false; } catch { return true; }

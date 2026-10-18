@@ -11,7 +11,7 @@ import { parseFlags, flagList, refuseUnknownFlags, checkFlagValues, resolve, rea
 import { collectionPolicy, collectionRefusal, loadConfig } from '../lib/machine.mjs';
 import { findBrowser } from '../lib/browser-transport.mjs';
 import { selectTransport, TRANSPORTS, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
-import { runResearch, searchSummaryLine, readPlan, planProblems, usageSummary, topicMatch, DEPTHS, DEPTH_SCRAPES } from '../lib/research-run.mjs';
+import { runResearch, searchSummaryLine, readPlan, planProblems, planWarnings, contractUnknownIds, usageSummary, topicMatch, DEPTHS, DEPTH_SCRAPES } from '../lib/research-run.mjs';
 import { parseCapture, readLedger, duplicateKey } from '../lib/corpus.mjs';
 import { readPrior } from '../lib/prior.mjs';
 import { heading } from '../lib/render.mjs';
@@ -144,11 +144,14 @@ function vendorMeter(search) {
     process.stderr.write(`${planPath} ${duplicate} - fix it, then run this again.\n`);
     process.exit(2);
   }
-  const problems = planProblems(parseJson(planText));
+  // A `why` is judged against the contract's own unknowns (#291) here, before the spend,
+  // rather than in preflight after it.
+  const problems = planProblems(parseJson(planText), { unknowns: contractUnknownIds(root) });
   if (problems.length) {
     process.stderr.write(`${planPath} has ${problems.length} problem(s) - fix them, then run this again:\n${problems.map((p) => `  ${p}`).join('\n')}\n`);
     process.exit(2);
   }
+  for (const warning of planWarnings(parseJson(planText))) process.stdout.write(`note:      ${planPath} ${warning}\n`);
   const planned = readPlan(root, typeof flags.plan === 'string' ? flags.plan : '');
   // --only filters queries. Matching none ran nothing and read as a search that found nothing.
   const only = flagList(flags.only);

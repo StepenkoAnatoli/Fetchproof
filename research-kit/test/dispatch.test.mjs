@@ -509,6 +509,29 @@ test('a URL that is not http(s) is refused before dispatch, not searched on the 
   }
 });
 
+// #308: a URL with a user name or password would become a workflow input anyone who can read
+// the collector repository sees, and a ledger line nobody may edit.
+test('a URL carrying credentials is refused before dispatch, naming the host and not the secret', () => {
+  for (const bad of ['https://user:hunter2@a.example/x', 'https://hunter2@a.example/x']) {
+    const r = queriesInput({ queries: ['q'], urls: [bad] });
+    assert.equal(r.value, undefined, `${bad} was accepted`);
+    assert.match(r.error, /carries credentials \(…@a\.example\)/, r.error);
+    assert.doesNotMatch(r.error, /hunter2/, 'the refusal repeated the credential');
+  }
+  // Review of the first fix: collect.yml fetches any line that is an http(s) URL, so one sent
+  // as a QUERY was dispatched, password and all. A line that only looks like such a URL - its
+  // port does not parse, or a backslash stands for the slashes - is refused too.
+  for (const bad of ['https://user:hunter2@a.example/x', 'https://user:hunter2@a.example:99999/x', 'https:\\user:hunter2@a.example/x']) {
+    for (const input of [{ queries: [bad] }, { urls: [bad] }]) {
+      const r = queriesInput(input);
+      assert.equal(r.value, undefined, `${JSON.stringify(input)} was accepted`);
+      assert.match(r.error, /carries credentials \(…@a\.example(:99999)?\)/, r.error);
+      assert.doesNotMatch(r.error, /hunter2/, 'the refusal repeated the credential');
+    }
+  }
+  assert.equal(queriesInput({ queries: ['how @ works', 'https://example.com/@user'] }).error, '', 'an @ in a search or a path is not a credential');
+});
+
 test('fetchCorpus refuses an out_dir it cannot write BEFORE it downloads anything', async () => {
   // The download is the slow, rate-limited part; learning afterwards that the folder was
   // unusable wasted it, and the raw ENOTDIR that surfaced carried no code a caller could

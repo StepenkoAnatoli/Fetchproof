@@ -1153,6 +1153,53 @@ test('a plan with values it cannot use is refused, naming each one', () => {
   assert.match(str.err, /queries must be a list/, str.err);
 });
 
+// #291: a url typed Z, for an unknown the contract does not declare, passed the dry run and was
+// collected; the gate refused the row only after the spend.
+test('a plan url with an unknown source type or an undeclared unknown is refused by the dry run', () => {
+  const root = project('probe');
+  fs.writeFileSync(path.join(root, 'research', 'DISCOVERY.md'), [
+    '# Discovery Contract - probe', '', '## Build intent', '', 'A fixture.', '', '## Unknowns', '',
+    '| ID | Unknown | Why it blocks the build | Status | Evidence |', '|---|---|---|---|---|',
+    '| U-1 | One? | Sets one | OPEN | |', '| U-2 | Two? | Sets two | OPEN | |', '| U-3 | Three? | Sets three | OPEN | |', '',
+  ].join('\n'));
+  const write = (plan) => fs.writeFileSync(path.join(root, 'research', 'plan.json'), JSON.stringify(plan));
+  write({ topic: 'probe', queries: [{ q: '', why: 'U-1' }, { q: 'ok' }], urls: [{ url: 'https://x.invalid/a', why: 'U-99', type: 'Z' }] });
+  const r = run('research.mjs', ['--dry-run', '--transport', 'http-keyless'], { root });
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /urls\[0\] has source type "Z" - expected P, S, or L/, r.err);
+  assert.match(r.err, /urls\[0\] is for "U-99", which research\/DISCOVERY\.md does not declare/, r.err);
+
+  write({ topic: 'probe', queries: [{ q: 'ok' }], urls: [{ url: 'https://x.invalid/a', why: 'U-2', type: 'P' }] });
+  const sound = run('research.mjs', ['--dry-run', '--transport', 'http-keyless'], { root });
+  assert.equal(sound.status, 0, sound.all);
+  assert.match(sound.out, /queries\[0\] names no unknown - the row will not support any closure/, 'a query with no why is said, not refused');
+  assert.doesNotMatch(sound.out, /urls\[0\] names no unknown/, sound.out);
+});
+
+// #308: a plan url carrying a password passed planProblems, and a real run would have written it
+// into the ledger - which is never edited - and handed it to the fetch transport.
+test('a plan url carrying credentials is refused before anything runs, and the ledger is untouched', () => {
+  const root = project('probe');
+  const ledger = path.join(root, 'research', 'raw', '.fetches.jsonl');
+  const before = fs.existsSync(ledger) ? fs.readFileSync(ledger, 'utf8') : null;
+  fs.writeFileSync(path.join(root, 'research', 'plan.json'), JSON.stringify({
+    topic: 'probe', urls: [{ url: 'https://x.invalid/fine', why: 'U-1' }, { url: 'https://user:pass@x.invalid/secret', why: 'U-1' }],
+  }));
+  // The real run too, on a declared collector: the refusal comes before any transport is
+  // chosen, so it spends nothing (and a regression would reach only x.invalid, keyless).
+  const home = tempDir('rk-cred-home-');
+  const config = path.join(home, 'c.json');
+  fs.writeFileSync(config, JSON.stringify({ role: 'collector' }));
+  const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: config };
+  for (const args of [['--dry-run'], []]) {
+    const r = run('research.mjs', [...args, '--transport', 'http-keyless'], { root, env });
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.err, /urls\[1\] carries credentials \(…@x\.invalid\) - the ledger records every URL and command verbatim and is never edited/, r.err);
+    assert.doesNotMatch(r.all, /user:pass/, 'the refusal repeated the credential');
+    assert.equal(fs.existsSync(ledger) ? fs.readFileSync(ledger, 'utf8') : null, before, 'the ledger changed');
+  }
+});
+
 // Found 2026-09-27, running the kit as a new user: new-project was given --topic and then
 // told the user to type it again ('decompose.mjs --topic "<topic>"'), which decompose now
 // takes from the project anyway (ADR-0056).

@@ -664,3 +664,19 @@ test('a search result that is not an http(s) page is neither listed nor scraped'
   assert.deepEqual(fetched, ['https://docs.example.com/limits']);
   assert.doesNotMatch(readText(resolve(dir, PATHS.map)), /file:\/\/|javascript:/);
 });
+
+// #308: a result carrying a user name or password would hand the credential to the fetch
+// adapter and write it into the ledger, which is never edited. It is dropped like a javascript: row.
+test('a search result carrying credentials is neither listed nor scraped', () => {
+  const dir = makeProject();
+  const fetched = [];
+  const adapter = {
+    name: 'stub-transport',
+    search: () => ({ ok: true, results: ['https://user:hunter2@docs.example.com/limits', 'https://docs.example.com/pricing']
+      .map((url) => ({ url, title: 'Example limits', description: 'Example limits' })) }),
+    runScrape: (url) => { fetched.push(url); return { ok: false, url, error: 'not fetched in this test' }; },
+  };
+  decompose(dir, { topic: 'Example', adapter, maxScrapes: 5 });
+  assert.deepEqual(fetched, ['https://docs.example.com/pricing']);
+  assert.doesNotMatch(readText(resolve(dir, PATHS.map)), /hunter2/);
+});
