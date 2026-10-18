@@ -3,10 +3,10 @@
 
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { test, describe, assert, tempDir, fs, path, os, KIT_ROOT } from './harness.mjs';
+import { test, describe, assert, tempDir, fs, path, os, KIT_ROOT, requireGit } from './harness.mjs';
 import { writeText, readText, homeDir } from '../lib/core.mjs';
 import {
-  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy, readInstallState,
+  readMachineConfig, loadConfig, saveConfig, posture, machineRole, collectionPolicy, readInstallState, configPath,
   collectionRefusal, evidencePolicy, runtimePaths, skillLocations, retiredEnvNotes,
   RUNTIME_ANCHORS, RETIRED_ENV_VARS, RETIRED_CONFIG_KEYS, DEFAULTS, ROLES,
 } from '../lib/machine.mjs';
@@ -189,6 +189,159 @@ test('an ill-typed posture key resolves to its restrictive state, and is named',
   const held = readMachineConfig(envWith('{"failOpen": fal', { snapshot: '{"failOpen": "false"}' }).env);
   assert.equal(held.settings.failOpen, false);
   assert.deepEqual(held.illTypedKeys, ['failOpen']);
+});
+
+// #310: every key but the three posture keys took its default on a wrong type, and nothing
+// said so - a list for `transport`, a string for `skillRoots`, a number for `serpapiKey`. The
+// default is still the fallback (a path or a transport has no restrictive value); the key is
+// named, so doctor can say which.
+test('a non-posture key present with the wrong type keeps its default, and is named (#310)', () => {
+  const cases = [
+    [{ skillRoots: '/p' }, 'skillRoots', (s) => assert.deepEqual(s.skillRoots, [])],
+    [{ transport: ['http-keyless'] }, 'transport', (s) => assert.equal(s.transport, DEFAULTS.transport)],
+    [{ serpapiKey: 1 }, 'serpapiKey', (s) => assert.equal(s.serpapiKey, DEFAULTS.serpapiKey)],
+    [{ searchTransport: 5 }, 'searchTransport', (s) => assert.equal(s.searchTransport, DEFAULTS.searchTransport)],
+    [{ searxngUrl: {} }, 'searxngUrl', (s) => assert.equal(s.searxngUrl, DEFAULTS.searxngUrl)],
+    [{ browserPath: 5 }, 'browserPath', (s) => assert.equal(s.browserPath, DEFAULTS.browserPath)],
+    [{ projectSkillDir: false }, 'projectSkillDir', (s) => assert.equal(s.projectSkillDir, DEFAULTS.projectSkillDir)],
+    [{ maxAgeDays: '90' }, 'maxAgeDays', (s) => assert.equal(s.maxAgeDays, DEFAULTS.maxAgeDays)],
+    [{ editGate: { settingsPath: 42 } }, 'editGate.settingsPath', (s) => assert.equal(s.editGate.settingsPath, DEFAULTS.editGate.settingsPath)],
+    [{ skillRoots: ['/ok', 42] }, 'skillRoots', (s) => assert.deepEqual(s.skillRoots, ['/ok'])],
+  ];
+  for (const [config, key, check] of cases) {
+    const read = readMachineConfig(envWith(JSON.stringify(config)).env);
+    assert.equal(read.state, 'readable', JSON.stringify(config));
+    assert.deepEqual(read.illTypedKeys, [key], JSON.stringify(config));
+    check(read.settings);
+  }
+  // Well-typed values, and the empty settingsPath the installer itself writes, name nothing.
+  const fine = readMachineConfig(envWith(JSON.stringify({
+    skillRoots: ['/one'], transport: 'http-keyless', searchTransport: '', serpapiKey: 'k', searxngUrl: '',
+    browserPath: '', projectSkillDir: '.agent/skills', maxAgeDays: 30, editGate: { mode: 'ask', settingsPath: '' },
+  })).env);
+  assert.deepEqual(fine.illTypedKeys, []);
+});
+
+test('a config that parses to something other than an object is unreadable, not an empty config (#310)', () => {
+  for (const body of ['[1,2]', '"hello"', 'null', '42', 'true']) {
+    const { env } = envWith(body);
+    const read = readMachineConfig(env);
+    assert.equal(read.state, 'unreadable', body);
+    assert.equal(read.resolvedFrom, 'fallback-closed', body);
+    assert.equal(read.settings.role, 'unknown', body);
+    assert.equal(read.settings.failOpen, false, body);
+    assert.match(read.error, /not an object/, body);
+    assert.equal(posture(env).exitCode, 2, body);
+    // It parses, so nothing says it does not.
+    assert.match(read.problem, /^is (a JSON \w+|JSON null), not an object$/, body);
+    assert.match(collectionPolicy(env).reason, /, not an object and there is no last-good snapshot/, body);
+    assert.doesNotMatch(collectionPolicy(env).reason, /does not parse/, body);
+  }
+  assert.match(readMachineConfig(envWith('{"role": "buil').env).problem, /^does not parse \(/, 'a truncated config still does not parse');
+  // With a snapshot, it is held like any other config the kit cannot read.
+  const held = readMachineConfig(envWith('[1,2]', { snapshot: '{"role":"builder"}' }).env);
+  assert.deepEqual([held.state, held.resolvedFrom, held.settings.role], ['unreadable', 'snapshot', 'builder']);
+});
+
+// #367: RESEARCH_KIT_CONFIG was used as typed, so a relative value named a different file from
+// every folder and `rk.json/` read as absent - a declared builder became the collector default.
+test('RESEARCH_KIT_CONFIG is resolved to an absolute path, and a trailing slash still names the file (#367)', () => {
+  const probe = `import('${pathToFileURL(path.join(KIT_ROOT, 'lib', 'machine.mjs')).href}').then((m) => {
+    process.stdout.write(JSON.stringify([m.configPath({ RESEARCH_KIT_CONFIG: 'rk.json' }), m.machineRole({ RESEARCH_KIT_CONFIG: 'rk.json' })]));
+  });`;
+  const cwd = tempDir('rk-relative-config-');
+  writeText(path.join(cwd, 'rk.json'), '{"role":"builder"}');
+  // The ceiling keeps git from finding a repository above the temp folder, so this is the
+  // outside-a-repository case on every host.
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+    encoding: 'utf8', cwd, windowsHide: true, env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(cwd) },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const [resolved, role] = JSON.parse(r.stdout);
+  assert.ok(path.isAbsolute(resolved), `configPath stayed relative: ${resolved}`);
+  assert.equal(fs.realpathSync(resolved), fs.realpathSync(path.join(cwd, 'rk.json')));
+  assert.equal(role, 'builder', 'outside a repository a relative value is read against the working directory');
+  assert.ok(path.isAbsolute(configPath({ RESEARCH_KIT_CONFIG: 'rk.json' })), 'resolved, as the explicit argument is');
+
+  const { env, file } = envWith('{"role":"builder","failOpen":false}');
+  for (const tail of ['/', '\\', '//']) {
+    const slashed = readMachineConfig({ ...env, RESEARCH_KIT_CONFIG: `${file}${tail}` });
+    assert.equal(slashed.state, 'readable', `a trailing ${JSON.stringify(tail)} is not an absent config`);
+    assert.equal(slashed.source, file);
+    assert.equal(slashed.settings.role, 'builder');
+  }
+});
+
+// #367's title: from `proj` a relative value named proj/rk.json (a builder, fail-closed) and from
+// proj/research it named proj/research/rk.json, absent - a collector, fail-open. git runs the
+// hook from the top level, so the module reads the value there too, from any subdirectory.
+test('a relative RESEARCH_KIT_CONFIG names the same file from every folder of a repository (#367)', () => {
+  requireGit('a repository top level');
+  const top = tempDir('rk-relative-config-repo-');
+  const init = spawnSync('git', ['init', '-q', top], { encoding: 'utf8', windowsHide: true });
+  assert.equal(init.status, 0, init.stderr);
+  writeText(path.join(top, 'rk.json'), '{"role":"builder","failOpen":false}');
+  const probe = `import('${pathToFileURL(path.join(KIT_ROOT, 'lib', 'machine.mjs')).href}').then((m) => {
+    const env = { ...process.env, RESEARCH_KIT_CONFIG: 'rk.json' };
+    process.stdout.write(JSON.stringify([m.configPath(env), m.machineRole(env), m.posture(env).exitCode]));
+  });`;
+  const answers = [top, path.join(top, 'research'), path.join(top, 'research', 'raw')].map((cwd) => {
+    fs.mkdirSync(cwd, { recursive: true });
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { encoding: 'utf8', cwd, windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  });
+  for (const [resolved, role, exitCode] of answers) {
+    assert.equal(fs.realpathSync(resolved), fs.realpathSync(path.join(top, 'rk.json')), `read ${resolved}`);
+    assert.deepEqual([role, exitCode], ['builder', 1], 'a declared builder must not become the collector default one folder down');
+  }
+});
+
+// The retired flat `"claudeGate": "hard-block"`, renamed by hand to `"editGate": "hard-block"`,
+// has no mode to read; it resolved to `ask` with nothing named (ADR-0121, ADR-0180).
+test('an editGate that is not an object is the mode ill-typed: hard-block, and named', () => {
+  for (const value of ['hard-block', ['hard-block'], null, 1]) {
+    const read = readMachineConfig(envWith(JSON.stringify({ editGate: value })).env);
+    assert.equal(read.state, 'readable', JSON.stringify(value));
+    assert.equal(read.settings.editGate.mode, 'hard-block', JSON.stringify(value));
+    assert.deepEqual(read.illTypedKeys, ['editGate.mode'], JSON.stringify(value));
+  }
+  const withRetired = readMachineConfig(envWith(JSON.stringify({ editGate: 'off', claudeGate: 'off' })).env);
+  assert.deepEqual([withRetired.settings.editGate.mode, withRetired.retiredKeys], ['hard-block', ['claudeGate']]);
+  assert.equal(readMachineConfig(envWith(JSON.stringify({ editGate: { mode: 'off' } })).env).settings.editGate.mode, 'off');
+});
+
+// #370: every successful read rewrote the snapshot from the text it read, so a reader that
+// started before saveConfig could leave the snapshot holding the replaced role.
+test('reading an unchanged config does not rewrite its snapshot (#370)', () => {
+  const { env, file } = envWith(JSON.stringify({ role: 'builder' }));
+  readMachineConfig(env);
+  const snapshot = `${file}.last-good`;
+  const past = new Date(Date.now() - 60_000);
+  fs.utimesSync(snapshot, past, past);
+  const before = fs.statSync(snapshot).mtimeMs;
+  readMachineConfig(env);
+  readMachineConfig(env);
+  assert.equal(fs.statSync(snapshot).mtimeMs, before, 'an identical snapshot was written again');
+});
+
+test('a read whose config was replaced under it does not overwrite the newer snapshot (#370)', () => {
+  const { env, file } = envWith(JSON.stringify({ role: 'collector' }));
+  const real = fs.readFileSync;
+  fs.readFileSync = function patched(p, ...rest) {
+    const text = real.call(this, p, ...rest);
+    if (typeof p === 'string' && path.resolve(p) === path.resolve(file)) {
+      fs.readFileSync = real;
+      saveConfig({ role: 'builder' }, env); // the operator's save lands between the read and the snapshot
+    }
+    return text;
+  };
+  let read;
+  try { read = readMachineConfig(env); } finally { fs.readFileSync = real; }
+  assert.equal(read.settings.role, 'collector', 'the reader read the text from before the save');
+  assert.equal(JSON.parse(readText(`${file}.last-good`)).role, 'builder', 'the stale read replaced the newer snapshot');
+  writeText(file, '{"role":"builder"');
+  assert.equal(machineRole(env), 'builder', 'a config that later breaks is held to the role the operator saved');
 });
 
 test('posture carries where its answer came from, so no consumer has to guess', () => {

@@ -91,6 +91,15 @@ export const ROLES = Object.freeze(['collector', 'builder']);
 export const ROLE_STATES = Object.freeze([...ROLES, 'unknown']);
 export const EVIDENCE_POLICIES = Object.freeze(['pluralist', 'strict']);
 export const EDIT_GATE_MODES = Object.freeze(['ask', 'hard-block', 'off']);
+/** What each typed config key holds, for the finding that names one ill-typed (#310). The
+ *  schema lives here, so the key names do: a vendor's key named in doctor's code is the leak
+ *  NFR-3 refuses. The two transport keys' names are added where they are known (doctor). */
+export const CONFIG_KEY_HOLDS = Object.freeze({
+  transport: 'a string (a transport name)', searchTransport: 'a string (a search provider name)',
+  serpapiKey: 'a string', searxngUrl: 'a string (a URL)', browserPath: 'a string (a path)',
+  projectSkillDir: 'a string (a path)', 'editGate.settingsPath': 'a string (a path)',
+  skillRoots: 'a list of paths', maxAgeDays: 'a number',
+});
 
 // ---------------------------------------------------------------- config, in three states
 
@@ -102,8 +111,27 @@ export const EDIT_GATE_MODES = Object.freeze(['ask', 'hard-block', 'off']);
  */
 export function configPath(env = process.env, explicit = '') {
   if (explicit) return path.resolve(explicit);
-  if (env.RESEARCH_KIT_CONFIG) return env.RESEARCH_KIT_CONFIG;
+  if (env.RESEARCH_KIT_CONFIG) return resolveConfigVariable(env.RESEARCH_KIT_CONFIG);
   return path.join(agentsHome(env), 'research-kit.config.json');
+}
+
+/** The repository top level per working directory: one git call per folder, not per read. */
+const TOP_LEVELS = new Map();
+
+/**
+ * `RESEARCH_KIT_CONFIG`, resolved to the file the commit hook reads (#367). Used as typed,
+ * `rk.json` named another file one directory down and `rk.json/` read as absent, so a declared
+ * builder became the collector default. git runs the hook from the repository's top level, so a
+ * relative value is resolved there, from any subdirectory, and against the working directory
+ * outside a repository; doctor still warns about it, because another repository names another
+ * file. Trailing separators of both kinds are dropped first, as the hook drops them.
+ */
+function resolveConfigVariable(raw) {
+  const value = raw.replace(/[\\/]+$/, '') || raw;
+  if (path.isAbsolute(value)) return path.resolve(value);
+  const cwd = process.cwd();
+  if (!TOP_LEVELS.has(cwd)) TOP_LEVELS.set(cwd, repoTopLevel({ cwd }));
+  return path.resolve(TOP_LEVELS.get(cwd) ?? cwd, value);
 }
 
 function lastGoodPath(file) {
@@ -120,14 +148,27 @@ function lastGoodPath(file) {
  */
 const RESTRICTIVE = Object.freeze({ failOpen: false, evidencePolicy: 'strict', 'editGate.mode': 'hard-block' });
 
+const isString = (value) => typeof value === 'string';
+
 function shape(raw) {
-  // The posture keys an operator typed and the kit could not read as typed, in config order.
+  // The keys an operator typed and the kit could not read as typed, in the order read here.
   const illTyped = [];
   const postureKey = (name, value, valid, fallback) => {
     if (value === undefined) return fallback;
     if (valid(value)) return value;
     illTyped.push(name);
     return RESTRICTIVE[name];
+  };
+  // Every other typed key, present and not of its type, is named the same way (#310, ADR-0180)
+  // and takes its default: a path, a transport or a credential has no restrictive value, so the
+  // default is the fallback and the finding is the point. They took the default in silence,
+  // so `"transport": ["http-keyless"]` ran the probed default and doctor failed the Firecrawl
+  // CLI on a machine whose operator had chosen the keyless route.
+  const typedKey = (name, value, valid, fallback) => {
+    if (value === undefined) return fallback;
+    if (valid(value)) return value;
+    illTyped.push(name);
+    return fallback;
   };
   const settings = {
     failOpen: postureKey('failOpen', raw.failOpen, (v) => typeof v === 'boolean', DEFAULTS.failOpen),
@@ -138,10 +179,12 @@ function shape(raw) {
       // It was the one key passed through raw, and `{"editGate":{"settingsPath":42}}` reached
       // `path.dirname` in installEditGate and killed `install-hooks` - the command whose job
       // is to bind the gates - with a raw ERR_INVALID_ARG_TYPE stack (found 2026-10-02,
-      // break-test; the sibling of the 2026-10-01 `skillRoots` check).
-      settingsPath: typeof raw.editGate?.settingsPath === 'string' && raw.editGate.settingsPath.trim() !== ''
-        ? raw.editGate.settingsPath
-        : DEFAULTS.editGate.settingsPath,
+      // break-test; the sibling of the 2026-10-01 `skillRoots` check). An empty string is a
+      // string - the installer writes one - and is the anchor without being named.
+      settingsPath: (() => {
+        const value = typedKey('editGate.settingsPath', raw.editGate?.settingsPath, isString, DEFAULTS.editGate.settingsPath);
+        return value.trim() !== '' ? value : DEFAULTS.editGate.settingsPath;
+      })(),
     },
     evidencePolicy: postureKey('evidencePolicy', raw.evidencePolicy, (v) => EVIDENCE_POLICIES.includes(v), DEFAULTS.evidencePolicy),
     // A field that is PRESENT and not a known role reads as `unknown`, not as the
@@ -149,35 +192,49 @@ function shape(raw) {
     // something, and guessing which is how a builder silently becomes a role that may
     // spend credits. Absent stays `collector` (ADR-0010); unknown blocks (ADR-0023).
     role: raw.role === undefined ? DEFAULTS.role : (ROLES.includes(raw.role) ? raw.role : 'unknown'),
-    transport: typeof raw.transport === 'string' ? raw.transport : DEFAULTS.transport,
+    transport: typedKey('transport', raw.transport, isString, DEFAULTS.transport),
     // The SEARCH side is chosen separately from the fetch side (ADR-0027). Absent means
     // "the fetch provider", which is what every machine did before the split.
-    searchTransport: typeof raw.searchTransport === 'string' ? raw.searchTransport : DEFAULTS.searchTransport,
+    searchTransport: typedKey('searchTransport', raw.searchTransport, isString, DEFAULTS.searchTransport),
     // A credential, and the only one this config holds. It lives here or in the
     // environment and never in a repository (SR-1). Read but never rendered: every
     // display path goes through `serpapi.redact()`.
-    serpapiKey: typeof raw.serpapiKey === 'string' ? raw.serpapiKey : DEFAULTS.serpapiKey,
+    serpapiKey: typedKey('serpapiKey', raw.serpapiKey, isString, DEFAULTS.serpapiKey),
     // The SearXNG instance the searxng search provider asks (ADR-0104). A URL, not a secret.
-    searxngUrl: typeof raw.searxngUrl === 'string' ? raw.searxngUrl : DEFAULTS.searxngUrl,
+    searxngUrl: typedKey('searxngUrl', raw.searxngUrl, isString, DEFAULTS.searxngUrl),
     // Checked as a list of PATHS, not only as an array. Every other key here is
     // type-checked, and this one was not, so `{"skillRoots": [42]}` - or a null left in a
     // hand-edited list - reached `path.join` in skillLocations() and killed `doctor` with a
     // raw ERR_INVALID_ARG_TYPE stack and Node's version footer: the one command whose whole
     // job is to name every problem and print its fix, dead on a config typo it should have
     // named (found 2026-10-01, break-test). An entry that is not a path is dropped, which
-    // leaves the defaults in charge when nothing is left.
-    skillRoots: Array.isArray(raw.skillRoots) ? raw.skillRoots.filter((root) => typeof root === 'string' && root.trim() !== '') : [],
-    projectSkillDir: typeof raw.projectSkillDir === 'string' ? raw.projectSkillDir : '',
-    maxAgeDays: Number.isFinite(raw.maxAgeDays) ? raw.maxAgeDays : DEFAULTS.maxAgeDays,
+    // leaves the defaults in charge when nothing is left. A string (`"/one/path"`) or a list
+    // with an entry dropped is named (#310): a root written as a string was never read.
+    skillRoots: (() => {
+      const isPath = (root) => typeof root === 'string' && root.trim() !== '';
+      const list = typedKey('skillRoots', raw.skillRoots, Array.isArray, null);
+      if (!list) return [];
+      const roots = list.filter(isPath);
+      if (roots.length !== list.length) illTyped.push('skillRoots');
+      return roots;
+    })(),
+    projectSkillDir: typedKey('projectSkillDir', raw.projectSkillDir, isString, DEFAULTS.projectSkillDir),
+    maxAgeDays: typedKey('maxAgeDays', raw.maxAgeDays, Number.isFinite, DEFAULTS.maxAgeDays),
     // The browser transport's executable (ADR-0088), which its own errors tell the operator
     // to set. It was missing here until 2026-10-11, so it was never read, and every save -
     // `install-hooks --role` among them - rewrote the file without it.
-    browserPath: typeof raw.browserPath === 'string' ? raw.browserPath : DEFAULTS.browserPath,
+    browserPath: typedKey('browserPath', raw.browserPath, isString, DEFAULTS.browserPath),
   };
   // A retired key is READ before it is dropped: a rename that silently relaxes a gate is
   // the same defect as a rename that silently stops firing one.
   const retired = [];
-  if (raw.editGate?.mode !== undefined) {
+  if (raw.editGate !== undefined && (raw.editGate === null || typeof raw.editGate !== 'object' || Array.isArray(raw.editGate))) {
+    // `"editGate": "hard-block"` - the retired flat `claudeGate` renamed by hand - has no mode
+    // to read, and resolved to `ask` with nothing named. It is the mode key ill-typed one level
+    // up, so it takes that key's restrictive state and name (ADR-0121, ADR-0180).
+    settings.editGate.mode = postureKey('editGate.mode', raw.editGate, () => false, DEFAULTS.editGate.mode);
+    if (raw.claudeGate !== undefined) retired.push('claudeGate');
+  } else if (raw.editGate?.mode !== undefined) {
     // Present: taken as typed, or resolved to the restrictive mode and named (ADR-0121).
     settings.editGate.mode = postureKey('editGate.mode', raw.editGate.mode, (v) => EDIT_GATE_MODES.includes(v), DEFAULTS.editGate.mode);
     if (raw.claudeGate !== undefined) retired.push('claudeGate');
@@ -187,27 +244,68 @@ function shape(raw) {
 }
 
 /**
- * Returns `{ settings, state, source, error, retiredKeys, illTypedKeys }`. The settings alone cannot
- * say whether fail-closed was configured or is the fallback this machine adopted.
+ * Returns `{ settings, state, source, error, retiredKeys, illTypedKeys }`, and on an unreadable
+ * config `problem`, what is wrong with the file as a phrase ("does not parse (...)", "is a JSON
+ * array, not an object"). The settings alone cannot say whether fail-closed was configured or
+ * is the fallback this machine adopted.
  */
+/** What `fs.statSync` says identifies this version of the file, or null when it cannot. */
+function fileVersion(file) {
+  try {
+    const { size, mtimeMs, ctimeMs, ino } = fs.statSync(file);
+    return `${size}:${mtimeMs}:${ctimeMs}:${ino}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refresh the last-good snapshot from a config text that parsed (#370). Only when it differs
+ * from the snapshot - a read that rewrote it every time made doctor write it 14 times a run -
+ * and only when the config is still the version seen before the read. A reader that started
+ * before `saveConfig` otherwise wrote the replaced text over the snapshot the save had just
+ * written, and a config that broke later was held to the role the operator had replaced.
+ */
+function refreshSnapshot(file, text, versionBeforeRead) {
+  const snapshot = lastGoodPath(file);
+  if (readText(snapshot) === text) return;
+  if (versionBeforeRead === null || fileVersion(file) !== versionBeforeRead) return;
+  try { writeText(snapshot, text); } catch { /* snapshot is best-effort */ }
+}
+
+/** What a parsed config is when it is not an object, for the error that says so. */
+function jsonKind(value) {
+  if (Array.isArray(value)) return 'a JSON array';
+  if (value === null) return 'JSON null';
+  return `a JSON ${typeof value}`;
+}
+
 export function readMachineConfig(env = process.env) {
   const file = configPath(env);
   if (!exists(file)) {
     return { settings: shape({}).settings, state: 'absent', source: file, error: null, retiredKeys: [], illTypedKeys: [] };
   }
+  const versionBeforeRead = fileVersion(file);
   const text = readText(file);
   try {
     const raw = parseJson(text ?? '');
-    const { settings, retired, illTyped } = shape(raw && typeof raw === 'object' ? raw : {});
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      try { writeText(lastGoodPath(file), text); } catch { /* snapshot is best-effort */ }
+    // JSON that parses to something other than an object is no config the kit can read
+    // (#310). It was shaped as `{}` and reported readable - `[1,2]` or `"hello"` was a
+    // fail-open collector - while the hook's reader, which wants a `{`, failed it closed.
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw Object.assign(new Error(`${jsonKind(raw)}, not an object`), { code: 'CONFIG-NOT-OBJECT' });
     }
+    const { settings, retired, illTyped } = shape(raw);
+    refreshSnapshot(file, text, versionBeforeRead);
     return { settings, state: 'readable', source: file, error: null, retiredKeys: retired, illTypedKeys: illTyped };
   } catch (err) {
+    // What is wrong with the file, in words that are true of it: JSON that parses is not
+    // described as JSON that does not.
+    const problem = err.code === 'CONFIG-NOT-OBJECT' ? `is ${err.message}` : `does not parse (${err.message})`;
     const snapshot = readJson(lastGoodPath(file), null);
     if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
       const { settings, retired, illTyped } = shape(snapshot);
-      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: file, snapshotSource: lastGoodPath(file), error: err.message, retiredKeys: retired, illTypedKeys: illTyped };
+      return { settings, state: 'unreadable', resolvedFrom: 'snapshot', source: file, snapshotSource: lastGoodPath(file), error: err.message, problem, retiredKeys: retired, illTypedKeys: illTyped };
     }
     // Nothing to hold: fail CLOSED, and the ROLE becomes `unknown` rather than the
     // default. The old "every config was previously snapshotted" rationale does not
@@ -223,6 +321,7 @@ export function readMachineConfig(env = process.env) {
       resolvedFrom: 'fallback-closed',
       source: file,
       error: err.message,
+      problem,
       retiredKeys: [],
       illTypedKeys: [],
     };
@@ -349,7 +448,7 @@ export function collectionPolicy(env = process.env) {
       role,
       mayCollect: false,
       reason: read.resolvedFrom === 'fallback-closed'
-        ? `this machine's role cannot be established: ${read.source} does not parse (${read.error}) and there is no last-good snapshot`
+        ? `this machine's role cannot be established: ${read.source} ${read.problem} and there is no last-good snapshot`
         : `this machine's ${read.resolvedFrom === 'snapshot' ? `last-good snapshot (${read.snapshotSource})` : 'config'} names a role the kit does not know ("${readJson(read.snapshotSource ?? read.source, {})?.role ?? 'unreadable value'}")`,
       remedy: `repair the config, or declare the role: ${kitCommand('install-hooks.mjs', '--role collector|builder')}`,
     };

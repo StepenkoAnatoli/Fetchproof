@@ -210,6 +210,17 @@ test('an unreadable machine config is a blocking CRITICAL that names the resolve
   assert.match(finding.detail, /fail-CLOSED/);
 });
 
+// #310: JSON that parses to a non-object is unreadable, and doctor does not say it does not parse.
+test('a config that is JSON but not an object is CRITICAL, worded as what it is', () => {
+  const { env, configFile } = machine({});
+  writeText(configFile, '[1,2]');
+  const finding = find(machineHealth({ env, probe: READY }), 'machine-config');
+  assert.equal(finding.severity, 'critical');
+  assert.ok(finding.detail.startsWith(`${configFile} exists and is a JSON array, not an object.`), finding.detail);
+  assert.doesNotMatch(finding.detail, /does not parse/);
+  assert.match(finding.detail, /fail-CLOSED, role unknown/);
+});
+
 test('a held config names the broken file and distinguishes its snapshot from fallback', () => {
   for (const failOpen of [false, true]) {
     const { env, configFile } = machine({ config: { failOpen, role: 'builder' } });
@@ -245,6 +256,48 @@ test('an ill-typed posture key is named by doctor, with the state it resolved to
   assert.match(named[0].detail, /"failOpen".*fail-closed/);
   assert.match(named[1].detail, /"evidencePolicy".*strict/);
   assert.match(find(findings, 'machine-config').detail, /fail-closed/, 'the posture line reports the resolved posture');
+});
+
+// #310: the same finding for every key read with a type test, worded for what the key holds.
+test('a non-posture key with the wrong type is named by doctor, with what it should hold', () => {
+  const { env, configFile } = machine({});
+  writeText(configFile, JSON.stringify({ skillRoots: '/one/path', transport: ['http-keyless'] }));
+  const named = machineHealth({ env, probe: READY }).filter((f) => f.name === 'config-ill-typed');
+  assert.equal(named.length, 2, JSON.stringify(named));
+  const about = (key) => named.find((f) => f.detail.startsWith(`"${key}"`))?.detail ?? '';
+  assert.match(about('skillRoots'), /"skillRoots" is present and not a list of paths/);
+  assert.match(about('transport'), /"transport" is present and not a string \(one of firecrawl-cli, http-keyless, browser\)/);
+  assert.match(about('transport'), /default/);
+  assert.ok(named.every((f) => f.fix.includes(configFile)));
+});
+
+// #367: a relative RESEARCH_KIT_CONFIG names a different file from every folder, and git runs
+// the commit hook from the repository top level - doctor prints the file it read and warns.
+test('doctor names the absolute config file and warns about a relative RESEARCH_KIT_CONFIG', () => {
+  const cwd = tempDir('rk-doctor-relative-config-');
+  writeText(path.join(cwd, 'rk.json'), '{"role":"builder"}');
+  const probe = `import('${new URL('../lib/doctor.mjs', import.meta.url).href}').then((d) => {
+    const findings = d.machineHealth({ env: { ...process.env, RESEARCH_KIT_CONFIG: 'rk.json' }, probe: () => ({ installed: true, authenticated: true, version: '1.4.0', credits: 1 }) });
+    process.stdout.write(JSON.stringify(findings.filter((f) => f.name === 'machine-config' || f.name === 'machine-role')));
+  });`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+    cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(cwd) },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  const findings = JSON.parse(run.stdout);
+  const config = findings.filter((f) => f.name === 'machine-config');
+  assert.equal(config[0].severity, 'pass');
+  assert.ok(config[0].detail.includes(fs.realpathSync(path.join(cwd, 'rk.json'))) || config[0].detail.includes(path.join(cwd, 'rk.json')),
+    `the line names the resolved file: ${config[0].detail}`);
+  const warning = config.find((f) => f.severity === 'warn');
+  assert.ok(warning, `no warning for a relative RESEARCH_KIT_CONFIG: ${run.stdout}`);
+  assert.match(warning.detail, /RESEARCH_KIT_CONFIG="rk\.json" is relative/);
+  assert.match(warning.fix, /absolute path/);
+  assert.match(findings.find((f) => f.name === 'machine-role').detail, /builder/);
+
+  const { env } = machine({});
+  assert.equal(machineHealth({ env, probe: READY }).filter((f) => f.name === 'machine-config').length, 1,
+    'an absolute path is warned about nothing');
 });
 
 test('doctor reports the gate, the chain, the shape and the verdict from ONE snapshot', () => {

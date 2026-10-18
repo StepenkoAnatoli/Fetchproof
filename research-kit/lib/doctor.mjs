@@ -16,8 +16,8 @@ import { verifyHandoff, handoffRemedy } from './handoff.mjs';
 import { validateProject, hookExecutability, GATE_MARKERS, KIT_ROOT } from './scaffold.mjs';
 import { settingsState, deployedDrift, driftNote, handOnState } from './installer.mjs';
 import { recordOverride } from './provenance.mjs';
-import { probeFirecrawl, selectTransport } from './transport.mjs';
-import { loadConfig, configPath } from './machine.mjs';
+import { probeFirecrawl, selectTransport, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES } from './transport.mjs';
+import { loadConfig, configPath, CONFIG_KEY_HOLDS } from './machine.mjs';
 import { cliInstallSpec, cliCompatibility } from './firecrawl.mjs';
 import { nodeLine, nodeHonoursEnvProxy, proxyVariable, unusableProxy, proxySpelling, envProxyChoice } from './runtime.mjs';
 import { verifyBundle, bundleSummary } from './bundle.mjs';
@@ -51,10 +51,18 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
       ? `Posture (${post.failOpen ? 'fail-open' : 'fail-CLOSED'}) and role (${read.settings.role}) held from ${read.snapshotSource}, the last config that parsed.`
       : 'There is no last-good snapshot: fail-CLOSED, role unknown.';
     out.push(f('critical', 'machine-config',
-      `${read.source} exists and does not parse (${read.error}). ${resolution}`,
+      `${read.source} exists and ${read.problem}. ${resolution}`,
       'repair or delete the config file; the kit keeps a <config>.last-good snapshot beside it'));
   } else {
     out.push(f('pass', 'machine-config', `${read.state} (${read.source}); posture: ${post.failOpen ? 'fail-open' : 'fail-closed'}`));
+  }
+  // A relative value is read against the repository's top level, where git runs the commit
+  // hook, or the working directory outside one (#367): every folder of one repository names the
+  // file above, and another repository, or a folder outside any, names another file.
+  if (env.RESEARCH_KIT_CONFIG && !path.isAbsolute(env.RESEARCH_KIT_CONFIG)) {
+    out.push(f('warn', 'machine-config',
+      `RESEARCH_KIT_CONFIG="${env.RESEARCH_KIT_CONFIG}" is relative: here it names ${read.source}, read against the repository's top level (the working directory outside one), so another repository or folder names another file`,
+      'set RESEARCH_KIT_CONFIG to an absolute path'));
   }
 
   for (const key of read.retiredKeys) {
@@ -62,11 +70,19 @@ export function machineHealth({ env = process.env, gitPaths = {}, probe = probeF
       `"${key}" is a retired config key, read into ${RETIRED_CONFIG_KEYS[key] ?? 'the current shape'}; the next kit write drops it`));
   }
   // A posture key the operator typed and the kit could not read as typed resolved to its
-  // restrictive state (ADR-0121); the one thing doctor owes is WHICH key, and to what.
+  // restrictive state (ADR-0121); the one thing doctor owes is WHICH key, and to what. Every
+  // other typed key resolved to its default (#310), and is named in what it should hold.
   const resolvedTo = { failOpen: 'fail-closed', evidencePolicy: 'strict', 'editGate.mode': 'hard-block' };
+  const postureReads = { failOpen: 'true or false, unquoted', evidencePolicy: 'pluralist or strict', 'editGate.mode': 'ask, hard-block or off' };
+  const holds = {
+    ...CONFIG_KEY_HOLDS,
+    transport: `a string (one of ${TRANSPORT_NAMES.join(', ')})`,
+    searchTransport: `a string (one of ${SEARCH_PROVIDER_NAMES.join(', ')})`,
+  };
   for (const key of read.illTypedKeys ?? []) {
-    out.push(f('warn', 'config-ill-typed',
-      `"${key}" is present and not a value the kit reads (${key === 'failOpen' ? 'true or false, unquoted' : key === 'evidencePolicy' ? 'pluralist or strict' : 'ask, hard-block or off'}) - resolved to ${resolvedTo[key] ?? 'its restrictive state'} until it is fixed`,
+    out.push(f('warn', 'config-ill-typed', postureReads[key]
+      ? `"${key}" is present and not a value the kit reads (${postureReads[key]}) - resolved to ${resolvedTo[key]} until it is fixed`
+      : `"${key}" is present and not ${holds[key] ?? 'of its type'} - ${key === 'skillRoots' ? 'only the paths in it are read, and the default roots when none is left,' : 'the default is used'} until it is fixed`,
       `fix "${key}" in ${read.source}`));
   }
   for (const note of retiredEnvNotes(env)) {

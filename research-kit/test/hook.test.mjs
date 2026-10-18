@@ -5,6 +5,7 @@
 // with a real staged file, and assert the process exit status.
 
 import { spawnSync, execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, KIT_ROOT, requireCapability, requireGit, fixtureCommitArgs, fixtureInitArgs } from './harness.mjs';
 import { PATHS, resolve, writeText, readText } from '../lib/core.mjs';
 import { posture } from '../lib/machine.mjs';
@@ -339,6 +340,11 @@ const POSTURE_ROWS = [
   { name: 'ill-typed, quoted false', config: '{"failOpen": "false"}', snapshot: null, exit: 1 },
   { name: 'ill-typed, quoted true', config: '{"failOpen": "true"}', snapshot: null, exit: 1 },
   { name: 'unreadable, snapshot ill-typed', config: '{"failOpen": fal', snapshot: '{"failOpen": "false"}', exit: 1 },
+  // #310: JSON that parses to something other than an object is not a config. The sh reader
+  // always said so (it does not begin with `{`); the module read it as an empty, fail-open one.
+  { name: 'unreadable, a JSON array', config: '[1,2]', snapshot: null, exit: 2 },
+  { name: 'unreadable, a JSON string', config: '"hello"', snapshot: null, exit: 2 },
+  { name: 'unreadable array, snapshot fail-closed', config: '[1,2]', snapshot: '{"failOpen": false}', exit: 1 },
 ];
 
 for (const row of POSTURE_ROWS) {
@@ -361,6 +367,50 @@ for (const row of POSTURE_ROWS) {
       `the hook's reader disagreed for "${row.name}": ${shell.stderr}`);
   });
 }
+
+// #367: lib/machine.mjs resolves RESEARCH_KIT_CONFIG, which drops a trailing slash; the hook
+// tested `rk.json/` as typed, found no file and answered fail-open for a fail-closed machine.
+// A trailing backslash is Windows' spelling of the same mistake (fresh-eyes review, 2026-10-18).
+for (const tail of ['/', '\\']) {
+  test(`posture agreement (trailing ${JSON.stringify(tail)} on RESEARCH_KIT_CONFIG): the hook and the module read one file`, () => {
+    const dir = tempDir('research-kit-posture-slash-');
+    const config = path.join(dir, 'research-kit.config.json');
+    writeText(config, '{"failOpen": false}');
+    assert.equal(posture({ ...process.env, RESEARCH_KIT_CONFIG: `${config}${tail}` }).exitCode, 1);
+
+    requireCapability(SH, 'SHELL-NOT-FOUND', `no POSIX sh on this host (tried: ${SH_TRIED.join(', ')})`);
+    const script = `${readText(HOOK).split('# --- can we run the gate')[0]}\nposture_without_kit "$CONFIG"\nexit $?\n`;
+    const scriptFile = path.join(dir, 'posture.sh');
+    writeText(scriptFile, script);
+    const shell = spawnSync(SH, [scriptFile], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, RESEARCH_KIT_CONFIG: `${config}${tail}` } });
+    assert.equal(shell.status, 1, `the hook's reader read another file: ${shell.stderr}`);
+  });
+}
+
+// #367: git runs the hook from the top level, where a relative value names top/rk.json; the module
+// read it against its own working directory, so gate.mjs or doctor from research/ found no file
+// and answered fail-open for a fail-closed machine.
+test('posture agreement (relative RESEARCH_KIT_CONFIG): the module from a subdirectory reads the file the hook reads', () => {
+  requireGit('a repository top level');
+  const top = tempDir('research-kit-posture-relative-');
+  const init = spawnSync('git', ['init', '-q', top], { encoding: 'utf8', windowsHide: true });
+  assert.equal(init.status, 0, init.stderr);
+  writeText(path.join(top, 'rk.json'), '{"failOpen": false}');
+  const sub = path.join(top, 'research');
+  fs.mkdirSync(sub, { recursive: true });
+  const probe = `import('${pathToFileURL(path.join(KIT_ROOT, 'lib', 'machine.mjs')).href}').then((m) => process.stdout.write(String(m.posture(process.env).exitCode)));`;
+  const fromModule = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+    cwd: sub, encoding: 'utf8', windowsHide: true, env: { ...process.env, RESEARCH_KIT_CONFIG: 'rk.json' },
+  });
+  assert.equal(fromModule.status, 0, fromModule.stderr);
+  assert.equal(fromModule.stdout, '1', 'lib/machine.mjs from research/ did not read the top-level config');
+
+  requireCapability(SH, 'SHELL-NOT-FOUND', `no POSIX sh on this host (tried: ${SH_TRIED.join(', ')})`);
+  const scriptFile = path.join(tempDir('research-kit-posture-relative-sh-'), 'posture.sh');
+  writeText(scriptFile, `${readText(HOOK).split('# --- can we run the gate')[0]}\nposture_without_kit "$CONFIG"\nexit $?\n`);
+  const shell = spawnSync(SH, [scriptFile], { cwd: top, encoding: 'utf8', timeout: 30_000, env: { ...process.env, RESEARCH_KIT_CONFIG: 'rk.json' } });
+  assert.equal(shell.status, 1, `the hook's reader, run from the top level as git runs it, disagreed: ${shell.stderr}`);
+});
 
 test('the staged path list is DATA, not arguments: argv stays bounded', () => {
   const many = Array.from({ length: 5000 }, (_, i) => `src/file-${i}.js`);

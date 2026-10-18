@@ -332,6 +332,23 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- A machine-config key present with the wrong type - a list for `transport`, a string for
+  `skillRoots`, a number for `serpapiKey`, any other typed key - still takes its default, and
+  is now named by doctor's `config-ill-typed` line with what it should hold (ADR-0180). An
+  `editGate` that is not an object (`"editGate": "hard-block"`) is the mode ill-typed: named,
+  and resolved to `hard-block` rather than `ask`. A config that parses to an array, a string or
+  another non-object is unreadable (held from the snapshot, or fail-closed with role unknown)
+  instead of an empty config reported readable, and doctor says it is not a JSON object rather
+  than that it does not parse (#310).
+- A relative `RESEARCH_KIT_CONFIG` is resolved against the repository's top level, where git
+  runs the commit hook, or the working directory outside a repository, so every folder of a
+  repository reads one file: a declared builder no longer becomes the collector default one
+  directory down. A trailing `/` or `\` no longer reads as an absent config, in the module or
+  the hook. Doctor's `machine-config` line names the resolved file and warns about a relative
+  value (#367).
+- A config read rewrites `.last-good` only when the snapshot differs and the config still has
+  the size, mtime, ctime and inode seen before the read, so a reader that started before `saveConfig`
+  no longer replaces the saved role in the snapshot; unchanged reads no longer write (#370).
 
 ## 0.9.5 — 2026-10-04
 
