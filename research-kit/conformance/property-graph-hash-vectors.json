@@ -4,7 +4,8 @@
   "generatorProfile": "researcher-property-replay-v1",
   "sourceCases": {
     "PV-H-01": {"family":"canonical-hashing","seed":3242852353,"iteration":17},
-    "G-17": {"family":"descendant-invalidation","seed":3242852355,"iteration":17}
+    "G-17": {"family":"descendant-invalidation","seed":3242852355,"iteration":17,"semantics":"computeDescendantInvalidation: a pointer's closure is its own targetHash plus the transitive predecessor closure through every pointer owning each hash; a pointer is revoked when any root is in its closure; identity is (package, generation, recordId), so pointers may share a targetHash; an empty revocation set is descendants.none"},
+    "G-17-SHARED-TARGET": {"derivedFrom":"G-17","construction":"G-17 plus a copy of P28-17 under recordId P28-17-dup, sharing its targetHash"}
   },
   "vectors": [
     {
@@ -51,6 +52,34 @@
       "invalidationRoots": ["da7941c840d997b9a19ab248c0e60a0dc2ca5bbe2e716f36f5b24972c71eda50"],
       "expectedStatus": "FAIL", "expectedPrimaryReason": "graph.duplicate-record",
       "expectedAffectedPointers": [], "expectedRevocationRecordIds": []
+    },
+    {
+      "vectorId": "PV-G-04", "kind": "graph-invalidation", "graphId": "G-17",
+      "invalidationRoots": ["131a811dea5698ef4e892c676228fe52df23d5d31f69f930a808a4b1b40879ab"],
+      "expectedStatus": "PASS", "expectedPrimaryReason": "descendants.invalidated",
+      "expectedAffectedPointers": ["P30-17", "P31-17", "P32-17", "P33-17"],
+      "expectedRevocationRecordIds": ["P30-17", "P31-17", "P32-17", "P33-17"]
+    },
+    {
+      "vectorId": "PV-G-05", "kind": "graph-invalidation", "graphId": "G-17",
+      "invalidationRoots": ["33c27899857baf4e640895e33ec3fa5297d7fbdf6c94f80f92c26fbc90f30b0a"],
+      "expectedStatus": "PASS", "expectedPrimaryReason": "descendants.invalidated",
+      "expectedAffectedPointers": ["P33-17"],
+      "expectedRevocationRecordIds": ["P33-17"]
+    },
+    {
+      "vectorId": "PV-G-06", "kind": "graph-invalidation", "graphId": "G-17-SHARED-TARGET",
+      "invalidationRoots": ["da7941c840d997b9a19ab248c0e60a0dc2ca5bbe2e716f36f5b24972c71eda50"],
+      "expectedStatus": "PASS", "expectedPrimaryReason": "descendants.invalidated",
+      "expectedAffectedPointers": ["P28-17", "P28-17-dup", "P29A-17", "P30-17", "P31-17", "P32-17", "P33-17"],
+      "expectedRevocationRecordIds": ["P28-17", "P28-17-dup", "P29A-17", "P30-17", "P31-17", "P32-17", "P33-17"]
+    },
+    {
+      "vectorId": "PV-G-07", "kind": "graph-invalidation", "graphId": "G-17",
+      "invalidationRoots": [],
+      "expectedStatus": "PASS", "expectedPrimaryReason": "descendants.none",
+      "expectedAffectedPointers": [],
+      "expectedRevocationRecordIds": []
     }
   ],
   "graphs": {
@@ -61,6 +90,15 @@
       {"package":"R31","generation":1,"recordId":"P31-17","targetHash":"52ab42726169b5ff013136835ca0bd996083573a9ab07c73ed01ff19511933ca","predecessorHashes":["131a811dea5698ef4e892c676228fe52df23d5d31f69f930a808a4b1b40879ab"]},
       {"package":"R32","generation":1,"recordId":"P32-17","targetHash":"7e4816363a014111935edafb12d52bcf0c52641b11cdbc3e703437193253fb9a","predecessorHashes":["52ab42726169b5ff013136835ca0bd996083573a9ab07c73ed01ff19511933ca"]},
       {"package":"R33","generation":1,"recordId":"P33-17","targetHash":"33c27899857baf4e640895e33ec3fa5297d7fbdf6c94f80f92c26fbc90f30b0a","predecessorHashes":["7e4816363a014111935edafb12d52bcf0c52641b11cdbc3e703437193253fb9a"]}
+    ],
+    "G-17-SHARED-TARGET": [
+      {"package":"R28","generation":1,"recordId":"P28-17","targetHash":"a7b4bdd6788151a7ff6983b1c8db39f2244a99d2e7046f6493d82b8a2a9428a3","predecessorHashes":["789fee79540db31a77f8fdc64e197b6378b545aadd56edc57e5f2c6a24e44c8d","da7941c840d997b9a19ab248c0e60a0dc2ca5bbe2e716f36f5b24972c71eda50"]},
+      {"package":"R29","generation":1,"recordId":"P29A-17","targetHash":"3c259607391154a2c5689fe092428685a3b886310c70cdcaa959358f2796fac3","predecessorHashes":["a7b4bdd6788151a7ff6983b1c8db39f2244a99d2e7046f6493d82b8a2a9428a3"]},
+      {"package":"R30","generation":1,"recordId":"P30-17","targetHash":"131a811dea5698ef4e892c676228fe52df23d5d31f69f930a808a4b1b40879ab","predecessorHashes":["3c259607391154a2c5689fe092428685a3b886310c70cdcaa959358f2796fac3"]},
+      {"package":"R31","generation":1,"recordId":"P31-17","targetHash":"52ab42726169b5ff013136835ca0bd996083573a9ab07c73ed01ff19511933ca","predecessorHashes":["131a811dea5698ef4e892c676228fe52df23d5d31f69f930a808a4b1b40879ab"]},
+      {"package":"R32","generation":1,"recordId":"P32-17","targetHash":"7e4816363a014111935edafb12d52bcf0c52641b11cdbc3e703437193253fb9a","predecessorHashes":["52ab42726169b5ff013136835ca0bd996083573a9ab07c73ed01ff19511933ca"]},
+      {"package":"R33","generation":1,"recordId":"P33-17","targetHash":"33c27899857baf4e640895e33ec3fa5297d7fbdf6c94f80f92c26fbc90f30b0a","predecessorHashes":["7e4816363a014111935edafb12d52bcf0c52641b11cdbc3e703437193253fb9a"]},
+      {"package":"R28","generation":1,"recordId":"P28-17-dup","targetHash":"a7b4bdd6788151a7ff6983b1c8db39f2244a99d2e7046f6493d82b8a2a9428a3","predecessorHashes":["789fee79540db31a77f8fdc64e197b6378b545aadd56edc57e5f2c6a24e44c8d","da7941c840d997b9a19ab248c0e60a0dc2ca5bbe2e716f36f5b24972c71eda50"]}
     ]
   }
 }

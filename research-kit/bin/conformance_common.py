@@ -25,6 +25,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -67,6 +69,14 @@ def js_number(value: float | int) -> str:
     if isinstance(value, bool):                      # bool is an int subclass in Python
         raise ConformanceError("boolean is not a number")
     if isinstance(value, int):
+        # Outside +/-2**53 JavaScript holds the nearest double, and prints THAT:
+        # 9007199254740993 is "9007199254740992" there. canonical_json already rounds so;
+        # this did not, and two generations Node calls equal were two here (#339 review).
+        if not -(2**53) < value < 2**53:
+            try:
+                return js_number(float(value))
+            except OverflowError:
+                raise ConformanceError("non-finite number") from None
         return str(value)
     if value != value or value in (float("inf"), float("-inf")):
         return "null"                                # JSON.stringify(NaN) === "null"
@@ -230,11 +240,22 @@ def parse_js_integer(digits: str) -> int:
     return int(digits)
 
 
+def parse_js_float(literal: str) -> float:
+    """A fraction or exponent literal as JavaScript's reader takes it: `1e400` is Infinity
+    there and refused as "non-finite number". `float()` returns inf without complaint, and
+    the inf was then type-checked as a number where Node had refused the parse (#338)."""
+    value = float(literal)
+    if math.isinf(value):
+        raise ConformanceError("non-finite number")
+    return value
+
+
 def parse_json_no_duplicates(text: str) -> Any:
     if json_depth_exceeds(text):
         raise ConformanceError(f"JSON nested deeper than {MAX_JSON_DEPTH} levels")
     return json.loads(
         text, object_pairs_hook=reject_duplicate_pairs, parse_constant=reject_constant, parse_int=parse_js_integer,
+        parse_float=parse_js_float,
     )
 
 
@@ -283,6 +304,22 @@ def require_unique_vector_ids(vectors: Any, error: Callable[[str], Exception] = 
 
 # --------------------------------------------------------------------------- output
 
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
 def report_json(report: dict[str, Any]) -> str:
-    """Two-space indented, trailing newline -- byte-identical to the Node runners."""
-    return json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    """Two-space indented, trailing newline -- byte-identical to the Node runners.
+
+    A lone surrogate is written as its `\\uXXXX` escape, as JSON.stringify writes it; left
+    raw, it could not be encoded to any output at all."""
+    text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    return _LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+
+def write_report(report: dict[str, Any]) -> None:
+    """The report on stdout as UTF-8 bytes with `\\n` line ends, as Node writes it. Through the
+    text layer a Windows pipe took the locale's code page, and a character outside cp1252 raised
+    UnicodeEncodeError - a traceback where Node reported - and every line end became CRLF."""
+    sys.stdout.flush()
+    sys.stdout.buffer.write(report_json(report).encode("utf-8"))
+    sys.stdout.flush()

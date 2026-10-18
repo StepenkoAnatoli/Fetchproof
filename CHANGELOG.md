@@ -332,6 +332,23 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- The Python FI sidecar conformance runner answers as the Node validator does on schema
+  patterns and numbers: `$` matches only at the end of the value (a hash with a trailing
+  newline is SCHEMA-PATTERN), `.` stops at U+2028/U+2029, `\d` matches only 0-9, `maxLength`
+  counts UTF-16 code units, a one-item `uniqueItems` array is not canonicalised, `1e400` is a
+  JSON-PARSE "non-finite number" in every Python runner, and `0.0` is an integer. A patch path
+  takes only a canonical ASCII array index (not `00` or `\u0660`), and a refused patch path is
+  VECTOR-PACKET, as in Node, rather than JSON-PARSE. The Python
+  runners write `--json` reports as UTF-8, so a Windows cp1252 pipe no longer turns a non-Latin-1
+  character into an error. The shipped FI packet pins the trailing newline, the digit, `1e400`
+  and `0.0` (#338).
+- The Python property-vector runner computes descendant invalidation by Node's rule: a
+  pointer's closure includes its own targetHash, identity is (package, generation,
+  recordId) so pointers may share a target, an empty set is `descendants.none`, R26/R27
+  rank before R28, and an integer past 2**53 is the double Node holds. Node's
+  `computeDescendantInvalidation` ranks a recordId `__proto__` and a package `constructor`
+  like any other name. The shipped packet records the rule in `sourceCases` and pins an
+  own-target root, a leaf's own target, a shared target and no roots (#339).
 
 ## 0.9.5 — 2026-10-04
 

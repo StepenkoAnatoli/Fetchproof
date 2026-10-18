@@ -156,13 +156,13 @@ export function computeDescendantInvalidation({ pointers = [], invalidationRoots
   const identities = new Set();
   const byTarget = new Map();
   const packageRank = { R26: 26, R27: 27, R28: 28, R29: 29, R30: 30, R31: 31, R32: 32, R33: 33 };
-  const rank = {};
+  const rank = Object.create(null); // a recordId "__proto__" is a key here, not the prototype
   for (const pointer of pointers) {
     if (!pointer || typeof pointer !== 'object' || typeof pointer.recordId !== 'string' || typeof pointer.package !== 'string' || !Number.isInteger(pointer.generation) || typeof pointer.targetHash !== 'string' || !Array.isArray(pointer.predecessorHashes)) return fail('graph.input', 'pointer shape is incomplete');
     const identity = `${pointer.package}\0${pointer.generation}\0${pointer.recordId}`;
     if (identities.has(identity)) return fail('graph.duplicate-record', `duplicate pointer identity ${pointer.recordId}`);
     identities.add(identity);
-    rank[pointer.recordId] = packageRank[pointer.package] ?? Number.MAX_SAFE_INTEGER;
+    rank[pointer.recordId] = Object.hasOwn(packageRank, pointer.package) ? packageRank[pointer.package] : Number.MAX_SAFE_INTEGER;
     const matches = byTarget.get(pointer.targetHash) ?? [];
     matches.push(pointer);
     byTarget.set(pointer.targetHash, matches);

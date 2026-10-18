@@ -8,6 +8,7 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 import argparse
 import copy
+import functools
 import hashlib
 import json
 import re
@@ -27,6 +28,7 @@ from conformance_common import (
     parse_json_no_duplicates,
     read_packet,
     report_json,
+    write_report,
     require_unique_vector_ids,
 )
 
@@ -53,6 +55,55 @@ def canonical(value):
 
 def same(left: Any, right: Any) -> bool:
     return canonical(left) == canonical(right)
+
+
+@functools.lru_cache(maxsize=None)
+def js_pattern(pattern: str) -> re.Pattern[str]:
+    r"""A schema `pattern` compiled to match as `new RegExp(pattern).test` does in the Node
+    validator (lib/release/schema.mjs), which is the answer this runner must reproduce.
+
+    Three Python defaults differ, and each gave a value another answer than Node's (#338):
+      `$`   Python's also matches BEFORE a trailing newline; JavaScript's, without the `m`
+            flag, only at the end. So every unescaped `$` outside a class becomes `\Z`.
+      `.`   Python's stops only at `\n`; JavaScript's, without the `s` flag, at all four
+            line terminators. So every unescaped `.` outside a class becomes
+            `[^\n\r\u2028\u2029]` - else "x\u2028/../a" was a path escape to Python, whose
+            `(?!.*(?:^|/)\.\.)` lookahead read across the U+2028, and a valid path to Node.
+      `\d`  Python's matches any Unicode digit; JavaScript's, without the `u` flag, 0-9.
+            `re.ASCII` narrows it, and `\w` and `\b` with it, to JavaScript's meaning.
+            It would also narrow `\s`, which JavaScript keeps Unicode-wide; no shipped
+            schema uses `\s`, and one that does needs its own translation here.
+    JavaScript also matches UTF-16 code units where Python matches code points. That changes
+    only a counted repetition of something an astral character satisfies (`.{3}`), and no
+    shipped pattern has one.
+    """
+    translated: list[str] = []
+    in_class = False
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            translated.append(pattern[index:index + 2])
+            index += 2
+            continue
+        if in_class:
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+        elif char == "$":
+            char = r"\Z"
+        elif char == ".":
+            char = r"[^\n\r\u2028\u2029]"
+        translated.append(char)
+        index += 1
+    return re.compile("".join(translated), re.ASCII)
+
+
+def pattern_matches(pattern: str, value: str) -> bool:
+    try:
+        return js_pattern(pattern).search(value) is not None
+    except re.error:
+        return False                                 # Node: "schema pattern is invalid"
 
 
 def resolve(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any] | None:
@@ -97,7 +148,8 @@ def check(value: Any, schema: dict[str, Any], root: dict[str, Any], errors: list
             (name == "null" and value is None)
             or (name == "array" and isinstance(value, list))
             or (name == "object" and isinstance(value, dict))
-            or (name == "integer" and isinstance(value, int) and not isinstance(value, bool))
+            # JavaScript has one number type, so `0.0` IS `0` to Node's Number.isInteger.
+            or (name == "integer" and not isinstance(value, bool) and (isinstance(value, int) or (isinstance(value, float) and value.is_integer())))
             or (name == "number" and isinstance(value, (int, float)) and not isinstance(value, bool))
             or (name == "string" and isinstance(value, str))
             or (name == "boolean" and isinstance(value, bool))
@@ -125,7 +177,9 @@ def check(value: Any, schema: dict[str, Any], root: dict[str, Any], errors: list
             errors.append("SCHEMA-MIN-ITEMS")
         if "maxItems" in schema and len(value) > schema["maxItems"]:
             errors.append("SCHEMA-MAX-ITEMS")
-        if schema.get("uniqueItems"):
+        # Node canonicalises items only to compare a PAIR, so an array of one is never
+        # canonicalised there: a lone surrogate in it passed in Node and was refused here.
+        if schema.get("uniqueItems") and len(value) > 1:
             seen: set[str] = set()
             for item in value:
                 encoded = canonical(item)
@@ -133,11 +187,13 @@ def check(value: Any, schema: dict[str, Any], root: dict[str, Any], errors: list
                     errors.append("SCHEMA-UNIQUE")
                 seen.add(encoded)
     if isinstance(value, str):
-        if len(value) < schema.get("minLength", 0):
+        # Node's `.length` counts UTF-16 code units, so an astral character is two; `len` said one.
+        length = len(value.encode("utf-16-le", "surrogatepass")) // 2
+        if length < schema.get("minLength", 0):
             errors.append("SCHEMA-MIN-LENGTH")
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
+        if "maxLength" in schema and length > schema["maxLength"]:
             errors.append("SCHEMA-MAX-LENGTH")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not pattern_matches(schema["pattern"], value):
             errors.append("SCHEMA-PATTERN")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
@@ -148,6 +204,13 @@ def pointer_parts(pointer: str) -> list[str]:
     if not isinstance(pointer, str) or not pointer.startswith("/") or pointer == "/":
         raise PacketError("patch path must be a non-root JSON pointer")
     return [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
+
+
+def is_index(part: str) -> bool:
+    r"""A canonical array index, as Node's patch reads one (`/^(?:0|[1-9]\d*)$/`, ASCII `\d`).
+    `str.isdigit` also took "00" and non-ASCII digits - `int("\u0660")` is 0 - so a path Node
+    refuses as VECTOR-PACKET was patched here (#338 review)."""
+    return re.fullmatch(r"0|[1-9][0-9]*", part) is not None
 
 
 def patch(base: Any, patches: list[dict[str, Any]]) -> Any:
@@ -161,7 +224,7 @@ def patch(base: Any, patches: list[dict[str, Any]]) -> Any:
         parent = value
         for part in parts[:-1]:
             if isinstance(parent, list):
-                if not part.isdigit() or int(part) >= len(parent):
+                if not is_index(part) or int(part) >= len(parent):
                     raise PacketError(f"patch path does not exist: {operation['path']}")
                 parent = parent[int(part)]
             elif isinstance(parent, dict) and part in parent:
@@ -171,14 +234,14 @@ def patch(base: Any, patches: list[dict[str, Any]]) -> Any:
         key = parts[-1]
         if operation["op"] == "set":
             if isinstance(parent, list):
-                if not key.isdigit() or int(key) >= len(parent):
+                if not is_index(key) or int(key) >= len(parent):
                     raise PacketError(f"patch path does not exist: {operation['path']}")
                 parent[int(key)] = copy.deepcopy(operation.get("value"))
             elif isinstance(parent, dict):
                 parent[key] = copy.deepcopy(operation.get("value"))
             else:
                 raise PacketError(f"patch path does not exist: {operation['path']}")
-        elif isinstance(parent, list) and key.isdigit() and int(key) < len(parent):
+        elif isinstance(parent, list) and is_index(key) and int(key) < len(parent):
             parent.pop(int(key))
         elif isinstance(parent, dict) and key in parent:
             del parent[key]
@@ -224,10 +287,12 @@ def run_vector(vector: dict[str, Any], documents: dict[str, Any], schemas: dict[
         errors: list[str] = []
         check(value, schemas[vector["target"]], schemas[vector["target"]], errors)
         codes = list(dict.fromkeys(errors))
-    except ValueError as error:
-        codes = ["JSON-DUPLICATE-KEY" if "duplicate object key" in str(error) else "JSON-PARSE"]
+    # PacketError first: it IS a ValueError, so after that clause it was unreachable and every
+    # refused patch path read JSON-PARSE, where Node says VECTOR-PACKET (#338 review).
     except PacketError:
         codes = ["VECTOR-PACKET"]
+    except ValueError as error:
+        codes = ["JSON-DUPLICATE-KEY" if "duplicate object key" in str(error) else "JSON-PARSE"]
     observed = primary(codes)
     return {"vectorId": vector["vectorId"], "target": vector["target"], "expectedCode": vector["expectedCode"], "observedCode": observed, "result": "PASS" if observed == vector["expectedCode"] else "FAIL"}
 
@@ -254,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run(load_packet(parsed.vectors))
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"{report['status']} ({report['vectorCount']} vector(s))")
             for row in report["vectors"]:
@@ -263,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, PacketError, ValueError, json.JSONDecodeError, RecursionError) as error:
         report = {"validatorVersion": VERSION, "profile": PROFILE, "vectorCount": 0, "status": "FAIL", "vectors": [], "errors": [{"code": "VECTOR-PACKET", "message": str(error)}]}
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
