@@ -421,6 +421,20 @@ export function writeBytes(p, data, encoding = null) {
 }
 
 /**
+ * Keep what a `--force` rewrite is about to replace: `<rel>.bak-<date>` beside it, then
+ * `-2`, `-3` while that name is taken, so two forced rewrites on one day keep both.
+ * Returns the backup's project-relative path. `brief --force` has kept the brief it
+ * replaced since 2026-09-27; `new-project --force` and `decompose --force` wrote templates
+ * over a collected corpus and a judged map and kept nothing (#301), so the three share this.
+ */
+export function keepBackup(root, rel, text, date = today()) {
+  let backup = `${rel}.bak-${date}`;
+  for (let n = 2; exists(resolve(root, backup)); n += 1) backup = `${rel}.bak-${date}-${n}`;
+  writeText(resolve(root, backup), text);
+  return backup;
+}
+
+/**
  * A stdout whose reader has gone away is not a failure of the command.
  *
  * `node bin/selftest.mjs | head -1` - or `| grep -m1`, or a pager somebody quits - closes
@@ -793,12 +807,6 @@ export function titleFromUrl(url) {
   } catch {
     return 'page';
   }
-}
-
-export function truncate(text, max) {
-  const one = String(text ?? '').replace(/\s+/g, ' ').trim();
-  if (one.length <= max) return one;
-  return `${one.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
 export function uniq(items) {

@@ -14,7 +14,7 @@ directory and are treated as ADR-equivalent.
 |---|---|
 | [0001](0001-canonical-project-shape.md) | The canonical project shape has one owner (`lib/scaffold.mjs`), and a deployed hook's executable bit is part of its contract |
 | [0002](0002-one-reader-for-the-fail-open-posture.md) | Machine-scoped state lives in `lib/machine.mjs`; the fail-open posture has one reader, plus one pinned copy in shell for the missing-kit case. **Refined by [0020](0020-five-trusted-boundaries-that-did-not-hold.md)** on 2026-09-15: its "a broken config never blocks work" holds for a config that was never written and not for one that exists and cannot be parsed — that is the third state, which holds the last config that parsed and otherwise fails closed. ADR-0002 itself is left unedited, in its own words |
-| [0003](0003-research-corpus-single-owner.md) | The research corpus has one reader and one writer (`lib/corpus.mjs`); malformation is reported, never absorbed |
+| [0003](0003-research-corpus-single-owner.md) | The research corpus has one reader and one writer (`lib/corpus.mjs`); malformation is reported, never absorbed. Its `loadCorpus` was removed 2026-10-17 (#297) - nothing called it; callers pair `readCorpus` with `verifyLedger` (the ADR is a bundled record and stays byte-identical) |
 | [0004](0004-contract-checks-registry.md) | The contract checks are an ordered registry (`lib/checks.mjs`); the verdict stays one function |
 | [0005](0005-firecrawl-adapter.md) | All vendor knowledge lives in one Firecrawl adapter (`lib/firecrawl.mjs`) with an injectable `exec` |
 | [0006](0006-bind-the-skill-in-the-project.md) | The Cowork binding is the project's own `.claude/skills/` (`install.mjs --into`); the `~/.agents/skills` mirror is gone |

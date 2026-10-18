@@ -86,9 +86,8 @@ export const DEFAULTS = Object.freeze({
   browserPath: '',
 });
 
+/** The two roles an operator may declare; `unknown` is a state the kit resolves to (ADR-0023), never one of them. */
 export const ROLES = Object.freeze(['collector', 'builder']);
-/** `unknown` is a STATE the kit resolves to, never a role an operator may declare. */
-export const ROLE_STATES = Object.freeze([...ROLES, 'unknown']);
 export const EVIDENCE_POLICIES = Object.freeze(['pluralist', 'strict']);
 export const EDIT_GATE_MODES = Object.freeze(['ask', 'hard-block', 'off']);
 

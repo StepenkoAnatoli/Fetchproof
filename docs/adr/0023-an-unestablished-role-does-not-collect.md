@@ -1,7 +1,7 @@
 # ADR-0023 — A role the kit cannot establish does not collect
 
 - **Date:** 2026-09-17
-- **Status:** accepted
+- **Status:** accepted; the `ROLE_STATES` constant was removed 2026-10-17 (#297) - nothing read it; `unknown` stays a state `machineRole()` resolves to, never a declarable role
 - **Area:** machine policy, collection
 - **Refines:** [ADR-0010](0010-machine-roles.md) — one clause of it, named below. ADR-0010 is left unedited, in its own words.
 

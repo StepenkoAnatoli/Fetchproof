@@ -686,14 +686,6 @@ export function readCorpus(root) {
   };
 }
 
-/** `readCorpus` plus the chain verdict, for callers that need the whole answer. */
-export async function loadCorpus(root) {
-  const corpus = readCorpus(root);
-  const { verifyLedger } = await import('./provenance.mjs');
-  corpus.chain = verifyLedger(root, { corpus });
-  return corpus;
-}
-
 // ---------------------------------------------------------------- joins (ADR-0015)
 
 function normalizeRawCell(cell) {

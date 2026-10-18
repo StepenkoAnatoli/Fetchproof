@@ -60,7 +60,3 @@ export function renderGateWarnings(verdict) {
 export function heading(text) {
   return `\n${text}\n${'-'.repeat(text.length)}`;
 }
-
-export function bullet(text, indent = 2) {
-  return `${' '.repeat(indent)}- ${text}`;
-}

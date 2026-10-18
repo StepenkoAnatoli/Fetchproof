@@ -3,7 +3,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { test, describe, assert, makeProject, makePassingProject, fs, path, KIT_ROOT } from './harness.mjs';
-import { PATHS, resolve, readText, listFiles } from '../lib/core.mjs';
+import { PATHS, resolve, readText, listFiles, writeText } from '../lib/core.mjs';
 import { decompose, parseRecipe, loadRecipe, docsHosts, scrapeOrder, ownerOf, topicQueries, RECIPE_DIR, searchSummary, outlineOf, resolveTopic } from '../lib/decompose.mjs';
 import { UNIVERSAL_DIMENSIONS, seedRows, coverageOfUniversals } from '../lib/dimensions.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
@@ -328,6 +328,29 @@ test('a map that already holds judged rows is not redrafted over without --force
   assert.match(readText(resolve(dir, PATHS.map)), /COVERED/, 'the judged map is untouched');
 
   assert.equal(decompose(dir, { topic: 'Something else', dryRun: true, force: true }).written, true);
+});
+
+// #301 (2026-10-17): --force redrafted over the COVERED / DISMISSED / GAP judgements with blank
+// statuses and kept nothing, while `brief --force` keeps the brief it replaces. The judged map
+// is now kept beside the new draft as MAP.md.bak-<date>, with -2, -3 for a second on one day.
+test('--force over a judged map keeps it as MAP.md.bak-<date>, and a second one as -2', () => {
+  const dir = makePassingProject();
+  const judged = readText(resolve(dir, PATHS.map));
+  assert.match(judged, /COVERED/);
+  const first = decompose(dir, { topic: 'Something else', dryRun: true, force: true, date: '2026-10-17' });
+  assert.equal(first.written, true);
+  assert.equal(first.backup, `${PATHS.map}.bak-2026-10-17`);
+  assert.equal(readText(resolve(dir, first.backup)), judged, 'the backup does not hold the judged map');
+  assert.doesNotMatch(readText(resolve(dir, PATHS.map)), /\|\s*COVERED\s*\|/, 'the map was not redrafted');
+
+  writeText(resolve(dir, PATHS.map), judged);
+  const second = decompose(dir, { topic: 'Something else', dryRun: true, force: true, date: '2026-10-17' });
+  assert.equal(second.backup, `${PATHS.map}.bak-2026-10-17-2`, 'a second forced redraft on one day overwrote the first backup');
+  assert.equal(readText(resolve(dir, first.backup)), judged);
+
+  // A redraft over a map that holds no judgement has nothing to keep.
+  const third = decompose(dir, { topic: 'Something else', dryRun: true, force: true, date: '2026-10-17' });
+  assert.equal(third.backup, undefined, 'an unjudged map was backed up');
 });
 
 // ---------------------------------------------------------------- failed searches

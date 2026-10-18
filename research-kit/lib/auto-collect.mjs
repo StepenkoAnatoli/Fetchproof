@@ -734,14 +734,3 @@ export function createAutoCollect({
 
   return { cycle, status, schedule, resume, stop() { if (timer) clearInterval(timer); timer = null; } };
 }
-
-/** The request file a builder writes, as text - for the panel's builder instructions. */
-export function requestExample() {
-  return `${JSON.stringify({
-    fact: 'What is the burst limit of endpoint X on the free tier?',
-    blocks: 'the retry and queue design',
-    urls: ['https://docs.example.com/limits'],
-    queries: ['example api free tier burst limit'],
-    prefer: ['docs.example.com'],
-  }, null, 2)}\n`;
-}

@@ -1089,6 +1089,72 @@ test('new-project over an existing project says it kept it, and that --topic was
   assert.doesNotMatch(same.all, /was not applied/, 'the same topic again is not a conflict');
 });
 
+// #301 (2026-10-17): `new-project --force` replaced every file with its template and kept
+// none, while `brief --force` keeps the brief it replaces; on a collected corpus it left 27
+// captures no row cited. A file with content is now kept as <file>.bak-<date>, and a project
+// whose ledger holds entries is refused: a different topic is a different project.
+test('new-project --force keeps an edited file as <file>.bak-<date>', () => {
+  const dir = path.join(tempDir('rk-np-force-'), 'p');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'First topic'], { root: tempDir() }).status, 0);
+  const discovery = path.join(dir, 'research', 'DISCOVERY.md');
+  const edited = `${fs.readFileSync(discovery, 'utf8')}\nAn operator wrote this.\n`;
+  fs.writeFileSync(discovery, edited);
+  const forced = run('new-project.mjs', [dir, '--topic', 'Second topic', '--force'], { root: tempDir() });
+  assert.equal(forced.status, 0, forced.all);
+  const backups = fs.readdirSync(path.dirname(discovery)).filter((f) => /^DISCOVERY\.md\.bak-\d{4}-\d{2}-\d{2}$/.test(f));
+  assert.equal(backups.length, 1, `no DISCOVERY.md backup: ${fs.readdirSync(path.dirname(discovery)).join(', ')}`);
+  assert.equal(fs.readFileSync(path.join(path.dirname(discovery), backups[0]), 'utf8'), edited, 'the backup does not hold the edit');
+  assert.match(fs.readFileSync(discovery, 'utf8'), /Second topic/, '--force did not apply the new topic');
+  assert.match(forced.all, /DISCOVERY\.md\.bak-/, 'the backup is not named in the output');
+});
+
+// Review of #301 (2026-10-18): the backups of AGENTS.md and .gitignore were written beside
+// them, outside research/, where the phase-1 commit rule allows only the scaffolding's own
+// names - so `git add -A` after a forced scaffold was a blocked commit. Scaffolding is now kept
+// under research/backups/, and a file still exactly as scaffolded is not kept at all.
+test('new-project --force keeps edited scaffolding under research/, and the result commits', async () => {
+  const { evaluate } = await import('../lib/gate.mjs');
+  const dir = path.join(tempDir('rk-np-force-scaffold-'), 'p');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'First topic'], { root: tempDir() }).status, 0);
+  fs.appendFileSync(path.join(dir, 'AGENTS.md'), '\nOperator note.\n');
+  fs.appendFileSync(path.join(dir, '.gitignore'), '\ndist/\n');
+  const forced = run('new-project.mjs', [dir, '--topic', 'Second topic', '--force'], { root: tempDir() });
+  assert.equal(forced.status, 0, forced.all);
+  const files = listTree(dir);
+  const backups = files.filter((f) => f.includes('.bak-')).sort();
+  assert.deepEqual(backups.map((f) => f.replace(/\d{4}-\d{2}-\d{2}$/, 'D')),
+    ['research/backups/.gitignore.bak-D', 'research/backups/AGENTS.md.bak-D'],
+    `only the two edited files are kept, under research/backups/: ${backups.join(', ')}`);
+  assert.match(fs.readFileSync(path.join(dir, backups[1]), 'utf8'), /Operator note\./);
+  const verdict = evaluate(dir, { gate: 'commit', stagedPaths: files, record: false, stagedText: (rel) => fs.readFileSync(path.join(dir, rel), 'utf8') });
+  assert.equal(verdict.allow, true, `staging everything after --force is refused: ${JSON.stringify(verdict.staged ?? verdict.findings ?? verdict)}`);
+});
+
+/** Every file under dir, as forward-slash relative paths. */
+function listTree(dir, rel = '') {
+  return fs.readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap((entry) => {
+    const name = rel ? `${rel}/${entry.name}` : entry.name;
+    return entry.isDirectory() ? listTree(dir, name) : [name];
+  });
+}
+
+test('new-project --force on a project whose ledger holds entries exits 2 and changes nothing', () => {
+  const dir = makePassingProject();
+  // Without --force, the hint no longer offers the flag that is refused here.
+  const hinted = run('new-project.mjs', [dir, '--topic', 'other topic'], { root: tempDir() });
+  assert.equal(hinted.status, 0, hinted.all);
+  assert.match(hinted.out, /--topic "other topic" was not applied/, hinted.all);
+  assert.doesNotMatch(hinted.out, /--force/, `the hint offers --force over a collected corpus:\n${hinted.out}`);
+  const before = new Map(listTree(dir).map((rel) => [rel, fs.readFileSync(path.join(dir, rel), 'utf8')]));
+  const r = run('new-project.mjs', [dir, '--topic', 'other topic', '--force'], { root: tempDir() });
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /collected corpus \(1 ledger entry, \d+ evidence rows?\)/, r.all);
+  assert.match(r.err, /a different topic is a different project/i, r.all);
+  const after = listTree(dir);
+  assert.deepEqual(after.sort(), [...before.keys()].sort(), 'files were added or removed');
+  for (const rel of after) assert.equal(fs.readFileSync(path.join(dir, rel), 'utf8'), before.get(rel), `${rel} changed`);
+});
+
 // Found 2026-09-27: `audit --version v9` without --show rendered (or declined to render) a new
 // audit and never mentioned v9; `--topic` without --zip was dropped the same way. A flag that
 // only means something beside another is refused alone.

@@ -331,6 +331,109 @@ test('an audit manifest in the 2026-09-14 shape still shows and zips', () => {
   assert.ok(read.some((e) => e.text.includes('# a subtopic audit')), 'the old subtopic audit is in the bundle');
 });
 
+// #304 (2026-10-17): this repository's committed audit (v0.1, 2026-09-14) is keyed
+// `the-research-kits-own-protocol-metered-primary`; makeSlug has since changed, and spells the
+// same topic `the-research-kit-s-own-protocol-metered-primary-source-colle`. writeAudit looked
+// the record up by makeSlug alone, so the next render started a second topic at v0.1 and every
+// later --zip and --show needed --topic. A record that predates the stored topic text is
+// continued under the slug it already has when it is the SAME topic: keyed by the old
+// spelling of it (apostrophes dropped, cut at 46), or naming it in its main audit.
+
+/** A project whose map topic is `topic`, holding one 2026-09-14-shape audit record under `key`. */
+function oldShapeProject(topic, key, mainText = '# the main audit\n') {
+  const dir = makePassingProject();
+  const map = resolve(dir, PATHS.map);
+  writeText(map, readText(map).replace(/^## Topic\n\n.+$/m, `## Topic\n\n${topic}`));
+  assert.equal(readCorpus(dir).map.topic, topic, 'the fixture did not set the map topic');
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  fs.writeFileSync(resolve(audits, `${key}-v0.1-2026-09-14.md`), mainText);
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: {
+      [key]: {
+        latest: '0.1',
+        versions: { 0.1: { file: `${key}-v0.1-2026-09-14.md`, scope: 'full', at: '2026-09-14T20:30:57.908Z', date: '2026-09-14', fingerprint: 'x' } },
+      },
+    },
+  }));
+  return dir;
+}
+
+test('a render continues a 2026-09-14-shape record whose slug makeSlug no longer produces', () => {
+  const topic = 'The fixture\'s own protocol: metered primary-source collection, provenance';
+  const old = 'the-fixtures-own-protocol-metered-primary-sour';
+  assert.notEqual(makeSlug(topic), old);
+  const dir = oldShapeProject(topic, old);
+
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.written, true, rendered.reason);
+  assert.equal(rendered.slug, old, 'the render started a new topic instead of continuing the old one');
+  assert.equal(rendered.version, '0.2');
+  assert.deepEqual(rendered.continued, { from: makeSlug(topic), as: old });
+  assert.equal(rendered.main, `${PATHS.audits}/${old}-v0.2-2026-10-17.md`);
+
+  const listed = listVersions(dir);
+  assert.deepEqual(listed.known, [old], 'the manifest holds two topics');
+  assert.equal(listed.topics[0].latest, '0.2');
+  assert.equal(listed.topics[0].topic, topic, 'the continued record does not carry the topic text');
+  assert.equal(resolveVersion(dir, old, '0.1').main, `${PATHS.audits}/${old}-v0.1-2026-09-14.md`, 'v0.1 is no longer readable');
+
+  const bundle = zipAudit(dir);
+  assert.equal(bundle.ok, true, bundle.reason);
+  assert.equal(bundle.version, '0.2');
+});
+
+test('an old record whose main audit names this topic is continued, whatever its key', () => {
+  const dir = oldShapeProject('Fixture topic', 'fixture-topic-other-spelling', '---\ntitle: "Fixture topic"\ntopic: "Fixture topic"\n---\n# the main audit\n');
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.slug, 'fixture-topic-other-spelling');
+  assert.equal(rendered.version, '0.2');
+});
+
+// Review of #304 (2026-10-18): the first version continued ANY lone old-shape record, whatever
+// topic it held, and stamped this topic's text onto it.
+test('a lone old record of another topic is not continued, and keeps its own text', () => {
+  const dir = oldShapeProject('Fixture topic', 'an-earlier-question', '---\ntopic: "An earlier question"\n---\n# the main audit\n');
+  const rendered = writeAudit(dir, { date: '2026-10-17' });
+  assert.equal(rendered.slug, makeSlug('Fixture topic'));
+  assert.equal(rendered.version, '0.1');
+  assert.equal(rendered.continued, undefined);
+  const listed = listVersions(dir);
+  assert.deepEqual(listed.known, ['an-earlier-question', 'fixture-topic']);
+  assert.equal(readManifest(dir).topics['an-earlier-question'].topic, undefined, 'this topic was stamped on another record');
+});
+
+test('a record holding this topic text under another slug is continued, beside other topics', () => {
+  const dir = makePassingProject();
+  const topic = readCorpus(dir).map.topic;
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  const record = (name, text) => ({ topic: text, latest: '0.1', versions: { 0.1: { date: '2026-09-14', fingerprint: 'x', main: `${PATHS.audits}/${name}-v0.1-2026-09-14.md`, subtopics: [] } } });
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: { 'same-text-old-slug': record('same-text-old-slug', topic), 'another-topic': record('another-topic', 'Another topic') },
+  }));
+  const rendered = writeAudit(dir);
+  assert.equal(rendered.slug, 'same-text-old-slug');
+  assert.equal(rendered.version, '0.2');
+  assert.deepEqual(listVersions(dir).known, ['another-topic', 'same-text-old-slug']);
+});
+
+// A record that carries its topic text and a DIFFERENT one is another topic, not a re-spelling:
+// a refined topic line still starts its own chain (cli.test.mjs, 2026-09-30).
+test('a one-record manifest holding a different topic text is not continued', () => {
+  const dir = makePassingProject();
+  const audits = resolve(dir, PATHS.audits);
+  fs.mkdirSync(audits, { recursive: true });
+  fs.writeFileSync(resolve(audits, 'index.json'), JSON.stringify({
+    topics: { 'another-topic': { topic: 'Another topic', latest: '0.1', versions: { 0.1: { date: '2026-09-14', fingerprint: 'x', main: `${PATHS.audits}/another-topic-v0.1-2026-09-14.md`, subtopics: [] } } } },
+  }));
+  const rendered = writeAudit(dir);
+  assert.equal(rendered.written, true, rendered.reason);
+  assert.equal(rendered.slug, makeSlug(readCorpus(dir).map.topic));
+  assert.equal(rendered.version, '0.1');
+  assert.equal(rendered.continued, undefined);
+});
+
 test('a version with no audit file recorded is named as such, not interpolated as undefined', () => {
   const dir = tempDir('rk-no-file-manifest-');
   const audits = resolve(dir, PATHS.audits);

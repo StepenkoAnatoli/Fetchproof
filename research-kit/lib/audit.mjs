@@ -305,12 +305,13 @@ export function writeAudit(root, { date = today(), force = false, env = process.
   }
 
   const topic = corpus.map.topic || corpus.plan?.topic || 'untitled';
-  const slug = makeSlug(topic);
+  const made = makeSlug(topic);
   const fingerprint = fingerprintOf(corpus, verdict);
   // Choosing the version, writing the immutable files and updating the manifest are one
   // exclusive section: unlocked, two audits at once could interleave, lose a version or
   // collide on an immutable file (found 2026-09-28). withLock is re-entrant.
   return withLock(root, () => {
+    const slug = continuedSlug(root, readManifest(root), topic, made);
     const { version, fresh } = nextVersion(root, slug, fingerprint);
     if (!fresh && !force) {
       const held = resolveVersion(root, slug, version);
@@ -344,8 +345,50 @@ export function writeAudit(root, { date = today(), force = false, env = process.
     manifest.topics[slug] = record;
     writeJson(manifestPath(root), manifest);
 
-    return { written: true, slug, topic, version, date, main: mainFile, subtopics, verdict };
+    return { written: true, slug, topic, version, date, main: mainFile, subtopics, verdict, ...(slug !== made ? { continued: { from: made, as: slug } } : {}) };
   });
+}
+
+/**
+ * The manifest key this topic's history is held under (#304).
+ *
+ * `makeSlug` changed after this repository's first audit was recorded - `kit's` became
+ * `kit-s`, and the cap went from 46 to 60 characters - and nothing re-keyed the manifest, so
+ * the next render of the same topic started a second chain at v0.1 and every later --zip and
+ * --show needed --topic. A slug that misses is continued, not re-keyed: the manifest and the
+ * audit files on disk keep the names they were written under. Only the SAME topic continues:
+ * a record holding this topic's text; or, for a record written before topic text was stored
+ * (the 2026-09-14 shape), one keyed by the old spelling of this topic (`legacySlug`) or whose
+ * latest main audit names this topic in its front matter. Anything else is another topic: a
+ * refined topic line still starts its own chain (2026-09-30), and the CLI says so - the review
+ * of the first version of this found it continuing any lone old record, whatever its topic.
+ */
+function continuedSlug(root, manifest, topic, made) {
+  const topics = manifest?.topics ?? {};
+  if (topics[made]) return made;
+  const keys = Object.keys(topics).sort(compareText);
+  const sameText = keys.find((key) => topics[key]?.topic === topic);
+  if (sameText) return sameText;
+  const legacy = legacySlug(topic);
+  const untitled = keys.filter((key) => typeof topics[key]?.topic !== 'string');
+  return untitled.find((key) => key === legacy)
+    ?? untitled.find((key) => auditedTopic(root, key) === topic)
+    ?? made;
+}
+
+/** The 2026-09-14 writer's spelling: apostrophes dropped, not hyphenated, and cut at 46. */
+function legacySlug(topic) {
+  return String(topic ?? '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 46).replace(/-+$/g, '');
+}
+
+/** The `topic:` an old record's latest main audit states in its front matter, or null. */
+function auditedTopic(root, key) {
+  const held = resolveVersion(root, key);
+  const text = held?.main ? readAuditFile(root, held.main).text : null;
+  const raw = text?.match(/^topic:[ \t]*(.+)$/m)?.[1]?.trim();
+  if (!raw) return null;
+  try { return raw.startsWith('"') ? JSON.parse(raw) : raw; } catch { return null; }
 }
 
 // ---------------------------------------------------------------- the bundle

@@ -310,15 +310,6 @@ export function stdinIsReadable(stdin = process.stdin) {
   }
 }
 
-export function stagedPathsFromStdin(readSync) {
-  if (!stdinIsReadable()) return null;
-  try {
-    return splitPathList(readSync());
-  } catch {
-    return null;
-  }
-}
-
 /**
  * One actual, successful Git read, never a probe followed by an unchecked pipeline.
  * gitCapture returns null for nonzero exit and maxBuffer failure, so partial stdout

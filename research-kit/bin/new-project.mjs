@@ -21,7 +21,9 @@ if (flags.help) {
   node research-kit/bin/new-project.mjs [dir] --topic "<topic>" [--force]
 
   --layout   print the ${LAYOUT.length} entries of the canonical shape and exit
-  --force    overwrite existing content (structure is always repaired anyway)
+  --force    overwrite existing content (structure is always repaired anyway); each
+             replaced file is kept as <file>.bak-<date>, and a project whose ledger
+             holds entries is refused
   --kit <p>  how the project should SPELL the kit's location, for a project that will
              be read somewhere else. Default: this machine's deployed kit. Pass
              '$HOME/.agents/research-kit' when the project will travel - single-quoted, so
@@ -63,6 +65,10 @@ try {
     force: Boolean(flags.force),
   });
 } catch (err) {
+  if (err.code === 'COLLECTED_CORPUS') {
+    process.stderr.write(`new-project: ${err.message} Nothing was written.\n`);
+    process.exit(2);
+  }
   const why = writeFailure(err);
   if (!why) throw err;
   process.stderr.write(`${why} The project may be partly scaffolded; fix that and run this again - files already written are kept.\n`);
@@ -73,12 +79,19 @@ process.stdout.write(`scaffolded ${result.dir}\n  wrote   ${result.written.lengt
 // Named, not counted: "kept 1" hid that the kept file was the .gitignore that keeps .env out.
 if (result.merged.length) process.stdout.write(`  merged  ${result.merged.join(', ')} - the kit's missing rules were appended to your own file\n`);
 if (result.skipped.length && result.skipped.length <= 5) process.stdout.write(`  (kept as they were: ${result.skipped.join(', ')})\n`);
+// Named: --force replaced these files' content, and the old content is beside each one.
+if (result.backups.length) process.stdout.write(`  kept the replaced content as ${result.backups.join(', ')}\n`);
 
 if (existingTopic && !flags.force) {
   process.stdout.write(`  already a project about "${existingTopic}" - existing files were kept\n`);
   const asked = typeof flags.topic === 'string' ? flags.topic.trim() : '';
   if (asked && asked !== existingTopic) {
-    process.stdout.write(`  --topic "${asked}" was not applied: a different topic is a different project (a new folder),\n  or re-run with --force to overwrite this one's files\n`);
+    // --force is refused over a collected corpus (#301), so it is offered only where it would run.
+    const collected = (() => {
+      try { return fs.readFileSync(path.join(dir, 'research', 'raw', '.fetches.jsonl'), 'utf8').split(/\r?\n/).some((line) => line.trim()); } catch { return false; }
+    })();
+    process.stdout.write(`  --topic "${asked}" was not applied: a different topic is a different project (a new folder)`
+      + `${collected ? '\n' : ',\n  or re-run with --force to overwrite this one\'s files\n'}`);
   }
 }
 

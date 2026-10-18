@@ -63,8 +63,6 @@ export const UNIVERSAL_DIMENSIONS = Object.freeze([
   },
 ]);
 
-export const SUBTOPIC_STATUSES = Object.freeze(['COVERED', 'DISMISSED', 'GAP']);
-
 function normalize(text) {
   return String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }

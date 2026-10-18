@@ -41,7 +41,8 @@ if (flags.help || resolved?.error) {
                      the map shows the section headings of every captured page
   --limit <n>        search results per query (default 8)
   --dry-run          write the seeded map with no gathering; spend nothing
-  --force            redraft over a map that already holds judged rows
+  --force            redraft over a map that already holds judged rows (the judged
+                     map is kept as MAP.md.bak-<date>)
   --transport <name> ${TRANSPORT_NAMES.join(' | ')}
   --search-transport <name>
                      ${SEARCH_PROVIDER_NAMES.join(' | ')} - the SEARCH side only.
@@ -147,6 +148,7 @@ if (!result.written) {
 // same after an outage as after a good run - which is the defect this line exists for.
 const searched = searchSummary(result);
 if (searched) process.stderr.write(`${searched}\n`);
+if (result.backup) process.stdout.write(`the judged map it replaced is kept as ${result.backup}\n`);
 
 process.stdout.write(`
 wrote ${result.file}: ${result.rows} rows (${result.universal} universal${result.added ? ` + ${result.added} from recipe ${result.recipe}` : ''}), ${result.material} candidate pages${result.outlines ? `, ${result.outlines} page outline${result.outlines === 1 ? '' : 's'} shown` : ''}.

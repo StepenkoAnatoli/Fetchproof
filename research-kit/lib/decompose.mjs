@@ -9,7 +9,7 @@
 
 import path from 'node:path';
 import {
-  PATHS, HEADERS, resolve, exists, readText, writeText, today, hostOf, uniq, listFiles,
+  PATHS, HEADERS, resolve, exists, readText, writeText, today, hostOf, uniq, listFiles, keepBackup,
 } from './core.mjs';
 import { readCorpus, cacheDecision, tableRow, appendJsonLine, parseCapture } from './corpus.mjs';
 import { seedRows, UNIVERSAL_DIMENSIONS } from './dimensions.mjs';
@@ -426,11 +426,9 @@ export function decompose(root, {
 
   const file = resolve(root, PATHS.map);
   const existing = readText(file, '');
-  if (existing.trim() && !force && !/^\s*$/.test(existing) && existing.includes('| ID |')) {
-    const filled = existing.match(/\|\s*(COVERED|DISMISSED|GAP)\s*\|/);
-    if (filled) {
-      return { written: false, reason: `${PATHS.map} already holds judged rows - re-run with --force to redraft over them` };
-    }
+  const judged = existing.includes('| ID |') && /\|\s*(COVERED|DISMISSED|GAP)\s*\|/.test(existing);
+  if (judged && !force) {
+    return { written: false, reason: `${PATHS.map} already holds judged rows - re-run with --force to redraft over them (the judged map is kept as ${PATHS.map}.bak-<date>)` };
   }
 
   const loaded = recipe ? loadRecipe(recipe) : { name: '', dimensions: [] };
@@ -558,6 +556,9 @@ export function decompose(root, {
   // Read after the scrapes, so the pages this run captured are outlined too. No fetch: only
   // what is already on disk.
   const outlines = material.length ? outlinesOf(root, corpus.captures, material) : null;
+  // --force over judged rows keeps them beside the redraft, as `brief --force` keeps a brief:
+  // the redraft wrote blank statuses over every COVERED / DISMISSED / GAP and kept nothing (#301).
+  const backup = judged ? keepBackup(root, PATHS.map, existing, date) : undefined;
   writeText(file, mapBody({ topic, rows, hosts, material: material.slice(0, 20), date, recipe: loaded.name || recipe, failures, dryRun: dryRun || !adapter, outlines, ownerSkipped }));
   return {
     written: true,
@@ -574,6 +575,7 @@ export function decompose(root, {
     material: material.length,
     hosts,
     spent,
+    ...(backup ? { backup } : {}),
   };
 }
 

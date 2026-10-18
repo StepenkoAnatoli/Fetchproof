@@ -69,9 +69,6 @@ import { checkClientRef } from './artifact.mjs';
 export const MODERN_VERSION = '2026-07-28';
 export const LEGACY_VERSION = '2025-11-25';
 
-/** The revision this server prefers when nobody says otherwise. */
-export const PROTOCOL_VERSION = MODERN_VERSION;
-
 /**
  * Every revision this server will serve, newest first.
  *

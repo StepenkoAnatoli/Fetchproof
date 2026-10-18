@@ -6,13 +6,13 @@
 // that quietly authenticated would answer a different question and look like this one.
 //
 // Exit codes are the finding, so this can gate something later:
-//   0  only the SHAPE is public - names, sizes, timings
+//   0  nothing beyond the SHAPE is public - names, sizes, timings, if even those
 //   1  CONTENT is public - artifacts or logs can be read by a stranger
 //   2  the SUBJECT is public - the topic you passed was found in a public response
 //   3  could not measure - including any probe that never reached GitHub, unless an
 //      exposure was measured anyway
 
-import { parseFlags } from '../lib/core.mjs';
+import { parseFlags, checkFlagValues } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
 import { probeRun, render, exitCode } from '../lib/disclosure.mjs';
 
@@ -52,6 +52,23 @@ const missing = ['repository', 'run'].filter((n) => flags[n] === undefined || fl
 if (missing.length) {
   process.stderr.write(`disclosure needs ${missing.map((m) => `--${m}`).join(' and ')}\n\n`);
   process.stdout.write(HELP);
+  process.exit(3);
+}
+
+// The arguments are checked before any request (#303): `--run abc` asked GitHub for
+// /actions/runs/NaN and `--repository Research-Kit` for a repository with no owner; every
+// probe was refused, and a run nobody looked at read as "only the shape is public", exit 0.
+// A repeated flag arrives as an array, which each value passing on its own does not make one
+// run: `--run 1 --run 2` became Number([...]), NaN, and probed /actions/runs/NaN.
+for (const name of ['repository', 'run']) {
+  if (Array.isArray(flags[name])) {
+    process.stderr.write(`--${name} was given ${flags[name].length} times - this probes one run in one repository; pass it once\n`);
+    process.exit(3);
+  }
+}
+checkFlagValues(flags, { run: { int: true, min: 1 }, repository: 'value' }, { exit: 3 });
+if (!/^[^/\s]+\/[^/\s]+$/.test(String(flags.repository))) {
+  process.stderr.write(`--repository must be OWNER/REPO, not "${flags.repository}"\n`);
   process.exit(3);
 }
 
