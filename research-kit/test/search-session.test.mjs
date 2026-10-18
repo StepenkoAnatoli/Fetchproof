@@ -391,3 +391,54 @@ test('searchPatiently and mergeByRank live here and stay importable from researc
   assert.equal(viaResearchRun, mergeByRank);
   assert.equal(patientlyViaResearchRun, searchPatiently);
 });
+
+// #313 (2026-10-11): the keyless search refused with a 429 and its Retry-After was never read -
+// the patience loop understood only Firecrawl's error text. The provider's own `retryAfterMs`
+// is asked first; a server that asked past the cap gets one more try, not the loop's bound.
+test('searchPatiently waits the retryAfterMs a provider read from the server', () => {
+  let asks = 0;
+  const slept = [];
+  const keyless = { name: 'http-keyless', search: (q) => {
+    asks += 1;
+    return asks === 1
+      ? { ok: false, query: q, results: [], retryAfterMs: 2000, error: 'HTTP 429 - rate limited, the server asks for a retry after 2s' }
+      : { ok: true, query: q, results: rows('k', 1) };
+  } };
+  const r = searchPatiently(keyless, 'rate limits', { limit: 8, sleep: (ms) => slept.push(ms) });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(asks, 2);
+  assert.deepEqual(slept, [2000]);
+
+  let tries = 0;
+  const waited = [];
+  const busy = { name: 'http-keyless', search: (q) => { tries += 1; return { ok: false, query: q, results: [], retryAfterMs: 60_000, retryAfterCapped: true, error: 'HTTP 503 - the server asks for a retry after 3600s' }; } };
+  const gaveUp = searchPatiently(busy, 'q', { limit: 8, sleep: (ms) => waited.push(ms) });
+  assert.equal(gaveUp.ok, false);
+  assert.equal(tries, 2, 'one wait at the cap, one more ask');
+  assert.deepEqual(waited, [60_000]);
+});
+
+// Review of #313 (2026-10-18): each query waited its own two retries, so ten queries to a
+// provider answering a bare 429 slept twenty minutes. A provider that ran out of retries is
+// noted for the run, and a later query to it is asked once without waiting, until it answers.
+test('a provider that ran out of rate-limit retries is not waited on again in the same run', () => {
+  let open = false;
+  const slept = [];
+  const limited = new Set();
+  const keyless = { name: 'http-keyless', search: (q) => (open
+    ? { ok: true, query: q, results: rows('k', 1) }
+    : { ok: false, query: q, results: [], retryAfterMs: 60_000, error: 'HTTP 429 - rate limited, the server named no retry time' }) };
+  const ask = (q) => searchPatiently(keyless, q, { limit: 8, sleep: (ms) => slept.push(ms), limited });
+  for (const q of ['one', 'two', 'three']) assert.equal(ask(q).ok, false);
+  assert.deepEqual(slept, [60_000, 60_000], 'the first query waited; the next two did not');
+  open = true;
+  assert.equal(ask('four').ok, true);
+  assert.equal(limited.size, 0, 'an answer clears the note');
+  // The session keeps one note for its run when it builds the patient call itself.
+  open = false;
+  const waits = [];
+  const session = searchSession({ adapter: keyless, limit: 8, sleep: (ms) => waits.push(ms) });
+  session.ask('a');
+  session.ask('b');
+  assert.deepEqual(waits, [60_000, 60_000]);
+});

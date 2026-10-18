@@ -851,6 +851,43 @@ test('collectOne gives up after a bounded number of rate-limit retries', () => {
   assert.match(outcome.reason, /Rate limit exceeded/);
 });
 
+// #313 (2026-10-11): on the keyless route a 429 was a plain failure - the wait loop read only
+// Firecrawl's error text, and the server's Retry-After was read nowhere - so a one-second
+// window lost the page, a ledger entry and a --force. The transport hands the server's number
+// over as `retryAfterMs`, and the loop asks for it first.
+test('collectOne waits the retryAfterMs a transport read from the server, and keeps the page', () => {
+  const dir = makeProject();
+  let calls = 0;
+  const slept = [];
+  const url = 'https://example.invalid/429once';
+  const outcome = collectOne(dir, url, {
+    corpus: readCorpus(dir),
+    sleep: (ms) => slept.push(ms),
+    runScrape: () => {
+      calls += 1;
+      if (calls === 1) return { ok: false, url, statusCode: 429, retryAfterMs: 1000, error: 'HTTP 429 - rate limited, the server asks for a retry after 1s', transport: 'http-keyless' };
+      return { ok: true, url, title: 'Once', markdown: `# Once\n\n${'body text here. '.repeat(40)}`, statusCode: 200, transport: 'http-keyless', completeness: 'full' };
+    },
+  });
+  assert.equal(calls, 2, 'the 429 must be retried, not recorded');
+  assert.equal(outcome.status, 'collected', JSON.stringify(outcome));
+  assert.deepEqual(slept, [1000], 'the server\'s own number, through the sleep seam');
+  assert.deepEqual(readCorpus(dir).ledger.entries.map((e) => e.op), ['scrape'], 'no fail entry for a wait');
+
+  // A server that asked for longer than the cap is waited for once, at the cap, then recorded.
+  const capped = makeProject();
+  let tries = 0;
+  const waited = [];
+  const refused = collectOne(capped, 'https://example.invalid/503retry', {
+    corpus: readCorpus(capped),
+    sleep: (ms) => waited.push(ms),
+    runScrape: (u) => { tries += 1; return { ok: false, url: u, statusCode: 503, retryAfterMs: 60_000, retryAfterCapped: true, error: 'HTTP 503 - the server asks for a retry after 3600s' }; },
+  });
+  assert.equal(refused.status, 'failed');
+  assert.equal(tries, 2, 'one wait at the cap, one more try, and no second wait');
+  assert.deepEqual(waited, [60_000]);
+});
+
 // ---------------------------------------------------------------- topic match
 
 test('topicMatch separates the off-topic collection from the on-topic one', () => {
@@ -1041,6 +1078,32 @@ test('an exhausted search falls back too, and no fallback is taken on any other 
   assert.equal(r3.stopped?.reason, 'credits exhausted');
 });
 
+// #350 (2026-10-11): a page that answered 402 with "Insufficient credits" in its title was
+// read as Firecrawl's own exhaustion - the collector's error-page sentence quotes the title, and
+// the exhaustion matcher, written for the CLI's stderr, was run over it. The run stopped and
+// asked for a top-up on an account that had credits. Only the transport's own failure is read.
+test('a target page answering 402 "Insufficient credits" is a failed page, not exhausted credits', () => {
+  const dir = makeProject();
+  writeJson(resolve(dir, PATHS.plan), {
+    topic: 'Fixture', depth: 'normal', refreshDays: 30, limit: 8, perQuery: 3, maxScrapes: 10, prefer: [], queries: [],
+    urls: ['https://x.invalid/ok1', 'https://x.invalid/paywall', 'https://x.invalid/ok2'],
+  });
+  const adapter = exhaustingAdapter({ afterScrapes: 10 });
+  const asked = [];
+  const paywalled = { ...adapter, runScrape: (url) => {
+    asked.push(url);
+    if (url.endsWith('/paywall')) return { ok: true, url, title: 'Insufficient credits - top up to read this report', markdown: PAGE, statusCode: 402, transport: 'firecrawl-cli', completeness: 'full', cmd: 'stub' };
+    return adapter.runScrape(url);
+  } };
+  const run = runResearch(dir, { adapter: paywalled });
+  assert.deepEqual(run.results.map((r) => r.status), ['collected', 'failed', 'collected'], JSON.stringify(run.results, null, 1));
+  assert.equal(run.failed, 1);
+  assert.equal(run.stopped, null, 'the account has credits; the page does not');
+  assert.equal(asked.length, 3, 'the page after the paywall is still fetched');
+  assert.match(run.results[1].reason, /the page answered HTTP 402 \(Insufficient credits/);
+  assert.ok(!readText(resolve(dir, PATHS.failures), '').includes('credits-exhausted'), 'no credits-exhausted row');
+});
+
 // ADR-0129 (2026-10-02). The operator's rule: when the account runs out, the person decides
 // between topping up and the free transports. Until then the kit decided for them - the
 // switch of ADR-0086 was the default, announced in one log line of a run nobody may have
@@ -1143,6 +1206,126 @@ test('a remembered 404 takes no slot of the scrape budget', () => {
   const run = runResearch(dir, { adapter: stubAdapter() });
   assert.deepEqual(run.results.map((r) => r.status), ['gone', 'collected'], JSON.stringify(run.results.map((r) => [r.url, r.status, r.reason])));
   assert.equal(run.spent, 1);
+});
+
+// #316, ADR-0174 (2026-10-11): a page the kit refused for what it IS - over the size a capture
+// may hold, a binary body, a standing 4xx such as a 403 - was fetched and paid for again on every
+// run of a plan that still named it; only 404/410 were remembered. Those refusals are
+// remembered within the window too, with the reason and the date. What is about this moment -
+// a 5xx, a 408, a 429, a transport error - is still asked again.
+test('a page the kit refused for what it is, is not fetched again within the refresh window', () => {
+  const dir = makeProject();
+  let calls = 0;
+  const answers = {
+    'https://x.invalid/huge': (url) => ({ ok: true, url, title: 'Huge', markdown: 'x'.repeat(CAPTURE_MAX_BYTES + 1), statusCode: 200, transport: 'stub-transport', completeness: 'full', cmd: 'stub' }),
+    'https://x.invalid/status403': (url) => ({ ok: true, url, title: 'Access denied', markdown: 'denied', statusCode: 403, transport: 'stub-transport', completeness: 'full', cmd: 'stub' }),
+    'https://x.invalid/keyless403': (url) => ({ ok: false, url, error: 'HTTP 403 - the server said: "Access denied"', transport: 'http-keyless', cmd: 'stub' }),
+    'https://x.invalid/report.pdf': (url) => ({ ok: false, url, transport: 'http-keyless', cmd: 'stub',
+      error: 'the response is application/pdf, which is not text - the keyless transport cannot keep a faithful copy of it. Fetch it with --transport firecrawl-cli, which converts documents such as PDFs to text, or cite an HTML page that carries the same text.' }),
+    'https://x.invalid/keyless404': (url) => ({ ok: false, url, error: 'HTTP 404 - the server said: "no such page"', transport: 'http-keyless', cmd: 'stub' }),
+  };
+  const transient = {
+    'https://x.invalid/busy': (url) => ({ ok: true, url, title: 'x', markdown: 'x', statusCode: 503, transport: 'stub-transport', completeness: 'full', cmd: 'stub' }),
+    'https://x.invalid/slow': (url) => ({ ok: false, url, error: 'HTTP 408 - the server said: "Request Timeout"', cmd: 'stub' }),
+    'https://x.invalid/limited': (url) => ({ ok: false, url, error: 'HTTP 429 - rate limited, the server asks for a retry after 1s', retryAfterMs: 0, cmd: 'stub' }),
+    'https://x.invalid/cut': (url) => ({ ok: false, url, error: 'terminated (other side closed)', cmd: 'stub' }),
+  };
+  const all = { ...answers, ...transient };
+  const runScrape = (url) => { calls += 1; return all[url](url); };
+  for (const url of Object.keys(all)) collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: 'stub-transport', sleep: () => {} });
+  const first = calls;
+  // A standing 4xx is remembered for the route that got it: the keyless 403 is asked as keyless.
+  const route = { 'https://x.invalid/keyless403': 'http-keyless' };
+  for (const url of Object.keys(answers)) {
+    const again = collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: route[url] ?? 'stub-transport' });
+    assert.equal(again.spent, 0, `${url}: ${JSON.stringify(again)}`);
+    assert.ok(['refused', 'gone'].includes(again.status), `${url}: ${JSON.stringify(again)}`);
+    assert.match(again.reason, /\d{4}-\d{2}-\d{2}.*not fetched again for 30 days; --force retries it/, again.reason);
+  }
+  assert.equal(calls, first, 'a remembered refusal fetched nothing');
+  const huge = collectOne(dir, 'https://x.invalid/huge', { runScrape, corpus: readCorpus(dir), transportName: 'stub-transport' });
+  assert.match(huge.reason, /^refused on \d{4}-\d{2}-\d{2}: over the size a capture may hold - /, huge.reason);
+  assert.match(collectOne(dir, 'https://x.invalid/report.pdf', { runScrape, corpus: readCorpus(dir) }).reason, /refused on .*: the response is not text/);
+  assert.match(collectOne(dir, 'https://x.invalid/keyless403', { runScrape, corpus: readCorpus(dir), transportName: 'http-keyless' }).reason, /refused on .*: the page answered HTTP 403/);
+  assert.equal(collectOne(dir, 'https://x.invalid/keyless404', { runScrape, corpus: readCorpus(dir) }).status, 'gone', 'a keyless 404 is gone, as the collector\'s own wording of one is');
+  for (const url of Object.keys(transient)) collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: 'stub-transport', sleep: () => {}, maxRateLimitRetries: 0 });
+  assert.equal(calls, first + Object.keys(transient).length, 'a 503, a 408, a 429 and a cut connection are asked again');
+  assert.equal(collectOne(dir, 'https://x.invalid/status403', { runScrape, corpus: readCorpus(dir), force: true }).status, 'failed', '--force retries');
+  // Another route is not told what one route was answered: the page that refused the keyless
+  // client is what the browser transport is for (ADR-0088). A size or binary refusal is the page's.
+  const before = calls;
+  assert.equal(collectOne(dir, 'https://x.invalid/keyless403', { runScrape, corpus: readCorpus(dir), transportName: 'browser' }).status, 'failed');
+  assert.equal(calls, before + 1, 'the browser route asked for the page the keyless route was refused');
+  assert.equal(collectOne(dir, 'https://x.invalid/report.pdf', { runScrape, corpus: readCorpus(dir), transportName: 'browser' }).status, 'refused');
+
+  // The research loop sets a remembered refusal aside before the budget, and logs it as one.
+  writeJson(resolve(dir, PATHS.plan), {
+    topic: 'Fixture', depth: 'quick', refreshDays: 30, limit: 8, perQuery: 1, maxScrapes: 1,
+    urls: [{ url: 'https://x.invalid/report.pdf', why: 'U-1', type: 'P' }, { url: 'https://x.example/page', why: 'U-1', type: 'P' }], queries: [],
+  });
+  const lines = [];
+  const run = runResearch(dir, { adapter: stubAdapter(), log: (l) => lines.push(l) });
+  assert.deepEqual(run.results.map((r) => r.status), ['refused', 'collected'], JSON.stringify(run.results.map((r) => [r.url, r.status, r.reason])));
+  assert.ok(lines.some((l) => /^ {2}refused {3}https:\/\/x\.invalid\/report\.pdf - refused on /.test(l)), lines.join('\n'));
+});
+
+// Review of ADR-0174 (2026-10-18): GitHub answers a keyless client `403 ... API rate limit
+// exceeded`, which the wait loop treats as a rate limit; remembered as a standing 403 it would
+// have kept every route away from the page for 30 days. And a proxy's own 405 or 407 is its
+// answer to every page, not this page's. Neither is remembered, on any route.
+test('a 403 that names a rate limit, and a proxy\'s 405 or 407, are never remembered as refusals', () => {
+  const dir = makeProject();
+  let calls = 0;
+  const errors = {
+    'https://api.example/repos/a/b': 'HTTP 403 - the server said: "API rate limit exceeded for 203.0.113.9. (But here\'s the good news: Authenticated requests get a higher rate limit.)"',
+    'https://x.invalid/proxy-auth': 'HTTP 407 - the server said: "Proxy Authentication Required"',
+    'https://x.invalid/proxy-method': 'HTTP 405 - the server said: "Method Not Allowed"',
+  };
+  const runScrape = (url) => { calls += 1; return { ok: false, url, error: errors[url], transport: 'http-keyless', cmd: 'stub' }; };
+  for (const url of Object.keys(errors)) collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: 'http-keyless', sleep: () => {}, maxRateLimitRetries: 0 });
+  assert.equal(calls, 3);
+  for (const transportName of ['http-keyless', 'browser']) {
+    for (const url of Object.keys(errors)) {
+      const again = collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName, sleep: () => {}, maxRateLimitRetries: 0 });
+      assert.equal(again.status, 'failed', `${transportName} ${url}: ${JSON.stringify(again)}`);
+    }
+  }
+  assert.equal(calls, 9, 'each was asked again on each route');
+});
+
+// Review of #313 (2026-10-18): the waits were per page, so a host answering a bare 429 made
+// every page on it wait its two minutes again - twenty pages, forty minutes, the corpus lock
+// held throughout. A host that ran out of retries is noted for the run; a later page on it is
+// asked once and not waited for, until one succeeds.
+test('a host that ran out of rate-limit retries is not waited on again in the same run', () => {
+  const dir = makeProject();
+  const slept = [];
+  let open = false;
+  const runScrape = (url) => (open
+    ? { ok: true, url, title: 'Page', markdown: PAGE, statusCode: 200, transport: 'http-keyless', completeness: 'full', cmd: 'stub' }
+    : { ok: false, url, statusCode: 429, retryAfterMs: 60_000, error: 'HTTP 429 - rate limited, the server named no retry time', transport: 'http-keyless', cmd: 'stub' });
+  const rateLimited = new Set();
+  const one = (url) => collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: 'http-keyless', sleep: (ms) => slept.push(ms), rateLimited });
+  for (const path of ['/a', '/b', '/c']) assert.equal(one(`https://busy.example${path}`).status, 'failed');
+  assert.deepEqual(slept, [60_000, 60_000], 'the first page waited its two retries; the next two were not waited for');
+  assert.ok(rateLimited.has('busy.example'));
+  assert.equal(one('https://other.example/a').status, 'failed');
+  assert.equal(slept.length, 4, 'another host still gets its own patience');
+  open = true;
+  assert.equal(one('https://busy.example/d').status, 'collected');
+  assert.ok(!rateLimited.has('busy.example'), 'a success clears the note');
+
+  // Through the coordinator: one run, one note, its own sleep seam.
+  const run = makeProject();
+  open = false;
+  writeJson(resolve(run, PATHS.plan), {
+    topic: 'Fixture', depth: 'normal', refreshDays: 30, limit: 8, perQuery: 1, maxScrapes: 10, prefer: [], queries: [],
+    urls: ['https://busy.example/1', 'https://busy.example/2', 'https://busy.example/3', 'https://busy.example/4'],
+  });
+  const waits = [];
+  const result = runResearch(run, { adapter: { name: 'http-keyless', runScrape, search: () => ({ ok: true, results: [] }) }, sleep: (ms) => waits.push(ms) });
+  assert.equal(result.failed, 4);
+  assert.deepEqual(waits, [60_000, 60_000], 'four pages on one refusing host waited two minutes, not eight');
 });
 
 // Found 2026-10-01 (break-test, PR #178): the browser transport fetches and does not search

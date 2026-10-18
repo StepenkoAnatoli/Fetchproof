@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import dns from 'node:dns';
 import { fetchEnv, CHILD_OUTPUT_LIMIT, boundedBody, outputOverflow, fetchFailure } from './runtime.mjs';
+import { MAX_RATE_LIMIT_WAIT_MS } from './firecrawl.mjs';
 
 export const name = 'http-keyless';
 export const FULL_THRESHOLD = 1500;
@@ -479,10 +480,80 @@ function refusal(job) {
   return said ? `${job.error} - the server said: "${said}"` : job.error;
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/**
+ * An HTTP-date as epoch milliseconds, or null: the three forms RFC 9110 (5.6.7) has a recipient
+ * accept, each read as UTC - IMF-fixdate `Sun, 06 Nov 1994 08:49:37 GMT`, the obsolete RFC 850
+ * `Sunday, 06-Nov-94 08:49:37 GMT` (a two-digit year more than 50 years ahead is the previous
+ * century, as 5.6.7 says) and asctime `Sun Nov  6 08:49:37 1994`.
+ *
+ * Date.parse was the reader, and it is too lenient and too local: it took "-5", "1.5" and
+ * "5, 10" for dates long past, so a 429 was retried at once, and it read an asctime date - which
+ * names no zone - as this machine's local time, three hours early on a +0300 PC (reviews of
+ * #313, 2026-10-18). Anything that is not one of the three forms is no date.
+ */
+export function httpDate(value, now = Date.now()) {
+  const text = String(value ?? '').trim();
+  const clock = (h, m, s) => [Number(h), Number(m), Number(s)];
+  let day; let month; let year; let time;
+  let m = /^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(text);
+  if (m) { [day, month, year, time] = [Number(m[1]), m[2], Number(m[3]), clock(m[4], m[5], m[6])]; }
+  else if ((m = /^[A-Za-z]{6,9}, (\d{2})-([A-Za-z]{3})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/.exec(text))) {
+    [day, month, time] = [Number(m[1]), m[2], clock(m[4], m[5], m[6])];
+    year = 2000 + Number(m[3]);
+    if (year > new Date(now).getUTCFullYear() + 50) year -= 100;
+  } else if ((m = /^[A-Za-z]{3} ([A-Za-z]{3}) ( \d|\d{2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(text))) {
+    [day, month, year, time] = [Number(m[2]), m[1], Number(m[6]), clock(m[3], m[4], m[5])];
+  } else {
+    return null;
+  }
+  const index = MONTHS.indexOf(month.toLowerCase());
+  if (index === -1 || day < 1 || day > 31 || time[0] > 23 || time[1] > 59 || time[2] > 60) return null;
+  const at = Date.UTC(year, index, day, ...time);
+  // A day past the month's end (31 Feb) rolls into the next month; that is not a date either.
+  return new Date(at).getUTCDate() === day ? at : null;
+}
+
+/**
+ * How long a server that refused for load asks to be left alone, or null (#313): `{ ms, capped }`.
+ *
+ * A 429 is an instruction to wait, and a 503 is one when it carries `Retry-After`. The header
+ * is delta-seconds or an HTTP-date (RFC 9110, 10.2.3); a 429 without a usable one waits the
+ * minute the Firecrawl parser falls back to (`rateLimitWaitMs`). The number is the server's,
+ * so it is capped as the vendor's is, at MAX_RATE_LIMIT_WAIT_MS, and `capped` says the server
+ * asked for longer - the wait loop then tries once more, not until its bound. Found
+ * 2026-10-11: the header was read nowhere, and on the keyless route - the one capped per IP -
+ * a one-second 429 lost the page, a ledger entry and a `--force` each time.
+ */
+export function retryAfter(statusCode, header, { now = Date.now() } = {}) {
+  const status = Number(statusCode);
+  if (status !== 429 && status !== 503) return null;
+  const value = String(header ?? '').trim();
+  let asked = null;
+  if (/^\d+$/.test(value)) asked = Number(value) * 1000;
+  else {
+    const at = httpDate(value, now);
+    if (at !== null) asked = Math.max(0, at - now);
+  }
+  if (asked === null) return status === 429 ? { ms: MAX_RATE_LIMIT_WAIT_MS, capped: false, said: '' } : null;
+  const ms = Math.min(asked, MAX_RATE_LIMIT_WAIT_MS);
+  return { ms, capped: asked > ms, said: `${Math.ceil(asked / 1000)}s` };
+}
+
+/** A failed job as the adapter answers it: the error, and the wait the server asked for. */
+function failedJob(job) {
+  return {
+    error: refusal(job),
+    ...(Number.isFinite(job.retryAfterMs) ? { retryAfterMs: job.retryAfterMs } : {}),
+    ...(job.retryAfterCapped ? { retryAfterCapped: true } : {}),
+  };
+}
+
 export function scrape(url, opts = {}) {
   const argv = ['scrape', String(url)];
   const job = runJob({ kind: 'fetch', url: String(url) }, opts);
-  if (!job.ok) return { ok: false, url, error: refusal(job), cmd: command(argv), transport: name };
+  if (!job.ok) return { ok: false, url, ...failedJob(job), cmd: command(argv), transport: name };
   const kind = bodyKind(job.contentType);
   // A binary body is refused, not kept (ADR-0105). Read as text it loses every byte UTF-8
   // cannot hold, so the capture could neither be reopened as the file nor hold a quote.
@@ -515,7 +586,7 @@ export function search(query, { limit = 8, ...opts } = {}) {
   const argv = ['search', String(query)];
   const endpoint = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
   const job = runJob({ kind: 'fetch', url: endpoint }, opts);
-  if (!job.ok) return { ok: false, query, error: refusal(job), cmd: command(argv), results: [] };
+  if (!job.ok) return { ok: false, query, ...failedJob(job), cmd: command(argv), results: [] };
   // DuckDuckGo answers an automated-looking request with a bot check, not an error: HTTP 200,
   // an anomaly modal, no result links. Parsed as a page, that was "no results" and ok: true,
   // so a refused search looked like a quiet topic (found 2026-09-27). It is a failed search,
@@ -751,6 +822,11 @@ async function child() {
     // Read in the charset the server declared, and a charset the decoder did not know is
     // named on the answer, so the parent can grade the capture by it (G7, 2026-10-03).
     const { text: body, fallback: decodeFallback } = await boundedBody(response, 'the page');
+    // A 429, or a 503 with Retry-After, carries the server's wait to the parent's loop (#313).
+    const retry = response.ok ? null : retryAfter(response.status, response.headers.get('retry-after'));
+    const asks = !retry ? ''
+      : response.status === 429 ? ` - rate limited, ${retry.said ? `the server asks for a retry after ${retry.said}` : 'the server named no retry time'}`
+        : ` - the server asks for a retry after ${retry.said}`;
     process.stdout.write(JSON.stringify({
       ok: response.ok,
       url,
@@ -758,7 +834,8 @@ async function child() {
       contentType: response.headers.get('content-type') ?? '',
       body,
       decodeFallback,
-      error: response.ok ? '' : `HTTP ${response.status}`,
+      error: response.ok ? '' : `HTTP ${response.status}${asks}`,
+      ...(retry ? { retryAfterMs: retry.ms, ...(retry.capped ? { retryAfterCapped: true } : {}) } : {}),
     }));
   } catch (err) {
     process.stdout.write(JSON.stringify({ ok: false, url: job.url, error: fetchFailure(err) }));

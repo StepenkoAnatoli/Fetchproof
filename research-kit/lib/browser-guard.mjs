@@ -84,6 +84,68 @@ export function parseUpstream(value) {
 }
 
 /**
+ * The hosts a configured proxy is not used for, from a NO_PROXY value (#314): `'*'` for
+ * everything, else a list of `{ host, port, subnet }`.
+ *
+ * Read as curl reads it: entries separated by commas or spaces; a name, which also covers its
+ * subdomains, with or without a leading `.` or `*.`; an IP address; a CIDR range
+ * (`127.0.0.0/8`); any of them with `:port` (an IPv6 address in brackets, then; a bare `::1`
+ * is the address). Found 2026-10-11: the keyless route honoured NO_PROXY through Node's
+ * env-proxy support and the guard forwarded everything to the upstream, so a loopback or
+ * intranet page collected on one route and failed on the other.
+ *
+ * Node's reading - undici's EnvHttpProxyAgent, which the keyless route's fetch uses - is
+ * narrower: a bare name matches only itself, a CIDR range matches nothing, and an unbracketed
+ * IPv6 address is split at its last colon as if it carried a port. For those entries this route
+ * goes direct where the keyless route still asks the proxy: the wider reading only sends
+ * direct what the operator listed.
+ */
+export function parseNoProxy(value) {
+  const entries = [];
+  for (const raw of String(value ?? '').split(/[,\s]+/)) {
+    const item = raw.trim().toLowerCase();
+    if (!item) continue;
+    if (item === '*') return '*';
+    let host = item;
+    let port = 0;
+    const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(item);
+    if (bracketed) { host = bracketed[1]; port = Number(bracketed[2] ?? 0); }
+    else if ((item.match(/:/g) ?? []).length === 1) {
+      const at = /^(.+):(\d+)$/.exec(item);
+      if (at) { host = at[1]; port = Number(at[2]); }
+    }
+    const cidr = /^(.+)\/(\d{1,3})$/.exec(host);
+    if (cidr && net.isIP(cidr[1])) {
+      const family = net.isIP(cidr[1]) === 6 ? 'ipv6' : 'ipv4';
+      const subnet = new net.BlockList();
+      try { subnet.addSubnet(cidr[1], Number(cidr[2]), family); } catch { continue; }
+      entries.push({ host: '', port, subnet });
+      continue;
+    }
+    entries.push({ host: normalizeHost(host.replace(/^\*?\./, '')), port, subnet: null });
+  }
+  return entries;
+}
+
+/** Whether `host:port` is on a parsed NO_PROXY list, and so goes direct rather than to the upstream. */
+export function bypassesProxy(list, host, port) {
+  if (list === '*') return true;
+  if (!Array.isArray(list) || !list.length) return false;
+  const name = normalizeHost(host);
+  const family = net.isIP(name);
+  return list.some((entry) => {
+    if (entry.port && entry.port !== Number(port)) return false;
+    if (entry.subnet) return family !== 0 && entry.subnet.check(name, family === 6 ? 'ipv6' : 'ipv4');
+    return name === entry.host || (family === 0 && name.endsWith(`.${entry.host}`));
+  });
+}
+
+/** The NO_PROXY value in `env`, read as Node's fetch reads it: the lower-case name first. */
+export function noProxyOf(env = process.env) {
+  return env.no_proxy ?? env.NO_PROXY ?? '';
+}
+
+/**
  * Whether `host` may be connected to, and at which address.
  *
  *   { refused }  why not: an internal address, or a name that resolves to one
@@ -122,15 +184,19 @@ export async function judge(host, port, { allowInternal = false, exempt = new Se
  * Start the guard on a loopback port. Returns `{ port, refused, close }`; `refused` grows with
  * every request turned away, as `{ host, why }`.
  */
-export async function startGuard({ allowInternal = false, exempt = [], upstream = null, lookup = dns.lookup, onFirstRequest = null, pageFirst = false } = {}) {
-  const up = parseUpstream(upstream);
+export async function startGuard({ allowInternal = false, exempt = [], upstream = null, bypass = '', lookup = dns.lookup, onFirstRequest = null, pageFirst = false } = {}) {
+  const configured = parseUpstream(upstream);
+  // A host the environment's NO_PROXY names is connected to directly, judged as it is with no
+  // upstream at all; everything else goes to the upstream (#314).
+  const noProxy = parseNoProxy(bypass);
+  const upstreamFor = (host, port) => (configured && !bypassesProxy(noProxy, host, port) ? configured : null);
   const skip = new Set(exempt.map((entry) => { const at = splitHostPort(entry); return at ? `${normalizeHost(at.host)}:${at.port}` : normalizeHost(entry); }));
   const refused = [];
   // The sockets a CONNECT hands over are not the server's to close: tracked, so `close` can end
   // them, or a tunnel the browser left half-open would keep the child alive past its timeout.
   const tunnels = new Set();
   const outgoing = new Set();
-  const judgeHost = (host, port) => judge(host, port, { allowInternal, exempt: skip, lookup, upstream: up });
+  const judgeHost = (host, port, up) => judge(host, port, { allowInternal, exempt: skip, lookup, upstream: up });
   // The browser's own traffic is not the page's, so it is not judged and not a refusal. It is
   // known two ways: by name (ADR-0124), and - with `pageFirst`, the render's rule - by timing
   // (ADR-0125): until the page the operator asked for has been requested, nothing can be the
@@ -160,16 +226,31 @@ export async function startGuard({ allowInternal = false, exempt = [], upstream 
     if (!/^https?:$/.test(target.protocol)) { done(entry, 'refused'); res.writeHead(400); res.end(`${REFUSAL_MARKER}: ${target.protocol} is not carried`); return; }
     const drop = dropped(target.hostname, Number(target.port) || 80);
     if (drop) { done(entry, 'dropped'); res.writeHead(403, { 'content-type': 'text/plain' }); res.end(`${DROP_MARKER}: ${target.host} - ${drop}`); return; }
-    const verdict = await judgeHost(target.hostname, Number(target.port) || 80);
+    const up = upstreamFor(target.hostname, Number(target.port) || 80);
+    const verdict = await judgeHost(target.hostname, Number(target.port) || 80, up);
     if (verdict.refused) { done(entry, 'refused'); res.writeHead(403, { 'content-type': 'text/plain' }); res.end(refusal(target.host, verdict.refused)); return; }
     const headers = { ...req.headers };
     delete headers['proxy-connection'];
     const options = up
       ? { host: up.host, port: up.port, path: req.url, method: req.method, headers: up.auth ? { ...headers, 'proxy-authorization': up.auth } : headers }
       : { host: verdict.address, port: Number(target.port) || 80, path: `${target.pathname}${target.search}`, method: req.method, headers: { ...headers, host: target.host } };
-    const upstreamRequest = http.request(options, (answer) => { done(entry, String(answer.statusCode)); res.writeHead(answer.statusCode, answer.headers); answer.pipe(res); });
+    const upstreamRequest = http.request(options, (answer) => {
+      done(entry, String(answer.statusCode));
+      res.writeHead(answer.statusCode, answer.headers);
+      answer.pipe(res);
+      // A body the origin cut off is cut off for the browser too (#315): piped, the answer that
+      // never completed left the browser's response open, and the browser rendered what had
+      // arrived as the page once its deadline ran out. Closed, the browser names the error.
+      answer.on('close', () => { if (!answer.complete) res.destroy(); });
+    });
     outgoing.add(upstreamRequest);
-    upstreamRequest.on('error', (err) => { done(entry, `error ${err.code ?? err.message}`); if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' }); res.end(`${target.host}: ${err.code ?? err.message}`); });
+    upstreamRequest.on('error', (err) => {
+      done(entry, `error ${err.code ?? err.message}`);
+      // After the headers the error text would only be appended to the page's body.
+      if (res.headersSent) { res.destroy(); return; }
+      res.writeHead(502, { 'content-type': 'text/plain' });
+      res.end(`${target.host}: ${err.code ?? err.message}`);
+    });
     upstreamRequest.on('close', () => outgoing.delete(upstreamRequest));
     req.pipe(upstreamRequest);
   });
@@ -188,7 +269,8 @@ export async function startGuard({ allowInternal = false, exempt = [], upstream 
     if (!at) { done(entry, 'refused'); fail('400 Bad Request'); return; }
     const drop = dropped(at.host, at.port);
     if (drop) { done(entry, 'dropped'); fail('403 Forbidden', `${DROP_MARKER}: ${req.url} - ${drop}`); return; }
-    const verdict = await judgeHost(at.host, at.port);
+    const up = upstreamFor(at.host, at.port);
+    const verdict = await judgeHost(at.host, at.port, up);
     if (verdict.refused) { done(entry, 'refused'); fail('403 Forbidden', refusal(req.url, verdict.refused)); return; }
     const tunnel = up
       ? net.connect(up.port, up.host, () => {
@@ -239,7 +321,7 @@ export function guardFlags(port) {
  * ending in `--dump-dom <url>`; the guard's flags are inserted before those two. Resolves to Chromium's exit as spawnSync would report
  * it, plus `refused`, `truncated` and `netLog` (ADR-0137).
  */
-export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, lookup = dns.lookup } = {}) {
+export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, bypass = '', lookup = dns.lookup } = {}) {
   const asked = new URL(url);
   // The host and port asked for are exempt from the literal-address judgment; a name among
   // them is still judged by what it resolves to (ADR-0155).
@@ -250,7 +332,7 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
   // was killed before it had been asked for.
   const clock = { timer: null, started: 0, firstRequestAt: null, timedOut: false, kill: () => {} };
   const arm = () => { clearTimeout(clock.timer); clock.timer = setTimeout(() => { clock.timedOut = true; clock.kill(); }, timeout); };
-  const guard = await startGuard({ allowInternal, exempt, upstream, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
+  const guard = await startGuard({ allowInternal, exempt, upstream, bypass, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
   // Chromium's net log, for the origin's HTTP status `--dump-dom` does not report (ADR-0137,
   // 2026-10-03): written to a private folder of this render's, read once the browser is gone,
   // and deleted on every way out. A folder that cannot be made means no log, which the
@@ -369,7 +451,8 @@ async function child() {
       }
     }
     const variable = proxyVariable(process.env);
-    const result = await renderThroughGuard({ ...job, allowInternal, upstream: variable ? process.env[variable] : null });
+    // NO_PROXY from the same environment the proxy was read from (#314).
+    const result = await renderThroughGuard({ ...job, allowInternal, upstream: variable ? process.env[variable] : null, bypass: noProxyOf(process.env) });
     // The decision is reported with the render: the transport judges the final URL the net log
     // names by the same rule, and only this half resolved the URL asked for (ADR-0137).
     process.stdout.write(JSON.stringify({ ...result, allowInternal }), () => process.exit(0));

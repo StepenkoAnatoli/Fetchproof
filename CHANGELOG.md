@@ -332,6 +332,35 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- On the keyless and browser routes an HTTP 429, or a 503 that carries `Retry-After`, is
+  waited out instead of recorded as failed: the server's delta-seconds or HTTP-date is handed
+  to the collector's and the search's wait loop as `retryAfterMs`, capped at the minute the
+  Firecrawl path uses, and a 429 with no header waits that minute. A server that asks for
+  longer than the cap is tried once more after the cap, then recorded. A host or search
+  provider that ran out of retries is not waited on again in the same run, so the waits do
+  not add up per page and per query; a `Retry-After` that is neither seconds nor a date is
+  treated as absent (#313).
+- Behind a configured proxy the browser transport honours `NO_PROXY`/`no_proxy`, which the
+  keyless route already did through Node: a listed host is connected to directly and judged
+  as with no proxy, and the rest still go to the proxy. The list is read as curl reads it (a
+  name and its subdomains, an IP, a CIDR range, `:port`, or `*`); Node's own reading, on the
+  keyless route, ignores CIDR ranges and unbracketed IPv6 addresses and matches a bare name
+  exactly (#314).
+- The browser transport reads the document response's Content-Type and the net error its
+  read ended in from Chromium's net log. A PDF or other binary response is refused by name,
+  as the keyless route refuses it (ADR-0105); a JSON or text response is kept as its text, and one that rendered no text is a failure; a
+  body Chromium could not decode or one cut off is a failure naming the error, not a partial
+  capture of what arrived (#315).
+- A page the kit refused for what it is - over the size a capture may hold, or a binary
+  response - is remembered as `refused` within the refresh window and not fetched or paid for
+  again; a standing 4xx such as a 401, 402 or 403 is remembered for the transport that got
+  it, so another route still tries the page. A rate limit (a 403 naming one included) and a
+  proxy's 405 or 407 are never remembered; `--force` retries anything. A keyless 404
+  or 410 is now remembered as gone too. A Firecrawl payload with `success: false` is
+  reported with the vendor's own error instead of "no page text" (ADR-0174, #316).
+- A target page that answers 402 with "Insufficient credits" in its title is a failed page,
+  no longer read as Firecrawl's own exhaustion: the run neither stops nor asks for a top-up,
+  and the pages after it are still fetched (#350).
 
 ## 0.9.5 — 2026-10-04
 

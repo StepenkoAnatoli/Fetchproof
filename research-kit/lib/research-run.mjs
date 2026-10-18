@@ -304,7 +304,11 @@ export function runResearch(root, {
   sleep = sleepSync,
   log = () => {},
 } = {}) {
-  const ask = (provider, text) => searchPatiently(provider, text, { limit: settings.limit, maxRateLimitRetries, sleep, log });
+  // What ran out of rate-limit retries in this run - a search provider, a host a page is on -
+  // is asked again without being waited for, so the waits do not add up per query and per page.
+  const searchLimited = new Set();
+  const rateLimited = new Set();
+  const ask = (provider, text) => searchPatiently(provider, text, { limit: settings.limit, maxRateLimitRetries, sleep, log, limited: searchLimited });
 
   // Credits run out mid-run: WHAT a run does then - switch once to the fallback (ADR-0086)
   // or stop and leave the rest `uncollected` (ADR-0129) - is one policy with one state
@@ -516,13 +520,15 @@ ${compatibility.remedy}`);
     }
     seen.add(urlKey(target.url));
     const decision = cacheDecision(corpus.captures, target.url, { refreshDays: freshness, force, now });
-    // A page that answered 404/410 within the window is not fetched and takes no budget slot:
-    // the slot is for a page that may exist (found 2026-09-29, a remembered 404 had crowded out
-    // the one real page a maxScrapes 1 run had room for).
-    const gone = decision.hit ? null : recentlyGone(root, target.url, { refreshDays: freshness, force, now });
+    // A page that answered 404/410 within the window, or that the kit refused for what it is
+    // (ADR-0174), is not fetched and takes no budget slot: the slot is for a page that may
+    // exist (found 2026-09-29, a remembered 404 had crowded out the one real page a
+    // maxScrapes 1 run had room for). Logged as what it is, `gone` or `refused`.
+    // A standing 4xx is remembered for the route that got it: the live transport is asked.
+    const gone = decision.hit ? null : recentlyGone(root, target.url, { refreshDays: freshness, force, now, transport: live(adapter).name });
     if (gone) {
       results.push({ ...target, ...gone });
-      log(`  gone      ${target.url} - ${gone.reason}`);
+      log(`  ${gone.status.padEnd(9)} ${target.url} - ${gone.reason}`);
       continue;
     }
     // The budget binds in a DRY RUN too. A preview that ignores it answers a different
@@ -552,12 +558,16 @@ ${compatibility.remedy}`);
       // Empty for a plan URL - nobody's ranking chose it, a person wrote it down.
       discoveredBy: target.rankedBy ?? '',
       dryRun,
+      maxRateLimitRetries,
+      sleep,
+      rateLimited,
       log,
     });
     let outcome = fetchWith(live(adapter));
     // The refused request cost nothing (a 402 is not charged), so it is not a failed page:
-    // the same page is fetched again through the fallback.
-    if (outcome.status === 'failed' && exhausted(live(adapter), outcome.reason)) {
+    // the same page is fetched again through the fallback. A failure that is the PAGE's own
+    // answer is never exhaustion, whatever its title says (#350).
+    if (outcome.status === 'failed' && !outcome.statusRefused && exhausted(live(adapter), outcome.reason)) {
       onExhaustion(outcome.reason, `fetch ${target.url}`);
       if (credits.stopped) {
         countUncollected();

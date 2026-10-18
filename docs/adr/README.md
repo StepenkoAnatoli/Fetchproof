@@ -177,4 +177,6 @@ directory and are treated as ADR-equivalent.
 
 | [0160](0160-package-approval-is-rederived-with-a-portable-baseline.md) | Claimed package approval is re-derived from its checked corpus with an unpromoted portable gate; false claims remain false, and major-1 early stamps require their actual historical input hash and a missing gate field. |
 
+| [0174](0174-a-page-the-kit-refused-for-what-it-is-is-not-fetched-again.md) | **A page the kit refused for what it is is not fetched again within the refresh window** (extends ADR-0100). An 11 MB page, a PDF and a 403 were scraped and paid for on every run; `recentlyGone` now also remembers the size cap and the binary refusal as `refused` on any route, a standing 4xx (not 405/407/408/429, never a rate limit) for the route that got it, and reads a 404/410 in the transports' wording too. 5xx, timeouts, rate limits and transport errors are still retried; `--force` retries anything. Rejected: remembering every failure, leaving the 4xx out, remembering 408/429 or a proxy's 405/407, a structured ledger field, keying all or none of the memory on the transport. |
+
 Domain vocabulary lives in [`CONTEXT.md`](../../CONTEXT.md).
