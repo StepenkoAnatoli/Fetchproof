@@ -332,6 +332,24 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- A project below the repository root is judged by the commit gate (ADR-0182). git runs the
+  hook at the top level, and an ungated top level answered "not-gated" before reading a staged
+  path, so code staged in a failing `packages/a` committed. Each staged path is now judged by
+  its nearest project below the top level - a folder whose tracked `research/DISCOVERY.md` is
+  the contract new-project wrote, or sits beside `research/raw/`, so a data folder, an
+  experiment plan or a vendored kit template in a repository without the kit is not one, and a
+  clone whose repository ignores `raw/` still is - from the index, and the verdict names it ("BLOCKED in
+  packages/a"), with the fix and the `GATE_OFF` override spelled for that project. The edit gate
+  judges a file by the same project instead of by the agent's cwd, asks a gated top level alone,
+  and keeps its `research/raw/` and `GATE_OFF` refusals for every project above the file; doctor
+  says where the commit gate runs when the project is below the root (#309).
+- The commit gate blocks a commit that removes evidence HEAD holds: a staged deletion, or the
+  deleting half of a rename, of a capture HEAD's or the staged ledger names; the ledger itself
+  deleted (`git rm -r research/raw`); or a ledger entry dropped with its capture. It names the
+  file or seq and `git checkout HEAD -- <file>`. These had committed as phase-1 work while an
+  edit to the same capture was refused (ADR-0093), and the builder's handoff then reported a
+  corpus that "did not travel". A capture never committed, or not yet staged, stays
+  committable, as does the sanctioned ledger migration (#312).
 
 ## 0.9.5 — 2026-10-04
 

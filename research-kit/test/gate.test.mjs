@@ -2,8 +2,10 @@
 // overrides. Plus the one that matters: it actually blocks.
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, makePassingProject, makeProject, corrupt, tempDir, fs, path, KIT_ROOT, requireGit, fixtureInitArgs } from './harness.mjs';
+import { test, describe, assert, makePassingProject, makeProject, corrupt, tempDir, fs, path, KIT_ROOT, requireGit, fixtureInitArgs, fixtureCommitArgs } from './harness.mjs';
 import { PATHS, resolve, writeText, readText, writeJson } from '../lib/core.mjs';
+import { writeRaw } from '../lib/collect.mjs';
+import { appendFetch, rebuildLedger } from '../lib/provenance.mjs';
 import { evaluate, isGated, splitPathList, architectureMapBreach, loadGateConfig, DEFAULT_CODE_PATHS, suiteBreach, suiteOwed, runSuiteHere, isKitCheckout, SUITE_RULE, SUITE_TIMEOUT_MS } from '../lib/gate.mjs';
 // The suite budget's helpers are read off the namespace, so a missing one fails its own test, not the file.
 import * as gateLib from '../lib/gate.mjs';
@@ -91,6 +93,114 @@ test('diff-scope: unfinished evidence is still committable - only integrity find
   corrupt(dir, PATHS.discovery, (text) => text.replace('CLOSED', 'OPEN'));
   const verdict = evaluate(dir, { gate: 'commit', stagedPaths: [PATHS.discovery] });
   assert.equal(verdict.allow, true, verdict.reason);
+});
+
+// #312: a committed corpus, so the commit gate judges a real index against a real HEAD.
+function committedProject() {
+  requireGit('a staged deletion judged against HEAD');
+  const dir = makePassingProject();
+  const run = (args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  run(fixtureInitArgs());
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['config', 'user.name', 'Fixture']);
+  run(['add', '-A', '-f']);
+  run(fixtureCommitArgs('the corpus'));
+  const capture = fs.readdirSync(resolve(dir, PATHS.raw)).find((f) => f.endsWith('.md'));
+  return { dir, run, rel: `${PATHS.raw}/${capture}` };
+}
+const judgeIndex = (dir) => evaluate(dir, { gate: 'commit', stagedPaths: gateLib.readStagedPaths(dir), record: false });
+
+// #312 (2026-10-13): `git rm` of a ledgered, cited capture committed as "confined to research/",
+// where editing the same file was refused as altered evidence (ADR-0093). The ledger is
+// append-only, so the deletion's raw-missing could never be finished by collecting more, and a
+// builder's handoff then said "something did not travel". A rename is the same deletion.
+test('diff-scope: deleting or renaming a ledgered capture blocks, naming the file and its seq', () => {
+  for (const how of ['rm', 'rm --cached', 'mv']) {
+    const { dir, run, rel } = committedProject();
+    if (how === 'mv') run(['mv', rel, `${PATHS.raw}/renamed.md`]);
+    else run(['rm', '-q', ...(how === 'rm --cached' ? ['--cached'] : []), rel]);
+    const verdict = judgeIndex(dir);
+    assert.equal(verdict.judged, 'index');
+    assert.equal(verdict.allow, false, `git ${how} of a ledgered capture was committable: ${verdict.reason}`);
+    assert.ok(verdict.reason.includes(rel), verdict.reason);
+    assert.match(verdict.reason, /seq 1/);
+    assert.match(verdict.reason, /being deleted/);
+    assert.ok(verdict.fix.includes(`git checkout HEAD -- ${rel}`), verdict.fix);
+  }
+});
+
+test('diff-scope: a capture that is not in HEAD yet is unfinished, not deleted - still committable', () => {
+  const { dir, run } = committedProject();
+  // A second fetch, its ledger line staged and its capture not: a part-staged corpus.
+  const entry = writeRaw(dir, {
+    url: 'https://example.invalid/docs/pricing', title: 'Pricing', markdown: `# Pricing\n\n${'Pricing words. '.repeat(40)}`,
+    cmd: 'firecrawl scrape https://example.invalid/docs/pricing', statusCode: 200, transport: 'firecrawl-cli', completeness: 'full',
+  });
+  appendFetch(dir, { op: 'scrape', url: entry.url, type: 'P', raw: entry.file, transport: 'firecrawl-cli', completeness: 'full', cmd: entry.command });
+  run(['add', '-f', PATHS.ledger]);
+  const partStaged = judgeIndex(dir);
+  assert.equal(partStaged.allow, true, `a capture on disk and not staged yet was refused: ${partStaged.reason}`);
+  // The same entry with its capture gone from disk, never having been committed: mid-collection.
+  fs.rmSync(resolve(dir, entry.file));
+  const neverCommitted = judgeIndex(dir);
+  assert.equal(neverCommitted.allow, true, `a capture never committed was treated as deleted: ${neverCommitted.reason}`);
+  // A file under research/raw/ that no ledger entry names is not evidence; removing it is not an alteration.
+  writeText(resolve(dir, `${PATHS.raw}/stray.md`), 'not a capture\n');
+  run(['add', '-f', `${PATHS.raw}/stray.md`]);
+  run(fixtureCommitArgs('a stray file'));
+  run(['rm', '-q', `${PATHS.raw}/stray.md`]);
+  assert.equal(judgeIndex(dir).allow, true, 'removing an unledgered file was refused');
+});
+
+// Review of #312 (2026-10-18): the deletion check read only the STAGED ledger, so a commit that
+// took the ledger with the captures - `git rm -r research/raw` - found nothing named and allowed
+// "committing evidence is the workflow"; and a capture deleted with the ledger line naming it
+// left a chain that verifies, preflight passed, and the check never ran.
+test('diff-scope: removing the ledger, or a ledger entry with its capture, blocks against HEAD', () => {
+  {
+    const { dir, run } = committedProject();
+    run(['rm', '-r', '-q', PATHS.raw]);
+    const verdict = judgeIndex(dir);
+    assert.equal(verdict.allow, false, `git rm -r research/raw was committable: ${verdict.reason}`);
+    assert.match(verdict.reason, /\.fetches\.jsonl is in HEAD and is being deleted/);
+    assert.ok(verdict.fix.includes(`git checkout HEAD -- ${PATHS.ledger}`), verdict.fix);
+  }
+  {
+    const { dir, run, rel } = committedProject();
+    run(['rm', '-q', '-f', rel, PATHS.ledger]);
+    assert.equal(judgeIndex(dir).allow, false, 'a capture and the ledger removed together were committable');
+  }
+  {
+    // Two fetches committed; the newest capture and the ledger line naming it removed together.
+    const { dir, run } = committedProject();
+    const entry = writeRaw(dir, {
+      url: 'https://example.invalid/docs/pricing', title: 'Pricing', markdown: `# Pricing\n\n${'Pricing words. '.repeat(40)}`,
+      cmd: 'firecrawl scrape https://example.invalid/docs/pricing', statusCode: 200, transport: 'firecrawl-cli', completeness: 'full',
+    });
+    appendFetch(dir, { op: 'scrape', url: entry.url, type: 'P', raw: entry.file, transport: 'firecrawl-cli', completeness: 'full', cmd: entry.command });
+    run(['add', '-A', '-f']);
+    run(fixtureCommitArgs('a second fetch'));
+    run(['rm', '-q', entry.file]);
+    const ledger = resolve(dir, PATHS.ledger);
+    const lines = fs.readFileSync(ledger, 'utf8').split('\n').filter(Boolean);
+    fs.writeFileSync(ledger, `${lines.slice(0, -1).join('\n')}\n`);
+    run(['add', '-f', PATHS.ledger]);
+    const verdict = judgeIndex(dir);
+    assert.equal(verdict.allow, false, `a ledger entry removed with its capture was committable: ${verdict.reason}`);
+    assert.match(verdict.reason, /loses the entry HEAD records \(seq 2\)/);
+  }
+  {
+    // The one sanctioned rewrite keeps every entry's seq and file, and stays committable.
+    const { dir, run } = committedProject();
+    assert.equal(rebuildLedger(dir, null, { note: 'fixture migration' }).rebuilt, true);
+    run(['add', '-f', PATHS.ledger]);
+    const verdict = judgeIndex(dir);
+    assert.equal(verdict.allow, true, `the sanctioned ledger migration was refused: ${verdict.reason}`);
+  }
 });
 
 // Found 2026-09-27, on a fresh collector and on a builder that unpacked a remote package: after

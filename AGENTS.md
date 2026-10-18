@@ -88,10 +88,15 @@ does not authorize fetching or editing the collector's Git corpus (ADR-0150).
 ## Starting in the wrong place: ask which project, do not hunt for it
 
 For gate and corpus commands, the project is the **current working directory**. Those
-commands take no project argument: the gate resolves one project from where it stands, and every artifact it
-judges - `research/DISCOVERY.md`, the corpus, the ledger - is read relative to that one
-root. Getting this wrong is worse than doing nothing, because everything downstream is
-then true of the wrong thing. The desktop panel's accepted `--project` flag
+commands take no project argument: each resolves its project from where it stands, and every
+artifact it judges - `research/DISCOVERY.md`, the corpus, the ledger - is read relative to
+that root. The two hooks are the exception, because neither chooses where it runs: git runs
+the commit gate at the repository's top level, and the edit gate sees whatever cwd the agent
+has, so both judge a file by the project it belongs to - the top level when that is gated,
+else the nearest folder below it whose `research/DISCOVERY.md` was written by `new-project`
+or sits beside `research/raw/` - and, for the commit gate, is tracked or staged (ADR-0182).
+Getting this wrong is worse than doing nothing, because everything downstream is then true
+of the wrong thing. The desktop panel's accepted `--project` flag
 (ADR-0147) selects its project explicitly; confirm that effective project before
 diagnostics instead of generalizing the flag to gate/corpus commands.
 

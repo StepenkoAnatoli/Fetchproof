@@ -587,6 +587,59 @@ test('gateHealth names an absent commit gate and the command that installs it', 
   if (commit.severity === 'warn') assert.match(commit.fix, /install-hooks\.mjs/);
 });
 
+// #309 (2026-10-13): from a project below its repository's root, doctor said "gate-commit pass"
+// - true of the machine, and false of the project, which the commit gate (run by git at the top
+// level) never judged. It now says where the gate runs and whether that root judges this project.
+test('gateHealth from a project below the repository root says where the commit gate runs', () => {
+  requireGit('a project below the repository root');
+  const { dir, env } = machine({ settings: {} });
+  writeText(env.RESEARCH_KIT_INSTALL_STATE, JSON.stringify({ kitHome: KIT_ROOT }));
+  const gitEnv = { ...env, GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  writeText(gitEnv.GIT_CONFIG_GLOBAL, `[core]\n hooksPath = ${JSON.stringify(path.join(KIT_ROOT, 'githooks').replace(/\\/g, '/'))}\n`);
+  const top = tempDir('rk-doctor-mono-');
+  assert.equal(spawnSync('git', fixtureInitArgs(), { cwd: top, env: gitEnv }).status, 0);
+  const project = makeProject(path.join(top, 'packages', 'a'), { content: true });
+  const commitFinding = (root) => find(gateHealth(root, { env: gitEnv, gitPaths: { env: gitEnv, cwd: root }, record: false }), 'gate-commit');
+
+  const atRoot = commitFinding(top);
+  assert.equal(atRoot.severity, 'pass', atRoot.detail);
+  assert.doesNotMatch(atRoot.detail, /below the repository root/, 'the top level is where the hook runs');
+
+  // A scaffold nobody has committed: the commit gate finds a project below the root by its
+  // tracked or staged contract, so doctor must not promise it is judged (second review of #309).
+  const uncommitted = commitFinding(project);
+  assert.equal(uncommitted.severity, 'warn', uncommitted.detail);
+  assert.match(uncommitted.detail, /not tracked or staged/);
+  assert.match(uncommitted.fix, /git add research\/DISCOVERY\.md/);
+  assert.equal(spawnSync('git', ['add', 'packages/a/research/DISCOVERY.md'], { cwd: top, env: gitEnv }).status, 0);
+
+  const nested = commitFinding(project);
+  assert.equal(nested.severity, 'pass', nested.detail);
+  assert.match(nested.detail, /below the repository root/);
+  assert.match(nested.detail, /judges the staged paths under this project/);
+  assert.ok(nested.detail.includes(path.basename(top)), `the top level is not named: ${nested.detail}`);
+
+  // Below the root a project needs research/DISCOVERY.md with research/raw/ or the contract
+  // new-project writes (ADR-0182): without raw/, the rendered contract still makes it one.
+  fs.rmSync(path.join(project, 'research', 'raw'), { recursive: true, force: true });
+  assert.equal(commitFinding(project).severity, 'pass', 'a clone whose repository ignores raw/ is still a project');
+  const contract = path.join(project, 'research', 'DISCOVERY.md');
+  const rendered = fs.readFileSync(contract, 'utf8');
+  fs.writeFileSync(contract, '# Notes\n');
+  const unmarked = commitFinding(project);
+  assert.equal(unmarked.severity, 'warn', unmarked.detail);
+  assert.match(unmarked.detail, /not recognised there/);
+  fs.writeFileSync(contract, rendered);
+  fs.mkdirSync(path.join(project, 'research', 'raw'));
+
+  // A gated top level is judged on its own verdict, and this project's gate is never asked.
+  fs.mkdirSync(path.join(top, 'research', 'raw'), { recursive: true });
+  const shadowed = commitFinding(project);
+  assert.equal(shadowed.severity, 'warn', shadowed.detail);
+  assert.match(shadowed.detail, /itself a gated project/);
+  assert.ok(shadowed.detail.includes(path.basename(top)), shadowed.detail);
+});
+
 // --- what do the hooks hand on to? ---------------------------------------------------
 
 // Found 2026-10-03 on the maintainer's machine: after "research gate: allow" every commit

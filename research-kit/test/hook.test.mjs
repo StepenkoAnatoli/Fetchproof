@@ -618,3 +618,114 @@ test('the edit gate does not read a terminal stdin: it allows, with the reason, 
   assert.ok(asks > 0 && asks < reads, 'the hook reads stdin before asking whether it is a terminal');
   assert.match(hook.slice(asks, reads), /emit\('allow'/, 'a terminal stdin is allowed with a reason, not refused');
 });
+
+// #309 (2026-10-13): a project scaffolded below the repository root. git runs the commit hook at
+// the top level, which carries no marker, so the gate answered "not-gated" before it read a staged
+// path; and the edit gate judged by the agent's cwd, so the same Write to packages/a/src/app.js
+// asked from inside the package and was allowed from the top. Both now judge a path by its
+// nearest gated ancestor in its repository, wherever the agent stands.
+function nestedRepo() {
+  const top = tempDir('rk-hook-mono-');
+  const project = path.join(top, 'packages', 'a');
+  scaffoldProject(project, { topic: 'a package that needs research', kit: KIT_ROOT });
+  git(top, fixtureInitArgs());
+  git(top, ['config', 'user.email', 'fixture@example.invalid']);
+  git(top, ['config', 'user.name', 'Fixture']);
+  writeText(path.join(top, 'README.md'), '# mono\n');
+  git(top, ['add', '-A', '-f']);
+  git(top, fixtureCommitArgs('the monorepo'));
+  return { top, project };
+}
+
+test('the real hook, run at the top level, blocks code staged in a failing project below it', () => {
+  requireCapability(SH, 'SHELL-NOT-FOUND', `no POSIX sh on this host (tried: ${SH_TRIED.join(', ')})`);
+  const { top } = nestedRepo();
+  writeText(path.join(top, 'packages', 'a', 'src', 'app.js'), 'export const x = 1;\n');
+  git(top, ['add', 'packages/a/src/app.js']);
+  const blocked = runHook(top);
+  assert.equal(blocked.status, 1, `code before research committed below the root:\n${blocked.stdout}${blocked.stderr}`);
+  assert.match(blocked.stderr, /BLOCKED in packages\/a/);
+  git(top, ['reset', '-q', '--', 'packages/a/src/app.js']);
+  writeText(path.join(top, 'README.md'), '# mono, edited\n');
+  git(top, ['add', 'README.md']);
+  const outside = runHook(top);
+  assert.equal(outside.status, 0, `a path under no gated project was judged:\n${outside.stdout}${outside.stderr}`);
+});
+
+function editHook(cwd, toolInput) {
+  const r = spawnSync(process.execPath, [path.join(KIT_ROOT, 'hooks', 'edit-gate.mjs')], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd, tool_input: toolInput }),
+    encoding: 'utf8', env: { ...process.env, RESEARCH_KIT_CONFIG: isolatedConfig() },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout).hookSpecificOutput;
+}
+
+test('the edit gate judges the file it edits by its project, not by where the agent stands', () => {
+  const { top, project } = nestedRepo();
+  const app = path.join(project, 'src', 'app.js');
+  for (const cwd of [top, project, path.join(top, 'packages')]) {
+    const out = editHook(cwd, { file_path: app, content: 'x' });
+    assert.equal(out.permissionDecision, 'ask', `from ${path.relative(top, cwd) || 'the top'}: ${out.permissionDecisionReason}`);
+    assert.equal(editHook(cwd, { file_path: path.join(project, 'research', 'MAP.md') }).permissionDecision, 'allow',
+      'phase-1 work below the root is phase-1 work from anywhere');
+    assert.equal(editHook(cwd, { file_path: path.join(project, 'research', 'raw', 'typed.md') }).permissionDecision, 'deny',
+      'research/raw/ below the root is still written only by the collector');
+  }
+  const relative = editHook(top, { file_path: 'packages/a/src/app.js' });
+  assert.equal(relative.permissionDecision, 'ask', 'a path relative to the top-level cwd');
+  assert.ok(relative.permissionDecisionReason.includes(`Judged by the project at ${project}`), relative.permissionDecisionReason);
+  // The mirror image: from inside the failing project, a file that is not its own is not its gate's.
+  assert.equal(editHook(project, { file_path: path.join(top, 'README.md') }).permissionDecision, 'allow');
+  assert.equal(editHook(project, { file_path: '../../tools/build.js' }).permissionDecision, 'allow');
+  assert.equal(editHook(project, { file_path: path.join(tempDir('rk-elsewhere-'), 'app.js') }).permissionDecision, 'allow');
+  assert.equal(editHook(project, {}).permissionDecision, 'ask', 'a call naming no file is judged by the cwd, as before');
+});
+
+// Review of #309 (2026-10-18), three findings in the edit gate's new lookup.
+test('a decoy research/research/ does not lift the research/raw/ and GATE_OFF refusals', () => {
+  const { top, project } = nestedRepo();
+  const gatedTop = makePassingProject();
+  git(gatedTop, fixtureInitArgs());
+  for (const P of [project, gatedTop]) {
+    // Each write is phase-1 work, allowed; together they make P/research look like a project.
+    for (const rel of ['research/plan.json', 'research/DISCOVERY.md', 'research/raw/.gitkeep']) {
+      const decoy = path.join(P, 'research', ...rel.split('/'));
+      assert.equal(editHook(P, { file_path: decoy, content: '{}' }).permissionDecision, 'allow');
+      writeText(decoy, '{}\n');
+    }
+    for (const rel of ['research/raw/forged.md', 'research/raw/.fetches.jsonl', 'research/GATE_OFF']) {
+      for (const cwd of [P, top]) {
+        const out = editHook(cwd, { file_path: path.join(P, ...rel.split('/')), content: 'x' });
+        assert.equal(out.permissionDecision, 'deny', `${rel} after the decoy, from ${cwd}: ${out.permissionDecisionReason}`);
+      }
+    }
+  }
+});
+
+test('under a gated top level the edit gate asks the top level, as the commit gate does', () => {
+  // This repository's own shape: a gated root holding nested projects (docs/decisions/*). The
+  // commit gate judges every staged path by the root's verdict; so does the edit gate.
+  const top = makePassingProject();
+  git(top, fixtureInitArgs());
+  const nested = path.join(top, 'docs', 'decisions', 'x');
+  scaffoldProject(nested, { topic: 'a failing nested decision', kit: KIT_ROOT });
+  const map = path.join(nested, 'docs', 'ARCHITECTURE.md');
+  for (const cwd of [top, nested]) {
+    const out = editHook(cwd, { file_path: map, content: 'x' });
+    assert.equal(out.permissionDecision, 'allow', `from ${cwd}, judged by the failing nested project: ${out.permissionDecisionReason}`);
+  }
+  assert.equal(editHook(top, { file_path: path.join(nested, 'research', 'raw', 'forged.md') }).permissionDecision, 'deny',
+    'the nested project\'s captures are still written only by the collector');
+});
+
+test('in a repository without the kit, research-shaped folders are not judged by the edit gate', () => {
+  const top = tempDir('rk-hook-nonkit-');
+  git(top, fixtureInitArgs());
+  writeText(path.join(top, 'analysis', 'research', 'raw', 'survey.csv'), 'a,b\n');
+  writeText(path.join(top, 'ml', 'research', 'plan.json'), '{}\n');
+  for (const file of ['analysis/model.py', 'analysis/research/raw/survey.csv', 'ml/train.py']) {
+    const out = editHook(top, { file_path: path.join(top, ...file.split('/')), content: 'x' });
+    assert.equal(out.permissionDecision, 'allow', `${file}: ${out.permissionDecisionReason}`);
+  }
+});

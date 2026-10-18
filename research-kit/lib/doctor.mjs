@@ -9,9 +9,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { PATHS, resolve, exists, isDirectory, readText, tempBase, looksBinary } from './core.mjs';
 import { verdictContext, runPreflight } from './preflight.mjs';
-import { isGated } from './gate.mjs';
+import { isGated, isProjectBelowTop } from './gate.mjs';
 import { verifyHandoff, handoffRemedy } from './handoff.mjs';
 import { validateProject, hookExecutability, GATE_MARKERS, KIT_ROOT } from './scaffold.mjs';
 import { settingsState, deployedDrift, driftNote, handOnState } from './installer.mjs';
@@ -223,6 +224,33 @@ export function commitGateState({ hooksPath: dir, kitHome = KIT_HOME } = {}) {
  */
 export { handOnState };
 
+/**
+ * The repository's top level when `root` is below it, in git's spelling; null when `root` is
+ * the top level or in no repository (#309). Compared by real path, because git names the top
+ * level by its real path and `root` may carry an 8.3 or symlinked spelling.
+ */
+function topLevelAbove(root, gitPaths) {
+  const top = repoTopLevel({ ...gitPaths, cwd: root });
+  if (!top) return null;
+  const real = (p) => {
+    try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
+  };
+  const fold = (p) => (process.platform === 'win32' ? real(p).toLowerCase() : real(p));
+  return fold(top) === fold(root) ? null : path.resolve(top);
+}
+
+/** Whether the index holds this project's contract: tracked, or staged in the commit to come. */
+function contractInIndex(root, gitPaths) {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', PATHS.discovery], {
+      cwd: root, env: gitPaths.env ?? process.env, stdio: 'ignore', windowsHide: true, timeout: 10_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function gateHealth(root, { env = process.env, gitPaths = {}, record = true } = {}) {
   const out = [];
   const global = hooksPath('global', gitPaths);
@@ -235,7 +263,32 @@ export function gateHealth(root, { env = process.env, gitPaths = {}, record = tr
     const state = commitGateState({ hooksPath: global, kitHome: readInstallState(env)?.kitHome ?? KIT_HOME });
     const repair = kitCommand('install-hooks.mjs');
     if (state.state === 'current') {
-      out.push(f('pass', 'gate-commit', `${global} (pre-commit ${state.mode.reason})`));
+      // "Installed" is true of the machine; whether the gate judges THIS project depends on where
+      // git runs it (#309): at the repository's top level. Below it, the gate judges a staged
+      // path by its nearest project - its research/DISCOVERY.md tracked or staged, with
+      // research/raw/ or the contract new-project rendered (ADR-0182) - unless the top level is
+      // itself gated, and then its verdict is the one asked, never this project's. doctor said a
+      // bare pass from packages/a.
+      const below = isGated(root) ? topLevelAbove(root, gitPaths) : null;
+      if (below && isGated(below)) {
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and that root is itself a gated project: the commit gate judges every staged path by the root's verdict, never by this project's`));
+      } else if (below && !isProjectBelowTop(root)) {
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and it is not recognised there: below the root the commit gate judges a folder holding ${PATHS.discovery} together with ${PATHS.raw}/ or the contract new-project writes`,
+          kitCommand('new-project.mjs', '.')));
+      } else if (below && !contractInIndex(root, gitPaths)) {
+        // The commit gate finds a project below the root by its tracked contract (ADR-0182); a
+        // scaffold nobody has committed yet is judged only once its contract is staged.
+        out.push(f('warn', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - but this project is below the repository root (${below}), where git runs the commit gate, and its ${PATHS.discovery} is not tracked or staged: until it is, the commit gate does not judge this project`,
+          `git add ${PATHS.discovery}, and commit it`));
+      } else if (below) {
+        out.push(f('pass', 'gate-commit',
+          `${global} (pre-commit ${state.mode.reason}) - this project is below the repository root (${below}); git runs the commit gate there, and it judges the staged paths under this project by this project's gate`));
+      } else {
+        out.push(f('pass', 'gate-commit', `${global} (pre-commit ${state.mode.reason})`));
+      }
     } else if (state.state === 'foreign') {
       out.push(f('fail', 'gate-commit',
         `core.hooksPath is ${global}, which is NOT the deployed kit's ${state.expected} - the commit gate that runs belongs to another tree and blocks, or passes, on its own rules`,
