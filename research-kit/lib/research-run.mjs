@@ -286,6 +286,8 @@ export function runResearch(root, {
   searchAdapter = null,
   // Several providers: asked in parallel and interleaved by rank. One stays one.
   searchAdapters = null,
+  // The operator named the search provider: a failure on it is not degraded (#317).
+  searchExplicit = false,
   // Taken once, when the fetch adapter reports its credits are exhausted (ADR-0086): the
   // rest of the run searches and fetches through it. Null means no fallback.
   fallbackAdapter = null,
@@ -321,7 +323,7 @@ export function runResearch(root, {
   // failure rows - is the session's (ADR-0135); this coordinator decides what to do with
   // each answer. Its failure rows land in the failure log as `op: "search"`.
   const session = searchSession({
-    adapter, searchAdapter, searchAdapters, askOne: ask, credits, log,
+    adapter, searchAdapter, searchAdapters, searchExplicit, askOne: ask, credits, log,
     record: (f) => appendJsonLine(root, PATHS.failures, {
       at: new Date().toISOString(), op: 'search', query: f.query, provider: f.provider, error: f.error,
       ...(f.degraded ? { degraded: true } : {}),

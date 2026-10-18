@@ -317,10 +317,16 @@ test('an explicit search provider that cannot run is refused before anything is 
   }));
   for (const [bin, extra] of [['research.mjs', ['--plan', 'research/plan.json']], ['decompose.mjs', []]]) {
     for (const [provider, names] of [['serpapi', /SERPAPI_API_KEY/], ['searxng', /SEARXNG_URL/]]) {
-      const r = run(bin, [...extra, '--transport', 'http-keyless', '--search-transport', provider], { root });
-      assert.notEqual(r.status, 0, `${bin} --search-transport ${provider} ran with the provider unready:\n${r.out}${r.err}`);
-      assert.match(r.err, names, `${bin} ${provider}: ${r.err}`);
-      assert.doesNotMatch(r.out + r.err, /search failed/, `${bin} ${provider} searched before refusing`);
+      // #311: the dry run too - it previewed "would search ... on serpapi" and exited 0 for a
+      // run that refuses, because both guards were `spends && notReady`.
+      for (const dry of [[], ['--dry-run']]) {
+        const r = run(bin, [...extra, ...dry, '--transport', 'http-keyless', '--search-transport', provider], { root });
+        const label = `${bin} ${dry.join(' ')} --search-transport ${provider}`;
+        assert.notEqual(r.status, 0, `${label} ran with the provider unready:\n${r.out}${r.err}`);
+        assert.match(r.err, names, `${label}: ${r.err}`);
+        assert.doesNotMatch(r.out + r.err, /search failed/, `${label} searched before refusing`);
+        assert.doesNotMatch(r.out, /would search/, `${label} previewed searches a real run refuses:\n${r.out}`);
+      }
     }
   }
 });
@@ -598,6 +604,15 @@ test('FR-6: decompose --dry-run announces the providers and writes a map', () =>
   const r = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run'], { root });
   assert.equal(r.status, 0, r.err);
   assert.ok(fs.existsSync(path.join(root, 'research/MAP.md')), 'no map was written');
+  // #305: a second dry run finds a drafted map, previews, and leaves it alone - exit 0, since
+  // nothing is wrong, and the reason said rather than the "wrote" paragraph.
+  const drafted = fs.readFileSync(path.join(root, 'research/MAP.md'), 'utf8');
+  const again = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run', '--recipe', 'api-integration'], { root });
+  assert.equal(again.status, 0, again.all);
+  assert.match(again.out, /would search "cli probe"/, again.all);
+  assert.match(again.all, /already drafted - a dry run does not write over it/, again.all);
+  assert.doesNotMatch(again.out, /^wrote /m, again.all);
+  assert.equal(fs.readFileSync(path.join(root, 'research/MAP.md'), 'utf8'), drafted, 'the drafted map was rewritten');
 });
 
 test('decompose refuses an unknown search provider before doing any work', () => {
@@ -605,6 +620,17 @@ test('decompose refuses an unknown search provider before doing any work', () =>
   const r = run('decompose.mjs', ['--topic', 'cli probe', '--search-transport', 'bing'], { root });
   assert.equal(r.status, 2, r.all);
   assert.match(r.all, /unknown search provider/);
+  // The dry run too (#311): its selection error was swallowed, and it previewed and exited 0.
+  for (const [args, env, want] of [
+    [['--search-transport', 'bing'], {}, /unknown search provider/],
+    [[], { RESEARCH_KIT_SEARCH_TRANSPORT: 'bing' }, /unknown search provider/],
+    [['--transport', 'curl'], {}, /unknown transport/],
+  ]) {
+    const dry = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run', ...args], { root, env });
+    assert.equal(dry.status, 2, `${args.join(' ')} ${JSON.stringify(env)}:\n${dry.all}`);
+    assert.match(dry.err, want, dry.all);
+    assert.doesNotMatch(dry.out, /would search/, dry.all);
+  }
 });
 
 // Found 2026-09-27: `decompose --topic x` in a project scaffolded for another topic wrote

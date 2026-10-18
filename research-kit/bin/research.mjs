@@ -179,8 +179,9 @@ try {
 }
 // An explicit search provider that cannot run (no key, no instance) is refused before anything
 // is searched. selectSearch reports it on the SELECTION; this passed only the provider module
-// to runResearch, whose own check therefore never fired (found 2026-09-30).
-if (spends && chosen.search.notReady) {
+// to runResearch, whose own check therefore never fired (found 2026-09-30). The dry run is
+// refused the same way (#311): it previewed searches on a provider that cannot run, exit 0.
+if (chosen.search.notReady) {
   process.stderr.write(`${chosen.search.notReady}\n`);
   process.exit(2);
 }
@@ -217,6 +218,7 @@ try {
     fallbackAdapter,
     searchAdapter: chosen.search.adapter,
     searchAdapters: chosen.search.adapters ?? null,
+    searchExplicit: Boolean(chosen.search.explicit),
     plan: typeof flags.plan === 'string' ? readPlan(root, flags.plan) : null,
     depth: typeof flags.depth === 'string' ? flags.depth : '',
     refreshDays: flags['refresh-days'] === undefined ? null : Number(flags['refresh-days']),

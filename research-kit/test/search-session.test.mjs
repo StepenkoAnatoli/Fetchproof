@@ -88,6 +88,42 @@ test('a failed ask is one failure on its provider, and the fetch provider is ask
   ]);
 });
 
+// #317: a failed query on an explicitly chosen SearXNG instance went to the fetch provider's
+// search - on the keyless route, lite.duckduckgo.com, the route SearXNG exists to avoid
+// (ADR-0104). An operator who named the provider said where their queries may go: a failure
+// on it is kept, never degraded (ADR-0033). The automatic path keeps RR-1.
+test('an explicitly chosen provider that fails is not degraded: one failure on it, the fetch provider never asked', () => {
+  const search = provider({ name: 'searxng', fail: ['searxng returned HTTP 429'] });
+  const fetch = provider({ name: 'http-keyless', results: rows('fetch', 3) });
+  const { s, lines, recorded } = session({ adapter: fetch, searchAdapter: search, searchExplicit: true });
+  const found = s.ask('q');
+  assert.equal(found.ok, false);
+  assert.notEqual(found.degraded, true, 'a kept failure is no degrade');
+  assert.equal(found.error, 'searxng returned HTTP 429');
+  assert.equal(found.provider, 'searxng');
+  assert.equal(search.calls.length, 1);
+  assert.equal(fetch.calls.length, 0, 'the query went to the fetch provider\'s search');
+  const m = s.meters();
+  assert.equal(m.searchFailures, 1);
+  assert.deepEqual(m.searchFailuresOn, { searxng: 1 });
+  assert.equal(m.degraded, 0);
+  assert.deepEqual(recorded, [{ query: 'q', error: 'searxng returned HTTP 429', provider: 'searxng' }]);
+  assert.deepEqual(lines, [
+    '  search failed on searxng: searxng returned HTTP 429 - not degraded: searxng was chosen explicitly',
+    '  search failed: q - searxng returned HTTP 429',
+  ]);
+
+  // The same provider selected automatically still degrades once (RR-1).
+  const auto = provider({ name: 'searxng', fail: ['searxng returned HTTP 429'] });
+  const autoFetch = provider({ name: 'http-keyless', results: rows('fetch', 3) });
+  const { s: automatic } = session({ adapter: autoFetch, searchAdapter: auto });
+  const answered = automatic.ask('q');
+  assert.equal(answered.ok, true);
+  assert.equal(answered.degraded, true);
+  assert.equal(autoFetch.calls.length, 1);
+  assert.equal(automatic.meters().degraded, 1);
+});
+
 test('ONE accounting rule: usage an adapter reports on a FAILED ask is still counted - the vendor charged for it', () => {
   // Today's adapters report no usage on a failure; a provider that did would be counted,
   // because the meter is the vendor's and not the outcome's (ADR-0135).

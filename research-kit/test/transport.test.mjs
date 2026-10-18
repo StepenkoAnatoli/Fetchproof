@@ -953,6 +953,18 @@ test('an explicitly pinned provider stays a single provider', () => {
   assert.equal(search.name, 'serpapi');
 });
 
+// #317: the session keeps a failure on a provider the operator named, rather than degrading
+// it to the fetch provider's search; the selection is what knows it was named.
+test('a search provider named by flag, environment or machine config is marked explicit; an automatic one is not', () => {
+  const probe = () => ({ ok: true, authenticated: true });
+  const url = { SEARXNG_URL: 'http://127.0.0.1:9' };
+  assert.equal(selectSearch({ explicit: 'searxng', env: url, config: {}, probe }).explicit, true);
+  assert.equal(selectSearch({ env: { ...url, RESEARCH_KIT_SEARCH_TRANSPORT: 'searxng' }, config: {}, probe }).explicit, true);
+  assert.equal(selectSearch({ env: url, config: { searchTransport: 'searxng' }, probe }).explicit, true);
+  assert.notEqual(selectSearch({ env: {}, config: {}, probe }).explicit, true);
+  assert.notEqual(selectSearch({ env: { SERPAPI_API_KEY: ['4', '7'].join('') + 'd'.repeat(62) }, config: {}, probe }).explicit, true);
+});
+
 // Found 2026-09-27: four decompose searches cost about 7 credits and one plan query about 2,
 // measured on the account's own balance - and the kit recorded `searchesUsed: 0`, because only
 // the SerpAPI adapter reported a count. The estimate follows the documented rule (E-03, E-14):

@@ -291,6 +291,42 @@ test('a dry run gathers nothing and spends nothing', () => {
   assert.equal(readCorpus(dir).captures.entries.length, 0);
 });
 
+// #305: a dry run wrote the seeded map over a map a real run had drafted - rows unjudged, so the
+// judged-rows guard let it through - and the material that run paid for became "No material
+// gathered". A dry run previews; it does not write over a map that holds anything.
+test('a dry run does not write over a drafted map, unjudged rows and gathered material included', () => {
+  const dir = makeProject(undefined, { content: true });
+  decompose(dir, { topic: 'Example limits', adapter: stubAdapter([{ url: 'https://docs.example.com/rate-limits', title: 'Rate limits' }]) });
+  const drafted = fs.readFileSync(resolve(dir, PATHS.map));
+  assert.match(drafted.toString('utf8'), /docs\.example\.com\/rate-limits/, 'the real run gathered nothing to protect');
+  assert.doesNotMatch(drafted.toString('utf8'), /\|\s*(COVERED|DISMISSED|GAP)\s*\|/, 'the fixture must be unjudged');
+
+  const lines = [];
+  for (const force of [false, true]) {
+    const out = decompose(dir, { topic: 'Example limits', recipe: 'api-integration', dryRun: true, force, log: (l) => lines.push(l) });
+    assert.equal(out.written, false, `a dry run${force ? ' with --force' : ''} wrote over a drafted map`);
+    assert.equal(out.preview, true, 'the refusal is a finished preview, not an error');
+    assert.match(out.reason, /already drafted - a dry run does not write over it; run without --dry-run to redraft/);
+    assert.ok(fs.readFileSync(resolve(dir, PATHS.map)).equals(drafted), 'the drafted map changed');
+  }
+  assert.ok(lines.some((l) => l.includes('would search "Example limits"')), `the preview was not printed:\n${lines.join('\n')}`);
+  // What the recipe would add is the preview's point (`--dry-run --recipe`), so a kept map
+  // still names the rows it would have seeded, and the result carries the counts.
+  const added = loadRecipe('api-integration').dimensions;
+  assert.ok(lines.some((l) => l === `  would seed ${9 + added.length} rows (9 universal + ${added.length} from recipe api-integration)`), lines.join('\n'));
+  added.forEach((dimension, i) => {
+    assert.ok(lines.some((l) => l === `    S-${i + 1}  ${dimension.name}`), `recipe row ${i + 1} not named:\n${lines.join('\n')}`);
+  });
+  const kept = decompose(dir, { topic: 'Example limits', recipe: 'api-integration', dryRun: true });
+  assert.deepEqual([kept.rows, kept.universal, kept.added, kept.recipe], [9 + added.length, 9, added.length, 'api-integration']);
+
+  // A fresh scaffold keeps the documented behaviour: its template map is not a draft.
+  const fresh = makeProject(undefined, { content: true });
+  assert.match(readText(resolve(fresh, PATHS.map)), /\| ID \|/, 'the scaffold ships the template map');
+  assert.equal(decompose(fresh, { topic: 'Example limits', dryRun: true }).written, true);
+  assert.match(readText(resolve(fresh, PATHS.map)), /\| D-1 \|/, 'the seeded rows were not written');
+});
+
 test('gathering records the candidate material and the likely owners', () => {
   const dir = makeProject();
   const result = decompose(dir, {
@@ -322,12 +358,20 @@ test('--max-scrapes bounds what phase 0 may cost, and a cache hit is not an atte
 
 test('a map that already holds judged rows is not redrafted over without --force', () => {
   const dir = makePassingProject();
-  const refused = decompose(dir, { topic: 'Something else', dryRun: true });
+  const refused = decompose(dir, { topic: 'Something else', adapter: stubAdapter([]) });
   assert.equal(refused.written, false);
   assert.match(refused.reason, /--force/);
   assert.match(readText(resolve(dir, PATHS.map)), /COVERED/, 'the judged map is untouched');
+  // A dry run does not write over it either, --force or not (#305): it previews, and says the
+  // judged rows need --force on the real run.
+  for (const force of [false, true]) {
+    const dry = decompose(dir, { topic: 'Something else', dryRun: true, force });
+    assert.equal(dry.written, false, `a dry run${force ? ' with --force' : ''} redrafted a judged map`);
+    assert.match(dry.reason, /the judged rows need --force/);
+    assert.match(readText(resolve(dir, PATHS.map)), /COVERED/, 'the judged map is untouched');
+  }
 
-  assert.equal(decompose(dir, { topic: 'Something else', dryRun: true, force: true }).written, true);
+  assert.equal(decompose(dir, { topic: 'Something else', adapter: stubAdapter([]), force: true }).written, true);
 });
 
 // ---------------------------------------------------------------- failed searches

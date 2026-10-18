@@ -40,7 +40,8 @@ if (flags.help || resolved?.error) {
   --max-scrapes <n>  gather up to n pages while mapping (default 0 - search only);
                      the map shows the section headings of every captured page
   --limit <n>        search results per query (default 8)
-  --dry-run          write the seeded map with no gathering; spend nothing
+  --dry-run          write the seeded map with no gathering; spend nothing.
+                     A map already drafted is kept, never written over
   --force            redraft over a map that already holds judged rows
   --transport <name> ${TRANSPORT_NAMES.join(' | ')}
   --search-transport <name>
@@ -69,18 +70,34 @@ if (spends && !policy.mayCollect) {
 let adapter = null;
 let searchAdapter = null;
 let searchAdapters = null;
+let searchExplicit = false;
 if (!spends) {
   // A dry run names the provider its searches would spend on, when this machine can say;
   // selecting one probes and spends nothing, and a machine that cannot select one still
   // gets its dry run.
+  let chosen = null;
   try {
-    const chosen = selectTransport({
+    chosen = selectTransport({
       explicit: typeof flags.transport === 'string' ? flags.transport : '',
       explicitSearch: typeof flags['search-transport'] === 'string' ? flags['search-transport'] : '',
     });
     searchAdapter = chosen.search.adapter ?? chosen.adapter;
     searchAdapters = chosen.search.adapters ?? null;
-  } catch { /* named generically below */ }
+  } catch (err) {
+    // A name that is not a provider is refused, as the real run and research's dry run refuse
+    // it (#311): swallowed, `--search-transport bing` previewed searches and exited 0. Anything
+    // else is named generically below, so a machine that cannot select still gets its dry run.
+    if (err?.code === 'UNKNOWN_SEARCH_PROVIDER' || err?.code === 'UNKNOWN_TRANSPORT') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+  }
+  // An explicit search provider that cannot run is refused here too, as the real run refuses
+  // it (#311): the preview named searches on it that would never happen, and exited 0.
+  if (chosen?.search.notReady) {
+    process.stderr.write(`${chosen.search.notReady}\n`);
+    process.exit(2);
+  }
 }
 if (spends) {
   try {
@@ -93,6 +110,7 @@ if (spends) {
     // A merged selection names every provider it searches; passing only `adapter` searched
     // SerpAPI alone under a banner that said both (found 2026-09-28).
     searchAdapters = chosen.search.adapters ?? null;
+    searchExplicit = Boolean(chosen.search.explicit);
     // An explicit search provider that cannot run is refused before anything is searched:
     // without this, each search failed and fell back to the fetch provider's own search,
     // which on Firecrawl spends credits (found 2026-09-30).
@@ -118,6 +136,7 @@ try {
     adapter,
     searchAdapter,
     searchAdapters,
+    searchExplicit,
     recipe: typeof flags.recipe === 'string' ? flags.recipe : '',
     limit: Number(flags.limit ?? 8),
     maxScrapes: Number(flags['max-scrapes'] ?? 0),
@@ -138,6 +157,11 @@ try {
   throw err;
 }
 
+// A dry run that kept a drafted map has previewed what it came to preview: nothing is wrong (#305).
+if (!result.written && result.preview) {
+  process.stdout.write(`\n${result.reason}\n`);
+  process.exit(0);
+}
 if (!result.written) {
   process.stderr.write(`${result.reason}\n`);
   process.exit(1);

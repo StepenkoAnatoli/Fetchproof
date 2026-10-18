@@ -332,6 +332,20 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- `decompose --dry-run` no longer writes the seeded map over a map that is already drafted -
+  subtopic rows, judged or not, or gathered candidate material, `--force` or not. It prints
+  the searches it would make and the rows it would seed (a recipe's rows by name), says the
+  map was kept, and exits 0; a fresh scaffold's template map is still replaced by the seeded
+  one (#305).
+- `research --dry-run` and `decompose --dry-run` refuse an explicitly chosen search provider
+  that cannot run (no SerpAPI key, no SearXNG instance) with the real run's message and exit
+  2, instead of previewing searches on it and exiting 0; `decompose --dry-run` also refuses an
+  unknown search provider or transport name, as its real run does (#311).
+- A failed search on a provider chosen explicitly (`--search-transport`,
+  `RESEARCH_KIT_SEARCH_TRANSPORT` or `searchTransport` in the machine config) is a failed
+  search, counted on that provider and logged as "not degraded"; it is no longer sent to the
+  fetch provider's own search - for SearXNG on the keyless route, lite.duckduckgo.com. An
+  automatically selected provider still degrades once (RR-1) (#317).
 
 ## 0.9.5 — 2026-10-04
 

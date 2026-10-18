@@ -560,6 +560,36 @@ test('RR-1: decompose degrades too, and records which provider was down', () => 
   assert.equal(out.failures[0].degraded, true);
 });
 
+// #317: a provider the operator chose by name (`--search-transport`, the environment, the
+// machine config) is where their queries may go. Both coordinators hand that to the session,
+// and a failure on it is a failed search: kept, counted on it, never sent to the fetch
+// provider's own search.
+test('an explicitly chosen search provider is never degraded, by either coordinator', () => {
+  const root = project();
+  const fetcher = fetchStub();
+  const run = runResearch(root, {
+    adapter: fetcher,
+    searchAdapter: searchStub({ name: 'searxng', fail: 'searxng returned HTTP 429' }),
+    searchExplicit: true,
+    plan: plan(),
+  });
+  assert.equal(fetcher.calls.search, 0, 'research sent the query to the fetch provider\'s search');
+  assert.equal(run.degraded, 0);
+  assert.equal(run.searchFailures, 1);
+  assert.deepEqual(jsonLines(root, '.failures.jsonl').filter((f) => f.op === 'search').map((f) => [f.provider, f.degraded ?? false]), [['searxng', false]]);
+
+  const phase0 = project();
+  const fetcher0 = fetchStub();
+  const out = decompose(phase0, {
+    topic: 'a topic', adapter: fetcher0,
+    searchAdapter: searchStub({ name: 'searxng', fail: 'searxng returned HTTP 429' }),
+    searchExplicit: true, maxScrapes: 0, limit: 3,
+  });
+  assert.equal(fetcher0.calls.search, 0, 'decompose sent the query to the fetch provider\'s search');
+  assert.ok(out.failures.length > 0);
+  assert.ok(out.failures.every((f) => f.provider === 'searxng' && !f.degraded), JSON.stringify(out.failures));
+});
+
 // ---------------------------------------------------------------- RR-4  the timeout
 
 test('RR-4: a hung socket cannot outlive the timeout, so it cannot hold the corpus lock', () => {

@@ -2,10 +2,11 @@
 //
 // The ONE owner of how a query is put to the search providers: every provider under a merge
 // (interleaved by rank and attributed), otherwise the one provider with one bounded degrade
-// to the fetch provider's own search; the rate-limit patience; the meters (`searchesUsed`,
-// `searchesOn`, `searchCreditsEstimate`, `searchFailures`, `searchFailuresOn`, `degraded`);
-// one failure row per failed ask, handed to the coordinator's sink; and the refusal of a
-// provider that cannot run, before anything is spent.
+// to the fetch provider's own search, unless the operator chose that provider by name; the
+// rate-limit patience; the meters (`searchesUsed`, `searchesOn`, `searchCreditsEstimate`,
+// `searchFailures`, `searchFailuresOn`, `degraded`); one failure row per failed ask, handed
+// to the coordinator's sink; and the refusal of a provider that cannot run, before anything
+// is spent.
 //
 // `runResearch` (phase 1) and `decompose` (phase 0) each carried a copy of this loop, and
 // read side by side on 2026-10-03 the copies had drifted in six places - a failed ask
@@ -157,6 +158,9 @@ export function searchSession({
   searchAdapter = null,
   // Several providers: asked in parallel and interleaved by rank. One stays one.
   searchAdapters = null,
+  // The search provider was named by the operator (`selectSearch`'s `explicit`): a failure on
+  // it is a failed search, never degraded to the fetch provider's own (#317, ADR-0033).
+  searchExplicit = false,
   limit,
   maxRateLimitRetries = 2,
   sleep = sleepSync,
@@ -275,8 +279,17 @@ export function searchSession({
     // and it is REPORTED rather than absorbed - a silent fallback is a bill the operator did
     // not know they were paying. Only to a provider that can search: degrading to the
     // browser replaced the real failure with a TypeError (found 2026-10-01).
+    //
+    // Not from a provider the operator chose by name (#317). RR-1 was written for a second
+    // metered vendor going down; an explicit choice says where the queries may go, and for
+    // SearXNG (ADR-0104) the fetch provider's search was DuckDuckGo-lite - the route it exists
+    // to avoid. The failure is kept below, counted on the provider that failed.
     const target = liveAdapter();
-    if (!found?.ok && first.provider !== target && canSearch(target)) {
+    const degradable = !found?.ok && first.provider !== target && canSearch(target);
+    if (degradable && searchExplicit) {
+      log(`  search failed on ${ranker}: ${found?.error} - not degraded: ${ranker} was chosen explicitly`);
+    }
+    if (degradable && !searchExplicit) {
       log(`  search failed on ${ranker}: ${found?.error}`);
       fail(ranker, text, found?.error, { degraded: true, fellBackTo: target.name });
       const next = askProvider(adapter, text);
