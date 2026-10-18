@@ -196,9 +196,30 @@ export function contractUnknownStatus(project, id) {
 }
 
 /**
- * Write the request into the project: its contract row (a new OPEN row, or the row it names),
- * its entries in plan.json, and the plan for this run alone. Returns `{ unknown, planFile }`;
- * throws when the row it names does not exist.
+ * The contract row an earlier run of request `id` allocated, or ''. A request is processed again
+ * when its result is untrusted here (the builder edited it, another collector, a restored
+ * checkout), and the builder who wrote it never learned the row's id, so the row is found in
+ * what the collector wrote into research/plan.json: the entries it added for the request carry
+ * `U-n request <id>` in `why`. Never the request's own `<id>.plan.json`: it sits in the
+ * builder's folder, and a builder's copy must not choose a row or delete an entry. Found
+ * 2026-10-11 (#322): every re-run added another OPEN row for the same fact, and the gate failed
+ * on the first one for good.
+ */
+const taggedRequest = (why) => (typeof why === 'string' ? /^(U-\d+) request ([a-z0-9-]+)$/.exec(why) : null);
+
+function earlierUnknown(plan, id) {
+  for (const entry of [...plan.urls, ...plan.queries]) {
+    const m = taggedRequest(entry?.why);
+    if (m && m[2] === id) return m[1];
+  }
+  return '';
+}
+
+/**
+ * Write the request into the project: its contract row (the row it names, the row an earlier
+ * run of the same request made, or a new OPEN row), its entries in plan.json - replacing the
+ * entries an earlier run of it wrote - and the plan for this run alone. Returns
+ * `{ unknown, planFile }`; throws when the row it names does not exist, or is CLOSED.
  */
 export function applyRequest(project, id, request, pages) {
   const planFile = `${REQUESTS_DIR}/${id}.plan.json`;
@@ -219,7 +240,11 @@ export function applyRequest(project, id, request, pages) {
   }
   const unknownRows = parseTable(readText(path.join(project, 'research', 'DISCOVERY.md'), ''), HEADERS.unknowns).rows;
   const ids = unknownRows.map((row) => String(row.cells[0] ?? '').trim()).filter(Boolean);
-  let unknown = request.unknown;
+  plan.queries = Array.isArray(plan.queries) ? plan.queries : [];
+  plan.urls = Array.isArray(plan.urls) ? plan.urls : [];
+  const earlier = earlierUnknown(plan, id);
+  // A row the operator has since deleted is not reused; the request gets a new one.
+  let unknown = request.unknown || (ids.includes(earlier) ? earlier : '');
   if (unknown) {
     const row = unknownRows.find((entry) => String(entry.cells[0] ?? '').trim() === unknown);
     if (!row) throw new Error(`${unknown} is not a row of research/DISCOVERY.md`);
@@ -233,11 +258,14 @@ export function applyRequest(project, id, request, pages) {
   }
   const why = `${unknown} request ${id}`;
   const prefer = request.prefer ?? [];
-  const queries = (request.queries ?? []).map((q) => ({ q: q.trim(), why: unknown, ...(prefer.length ? { prefer } : {}) }));
+  // Searches carry the request's tag as pages do, so a later run can find and replace them.
+  const queries = (request.queries ?? []).map((q) => ({ q: q.trim(), why, ...(prefer.length ? { prefer } : {}) }));
   const urls = (request.urls ?? []).map((url) => ({ url, why, type: 'P' }));
 
-  plan.queries = Array.isArray(plan.queries) ? plan.queries : [];
-  plan.urls = Array.isArray(plan.urls) ? plan.urls : [];
+  // An earlier run's entries are replaced, not added to. Only the entries this request added
+  // carry its tag: a search the operator had already planned was never added, so it stays.
+  plan.urls = plan.urls.filter((e) => taggedRequest(e?.why)?.[2] !== id);
+  plan.queries = plan.queries.filter((e) => taggedRequest(e?.why)?.[2] !== id);
   for (const q of queries) if (!plan.queries.some((e) => (typeof e === 'string' ? e : e?.q) === q.q)) plan.queries.push(q);
   for (const u of urls) if (!plan.urls.some((e) => (typeof e === 'string' ? e : e?.url) === u.url)) plan.urls.push(u);
   writeJson(planPath, plan);

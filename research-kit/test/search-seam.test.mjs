@@ -194,6 +194,17 @@ test('DR-1: the usage log keeps the two meters apart', () => {
   assert.equal(usage.degraded, 0);
 });
 
+test('the usage line says what each search returned: the pages it made targets, and those already captured (#321)', () => {
+  const root = project();
+  runResearch(root, { adapter: fetchStub(), searchAdapter: searchStub(), plan: plan() });
+  // The same search again: its one result is captured now, so it makes no target and the
+  // ledger gets no entry - the usage line is the only record that the page was found.
+  runResearch(root, { adapter: fetchStub(), searchAdapter: searchStub(), plan: plan() });
+  const [first, second] = jsonLines(root, '.usage.jsonl');
+  assert.deepEqual(first.searchOutcomes, [{ query: 'a query', results: 1, held: [], targets: ['https://searchside.example/a'] }]);
+  assert.deepEqual(second.searchOutcomes, [{ query: 'a query', results: 1, held: ['https://searchside.example/a'], targets: [] }]);
+});
+
 test('DR-1: a run that only SEARCHED is still recorded - a second meter spent is still spend', () => {
   const root = project();
   // Every candidate is already a plan url that will not be reached, so nothing is

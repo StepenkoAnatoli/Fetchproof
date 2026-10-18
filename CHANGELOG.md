@@ -332,6 +332,32 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   on is now said to be that, with the time it was given (break-test pass 6, F1, 2026-10-04);
   the transport reads a `gaveUp` flag on that result, not the message's wording (GPT's review
   of the fix, the same day).
+- An auto-collect request with nothing to read - its fetches failed, its page is gone by
+  the ledger, or its searches returned nothing - is recorded as `failed`, naming why part by
+  part (never only because nothing new was fetched), committed as `research: request <id> failed`, and its `next`
+  says what to change; a run that collected some pages stays `collected` with `pages`
+  counting only collected pages and a `failed` count beside it. A request whose pages
+  were all already captured - named, or found by its searches - is `collected` with a
+  `cached` count and a `next` naming them; the run's usage line now records what each
+  search returned for this. Another run's ledger entries are not attributed to the request. The panel still shows pages used, and the
+  daily meter still charges the measured page attempts (ADR-0149) (#321).
+- A builder request processed again - edited, or its result untrusted on this collector -
+  reuses the contract row its earlier run made and replaces that run's plan entries,
+  instead of adding another OPEN row for the same fact; a row CLOSED since is refused as
+  before. Searches a request adds now carry `U-n request <id>` in `why`, as its pages
+  did, and only tagged entries are reused or replaced: the builder's `<id>.plan.json`
+  decides nothing, and a search the operator had already planned is kept (#322).
+- A topic request on a collector with no approved topics folder waits, with the reason,
+  instead of receiving a final refusal; it runs unchanged once the operator sets the
+  folder (ADR-0173). A topic request already refused under the old rule keeps that result;
+  editing the request queues it again (#323).
+- A restarted panel no longer re-delivers results that are already upstream: a delivery is
+  retried only when git shows something to deliver. A committed result is pushed, never
+  re-staged, and only while the upstream has not moved past HEAD; an uncommitted one is
+  staged alone, or with its run's corpus while that is still exactly what the run left
+  (a delivery fingerprint, as partial results carry), and otherwise waits with a sentence
+  naming it - so the operator's unfinished edits are never committed under an old
+  request's subject, and a request held back by an earlier failed push still arrives (#325).
 
 ## 0.9.5 — 2026-10-04
 

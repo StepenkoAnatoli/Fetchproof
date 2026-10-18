@@ -43,9 +43,12 @@ beside your request. Pull, and read the result:
   that same request without resetting its page cap.
 - `refused`: its `problems` say why (a page on an internal address, too many pages, a
   missing field). Fix the request under a new id.
-- `failed`: its `detail` says why.
+- `failed`: its `detail` says why. When no page could be fetched, its `next` says what to
+  change - another owner page in `urls`, or a search in `queries`. Edit the request and push
+  it: a changed request is processed again, on the contract row it already has.
 - no result yet: the request is waiting, either for today's cap, for the operator to top up
-  the credits, or for the collector to retry delivery of a previous result.
+  the credits, for the operator to approve a folder for new topics (a `topic` request), or
+  for the collector to retry delivery of a previous result.
 
 Never fetch the page yourself while you wait.
 

@@ -373,6 +373,10 @@ ${compatibility.remedy}`);
 
   const results = [];
   const discovered = [];
+  // What each search came to, kept in the usage line for the collector serving a builder's
+  // request (auto-collect, #321): a search whose matching results were all captured already
+  // makes no target and leaves no ledger entry, yet its pages are there to read.
+  const searchOutcomes = [];
   // `attempts` is what the BUDGET counts - the scrapes a run would make, whether or not
   // it makes them. `spent` is what it actually cost. A dry run has attempts and no
   // spend; conflating the two made a preview ignore the very cap it was previewing.
@@ -474,12 +478,23 @@ ${compatibility.remedy}`);
       }
     };
     const found = session.ask(text);
-    if (!found.ok) continue;
+    if (!found.ok) {
+      searchOutcomes.push({ query: text.slice(0, 200), failed: true });
+      continue;
+    }
     discovered.push({ query: text, results: found.results, provider: found.provider, searchId: found.searchId });
     noteOutcome(found.results, found.provider);
-    const eligible = found.results.filter((row) => isWebUrl(row?.url)
-      && !cacheDecision(corpus.captures, row.url, { refreshDays: freshness, force, now }).hit);
-    for (const candidate of selectCandidates(eligible, { prefer, perQuery: settings.perQuery, seen, query: text })) {
+    const captured = (row) => cacheDecision(corpus.captures, row.url, { refreshDays: freshness, force, now }).hit;
+    const eligible = found.results.filter((row) => isWebUrl(row?.url) && !captured(row));
+    const picked = selectCandidates(eligible, { prefer, perQuery: settings.perQuery, seen, query: text });
+    // The captured results this search would have picked, by the same rule.
+    const held = selectCandidates(found.results.filter((row) => isWebUrl(row?.url) && captured(row)),
+      { prefer, perQuery: settings.perQuery, query: text });
+    searchOutcomes.push({
+      query: text.slice(0, 200), results: found.results.length,
+      held: held.map((row) => row.url), targets: picked.map((row) => row.url),
+    });
+    for (const candidate of picked) {
       // Discovered by a search, not chosen by a person: context until an agent reads the
       // page and promotes it. Ranking preference is not source authority. The target row is
       // this coordinator's, and the two paths spell it differently (ADR-0135 leaves that):
@@ -590,6 +605,7 @@ ${compatibility.remedy}`);
       ...(searchCreditsEstimate ? { searchCreditsEstimate } : {}),
       searchFailures,
       degraded,
+      ...(searchOutcomes.length ? { searchOutcomes } : {}),
     });
   }
 
