@@ -715,9 +715,13 @@ ${compatibility.remedy}`);
 
   // A run that only searched still spent something - on a different meter. Logging only
   // when `spent` was non-zero would make a search-only run invisible in the usage record
-  // (DR-1).
+  // (DR-1). A search outcome alone writes it too: keyless search and SearXNG report no usage,
+  // and no provider does on a failed ask, so a run whose search failed or found nothing left
+  // no row, and auto-collect, which reads `searchOutcomes` from it, recorded the request as
+  // collected with 0 pages (review of the 2026-10-19 sweep). Such a row says `searchesUsed: 0`,
+  // which `searchUsage` skips, so no meter moves.
   const { searchesUsed, searchesOn, searchCreditsEstimate, searchFailures, searchFailuresOn, degraded } = session.meters();
-  if (!dryRun && (spent || searchesUsed)) {
+  if (!dryRun && (spent || searchesUsed || searchOutcomes.length)) {
     appendJsonLine(root, PATHS.usage, {
       at: new Date().toISOString(), depth: tier, budget, attempts, spent, cached, failed,
       transport: adapter.name,

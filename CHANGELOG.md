@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A builder request whose search failed or found nothing on keyless search or SearXNG is
+  recorded `failed`, as #321 meant, not `collected` with 0 pages and "pull and read the
+  captures". The run wrote its usage row only for a page spent or a search a provider reported,
+  and those routes report none, nor does any provider on a failed ask, so auto-collect never
+  read the search's outcome. A search outcome now writes the row on its own; it carries
+  `searchesUsed: 0` and moves no meter (review of the 2026-10-19 sweep).
 - `researcher-release` refuses a flag its subcommand does not read, an argument no flag takes
   and a flag given twice (all but `--file`) by name, exit 2, before any file is read.
   `conform --fiel a.json` had been stored and never read, so every file under the root was
