@@ -346,6 +346,307 @@ process.exit(red ? 1 : 0);
   assert.match(suiteBreach(dir, ['research-kit/lib/x.mjs']).detail, /produced no result/);
 });
 
+// Found 2026-10-19 (ADR-0183): the suite rule ran the WORKING TREE's runner in the working tree,
+// while every other commit check judges the index (ADR-0024). An unstaged red edit blocked a green
+// commit for a 25-40 minute run, and a red file staged and then fixed only on disk was allowed.
+// The suite now runs in a scratch repository built from the index being committed.
+//
+// A stand-in runner whose colour is in its own bytes, so the staged copy and the working copy can
+// differ. It reports where it ran, as repo-hygiene's inRepository() would see it.
+function suiteRunner(colour) {
+  return [
+    "import fs from 'node:fs';",
+    "import { execFileSync } from 'node:child_process';",
+    `const red = '${colour}' === 'red';`,
+    "const git = (...args) => { try { return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };",
+    'if (process.env.RK_SUITE_WHERE) {',
+    "  fs.writeFileSync(process.env.RK_SUITE_WHERE, JSON.stringify({ cwd: process.cwd(), inside: git('rev-parse', '--is-inside-work-tree'),",
+    "    top: git('rev-parse', '--show-toplevel'), head: git('rev-parse', '--verify', '-q', 'HEAD'), staged: git('diff', '--cached', '--name-only'),",
+    "    unstaged: git('diff', '--name-only'), untracked: git('ls-files', '--others', '--exclude-standard') }));",
+    '}',
+    "fs.writeFileSync(process.env.RESEARCH_KIT_RESULT_FILE, JSON.stringify({ passed: red ? 0 : 1, failures: red ? 1 : 0, failed: red ? ['the red runner'] : [], unsupported: 0, exit: red ? 1 : 0 }));",
+    'process.exit(red ? 1 : 0);',
+    '',
+  ].join('\n');
+}
+
+/** A git repository holding a kit checkout (at `sub` below the top level, if given), its green runner committed. */
+function makeKitRepo(sub = '', ...initArgs) {
+  requireGit('the suite rule run on the index');
+  const dir = tempDir();
+  const kit = sub ? path.join(dir, sub) : dir;
+  const git = (args, env = {}) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  for (const rel of ['research-kit/lib/core.mjs', 'research-kit/bin/gate.mjs', 'research-kit/test/.keep']) {
+    fs.mkdirSync(path.dirname(resolve(kit, rel)), { recursive: true });
+    writeText(resolve(kit, rel), '// stand-in\n');
+  }
+  writeText(resolve(kit, 'research-kit/bin/selftest.mjs'), suiteRunner('green'));
+  git(fixtureInitArgs(...initArgs));
+  git(['config', 'user.email', 'fixture@example.invalid']);
+  git(['config', 'user.name', 'Fixture']);
+  git(['add', '-A']);
+  git(fixtureCommitArgs('the kit'));
+  return { dir, kit, git };
+}
+
+/** Run `fn` with `vars` set in this process's environment, as git sets them for its hook. */
+function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+const samePath = (a, b) => path.relative(path.resolve(a), path.resolve(b)) === '';
+
+test('the suite rule runs the commit\'s index, not the working tree (ADR-0183)', () => {
+  const { dir, git } = makeKitRepo();
+  const runner = resolve(dir, 'research-kit/bin/selftest.mjs');
+  // A green commit, and a red edit to the runner left unstaged: work in progress is not the commit.
+  writeText(resolve(dir, 'research-kit/lib/core.mjs'), '// stand-in, edited\n');
+  git(['add', 'research-kit/lib/core.mjs']);
+  writeText(runner, suiteRunner('red'));
+  const index = fs.readFileSync(path.join(dir, '.git', 'index'));
+  const breach = suiteBreach(dir, ['research-kit/lib/core.mjs']);
+  assert.equal(breach, null, `an unstaged red edit blocked a green commit: ${JSON.stringify(breach)}`);
+  assert.deepEqual(fs.readFileSync(path.join(dir, '.git', 'index')), index, 'running the suite wrote the index being committed');
+  assert.equal(readText(runner), suiteRunner('red'), 'running the suite touched the working tree');
+  // A red runner staged, then fixed on disk only: the commit is red.
+  git(['add', 'research-kit/bin/selftest.mjs']);
+  writeText(runner, suiteRunner('green'));
+  const red = suiteBreach(dir, ['research-kit/bin/selftest.mjs', 'research-kit/lib/core.mjs']);
+  assert.equal(red?.rule, SUITE_RULE, `a red runner in the commit was allowed because the working tree is green: ${JSON.stringify(red)}`);
+  assert.match(red.detail, /the red runner/);
+  assert.equal(git(['diff', '--cached', '--name-only']).trim().split('\n').sort().join(','), 'research-kit/bin/selftest.mjs,research-kit/lib/core.mjs', 'the staged set changed');
+});
+
+test('the suite\'s scratch is a repository of its own, at the real HEAD, holding the commit, and is removed', () => {
+  const { dir, git } = makeKitRepo();
+  writeText(resolve(dir, 'research-kit/lib/core.mjs'), '// stand-in, edited\n');
+  git(['add', 'research-kit/lib/core.mjs']);
+  writeText(resolve(dir, 'research-kit/lib/wip.mjs'), '// untracked work in progress\n');
+  const where = path.join(tempDir(), 'where.json');
+  const breach = withEnv({ RK_SUITE_WHERE: where }, () => suiteBreach(dir, ['research-kit/lib/core.mjs']));
+  assert.equal(breach, null, JSON.stringify(breach));
+  const seen = JSON.parse(readText(where));
+  assert.ok(!samePath(seen.cwd, dir), 'the suite ran in the working tree');
+  // repo-hygiene's inRepository(): inside a work tree whose top level is the checkout judged.
+  // A scratch with no .git of its own would make those tests return early - a silent green.
+  assert.equal(seen.inside, 'true', 'the scratch is not a repository');
+  assert.ok(samePath(seen.top, seen.cwd), `the scratch's top level is ${seen.top}, not the scratch`);
+  assert.equal(seen.head, git(['rev-parse', 'HEAD']).trim(), 'the scratch is not at the commit\'s parent');
+  assert.equal(seen.staged, 'research-kit/lib/core.mjs', 'the scratch does not stage what the commit stages');
+  assert.equal(seen.unstaged, '', 'the scratch\'s files differ from the index it was built from');
+  assert.equal(seen.untracked, '', 'untracked work in progress reached the suite');
+  assert.equal(fs.existsSync(seen.cwd), false, 'the scratch was left behind');
+});
+
+// `git commit <paths>` and `git commit -a` hand the hook a temporary index (GIT_INDEX_FILE), and
+// that index - not .git/index - is the commit.
+test('a partial commit\'s suite runs the temporary index git hands the hook', () => {
+  const { dir, git } = makeKitRepo();
+  const runner = resolve(dir, 'research-kit/bin/selftest.mjs');
+  const partial = path.join(dir, '.git', 'next-index-fixture.lock');
+  git(['read-tree', 'HEAD'], { GIT_INDEX_FILE: partial });
+  writeText(runner, suiteRunner('red'));
+  git(['add', 'research-kit/bin/selftest.mjs'], { GIT_INDEX_FILE: partial });
+  writeText(runner, suiteRunner('green'));
+  const realIndex = fs.readFileSync(path.join(dir, '.git', 'index'));
+  const partialIndex = fs.readFileSync(partial);
+  // The hook's environment as git sets it: GIT_DIR relative to the top level the hook runs at.
+  const hookEnv = { GIT_DIR: '.git', GIT_INDEX_FILE: partial };
+  const red = withEnv(hookEnv, () => suiteBreach(dir, ['research-kit/bin/selftest.mjs']));
+  assert.equal(red?.rule, SUITE_RULE, `the partial commit's red runner was allowed: ${JSON.stringify(red)}`);
+  assert.match(red.detail, /the red runner/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, '.git', 'index')), realIndex, 'the real index was written');
+  assert.deepEqual(fs.readFileSync(partial), partialIndex, 'the partial commit\'s index was written');
+  // The other way round: .git/index and the working tree red, the commit's own index green.
+  writeText(runner, suiteRunner('red'));
+  git(['add', 'research-kit/bin/selftest.mjs']);
+  git(['read-tree', 'HEAD'], { GIT_INDEX_FILE: partial });
+  const green = withEnv(hookEnv, () => suiteBreach(dir, ['research-kit/bin/selftest.mjs']));
+  assert.equal(green, null, `a green partial commit was judged by .git/index: ${JSON.stringify(green)}`);
+});
+
+test('a scratch the suite cannot be built in is a block, and leaves nothing behind', () => {
+  const { dir } = makeKitRepo();
+  const { runSuiteOnCommit } = gateLib;
+  assert.equal(typeof runSuiteOnCommit, 'function', 'the suite rule has no way to run the commit\'s index');
+  const realGit = (args, { cwd, env = process.env, input } = {}) => {
+    const r = spawnSync('git', args, { cwd, env, input, encoding: 'utf8' });
+    return r.status === 0 ? r.stdout : null;
+  };
+  let ran = 0;
+  // Each step fails in turn, as "Filename too long" fails checkout-index under a long temp root on Windows.
+  for (const step of ['ls-files', 'diff-index', 'rev-parse', 'init', 'update-index', 'checkout-index', 'update-ref']) {
+    const tmp = tempDir();
+    const failing = (args, opts) => (args.includes(step) ? null : realGit(args, opts));
+    const breach = suiteBreach(dir, ['research-kit/lib/core.mjs'], {
+      run: () => runSuiteOnCommit(dir, { git: failing, tmp, runHere: () => { ran += 1; return { failures: 0, passed: 1 }; } }),
+    });
+    assert.equal(breach?.rule, SUITE_RULE, `${step} failed and the commit was allowed: ${JSON.stringify(breach)}`);
+    assert.match(breach.detail, /could not build the commit's tree to run the suite on/, step);
+    assert.deepEqual(fs.readdirSync(tmp), [], `${step} failed and the scratch was left behind`);
+  }
+  assert.equal(ran, 0, 'the suite ran on a scratch that was not built');
+  // With every step working, the same injection runs the suite.
+  const tmp = tempDir();
+  assert.equal(suiteBreach(dir, ['research-kit/lib/core.mjs'], { run: () => runSuiteOnCommit(dir, { git: realGit, tmp }) }), null);
+  assert.deepEqual(fs.readdirSync(tmp), [], 'the scratch was left behind');
+});
+
+test('a kit checkout below the top level runs its suite from the same place in the scratch (#309)', () => {
+  const { dir, kit, git } = makeKitRepo('kit');
+  writeText(resolve(kit, 'research-kit/bin/selftest.mjs'), suiteRunner('red'));
+  const where = path.join(tempDir(), 'where.json');
+  const breach = withEnv({ RK_SUITE_WHERE: where }, () => suiteBreach(kit, ['research-kit/lib/core.mjs'], { top: dir }));
+  assert.equal(breach, null, `an unstaged red edit blocked a green commit: ${JSON.stringify(breach)}`);
+  const seen = JSON.parse(readText(where));
+  assert.equal(path.basename(seen.cwd), 'kit');
+  assert.ok(samePath(seen.top, path.dirname(seen.cwd)), `the scratch's top level is ${seen.top}`);
+  assert.equal(seen.head, git(['rev-parse', 'HEAD']).trim());
+});
+
+// Windows hands a temp folder over as an 8.3 short name (C:\Users\RUNNER~1 on CI) and git reports
+// the long one, so repo-hygiene's inRepository() did not know the scratch for the repository it is
+// and returned early - green, and silent. A junction is the same alias on any machine.
+test('a scratch reached through an aliased temp folder is the top level its suite sees', () => {
+  const { dir } = makeKitRepo();
+  const real = tempDir();
+  const alias = path.join(tempDir(), 'aliased-temp');
+  fs.symlinkSync(real, alias, 'junction');
+  const where = path.join(tempDir(), 'where.json');
+  const breach = withEnv({ RK_SUITE_WHERE: where }, () => suiteBreach(dir, ['research-kit/lib/core.mjs'], {
+    run: () => gateLib.runSuiteOnCommit(dir, { tmp: alias }),
+  }));
+  assert.equal(breach, null, JSON.stringify(breach));
+  const seen = JSON.parse(readText(where));
+  assert.ok(samePath(seen.top, seen.cwd), `git sees the scratch as ${seen.top} and the suite runs in ${seen.cwd}: repo-hygiene would not know its repository`);
+  assert.deepEqual(fs.readdirSync(real), [], 'the scratch was left behind');
+});
+
+// A plain `git commit` holds no lock on the index while its hook runs, and commits what the index
+// holds when the hook returns: a `git add` from another terminal during the run reached the commit untested.
+test('an index changed while the suite ran is a block', () => {
+  const { dir, git } = makeKitRepo();
+  writeText(resolve(dir, 'research-kit/lib/core.mjs'), '// stand-in, edited\n');
+  git(['add', 'research-kit/lib/core.mjs']);
+  const green = () => ({ failures: 0, passed: 1, exit: 0 });
+  const addedMidRun = () => {
+    writeText(resolve(dir, 'research-kit/bin/selftest.mjs'), suiteRunner('red'));
+    git(['add', 'research-kit/bin/selftest.mjs']);
+    return green();
+  };
+  const breach = suiteBreach(dir, ['research-kit/lib/core.mjs'], { run: () => gateLib.runSuiteOnCommit(dir, { tmp: tempDir(), runHere: addedMidRun }) });
+  assert.equal(breach?.rule, SUITE_RULE, `a red runner staged during the run reached the commit untested: ${JSON.stringify(breach)}`);
+  assert.match(breach.detail, /the index changed while the suite ran/);
+  // The index left alone, the same green run passes.
+  assert.equal(suiteBreach(dir, ['research-kit/lib/core.mjs'], { run: () => gateLib.runSuiteOnCommit(dir, { tmp: tempDir(), runHere: green }) }), null);
+});
+
+// The scratch's `git init` took the machine's default object format (init.defaultObjectFormat,
+// GIT_DEFAULT_HASH): a sha256 scratch refuses a sha1 index, and a sha1 scratch a sha256 one.
+test('the scratch takes the commit\'s object format, not the machine\'s default', () => {
+  const sha1 = makeKitRepo();
+  const onSha256Machine = withEnv({ GIT_DEFAULT_HASH: 'sha256' }, () => suiteBreach(sha1.dir, ['research-kit/lib/core.mjs'], {
+    run: () => gateLib.runSuiteOnCommit(sha1.dir, { tmp: tempDir() }),
+  }));
+  assert.equal(onSha256Machine, null, `a sha1 repository on a machine defaulting to sha256: ${JSON.stringify(onSha256Machine)}`);
+  const sha256 = makeKitRepo('', '--object-format=sha256');
+  const onSha1Machine = withEnv({ GIT_DEFAULT_HASH: 'sha1' }, () => suiteBreach(sha256.dir, ['research-kit/lib/core.mjs'], {
+    run: () => gateLib.runSuiteOnCommit(sha256.dir, { tmp: tempDir() }),
+  }));
+  assert.equal(onSha1Machine, null, `a sha256 repository on a machine defaulting to sha1: ${JSON.stringify(onSha1Machine)}`);
+});
+
+// `git commit` refuses an unmerged index before its hook runs, and checkout-index skips a conflicted
+// path without an error: a gate run by hand on one tested a tree without the conflicted files.
+test('an index with unmerged paths is not a tree the suite runs on', () => {
+  const { dir, git } = makeKitRepo();
+  const blob = git(['hash-object', '-w', 'research-kit/lib/core.mjs']).trim();
+  const conflicted = 'research-kit/lib/core.mjs';
+  const input = [`0 ${'0'.repeat(blob.length)}\t${conflicted}`, ...[1, 2, 3].map((stage) => `100644 ${blob} ${stage}\t${conflicted}`)].join('\n') + '\n';
+  const put = spawnSync('git', ['update-index', '--index-info'], { cwd: dir, input, encoding: 'utf8' });
+  assert.equal(put.status, 0, put.stderr);
+  assert.match(git(['ls-files', '--unmerged']), /core\.mjs/, 'the fixture index has no unmerged path');
+  const tmp = tempDir();
+  let ran = 0;
+  const result = gateLib.runSuiteOnCommit(dir, { tmp, runHere: () => { ran += 1; return { failures: 0, passed: 1 }; } });
+  assert.equal(result?.unbuilt, true, `the suite ran on an unmerged index: ${JSON.stringify(result)}`);
+  assert.match(result.detail, /unmerged/);
+  assert.equal(ran, 0, 'the suite ran');
+  assert.deepEqual(fs.readdirSync(tmp), [], 'a scratch was left behind');
+});
+
+// `ls-files --stage` lists an intent-to-add entry (`git add -N`) as the empty blob, and `git commit`
+// leaves it out: the scratch held an empty file the commit would not - a test that a file exists
+// passed on a commit without it, and an empty module imported made a green commit red.
+test('an intent-to-add entry is not in the scratch, and a staged empty file is', () => {
+  const { dir, git } = makeKitRepo();
+  writeText(resolve(dir, 'research-kit/lib/planned.mjs'), 'export const planned = 1;\n');
+  git(['add', '-N', 'research-kit/lib/planned.mjs']);
+  writeText(resolve(dir, 'research-kit/lib/empty.mjs'), '');
+  git(['add', 'research-kit/lib/empty.mjs']);
+  let seen = null;
+  const result = gateLib.runSuiteOnCommit(dir, { tmp: tempDir(), runHere: (d) => {
+    seen = {
+      planned: fs.existsSync(path.join(d, 'research-kit/lib/planned.mjs')),
+      empty: fs.existsSync(path.join(d, 'research-kit/lib/empty.mjs')),
+      staged: spawnSync('git', ['diff', '--cached', '--name-only'], { cwd: d, encoding: 'utf8' }).stdout.trim(),
+    };
+    return { failures: 0, passed: 1 };
+  } });
+  assert.equal(result?.failures, 0, JSON.stringify(result));
+  assert.equal(seen.planned, false, 'an intent-to-add file the commit leaves out was in the tested tree');
+  assert.equal(seen.empty, true, 'a staged empty file was left out');
+  assert.equal(seen.staged, 'research-kit/lib/empty.mjs', 'the scratch does not stage what the commit stages');
+});
+
+// A gate stopped by Ctrl-C or the hook's watchdog never reaches its `finally`, and each scratch it
+// leaves is a copy of the checkout. The next run removes those: its own, past a day, nothing else.
+test('a commit scratch a killed gate left a day ago is removed by the next run, and nothing else is', () => {
+  const { dir } = makeKitRepo();
+  const tmp = tempDir();
+  const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  const leave = (name, { repo = true, at = old } = {}) => {
+    const p = path.join(tmp, name);
+    fs.mkdirSync(path.join(p, repo ? '.git' : 'src'), { recursive: true });
+    fs.utimesSync(p, at, at);
+  };
+  leave('research-kit-commit-aB3dE9');
+  leave('research-kit-commit-Fresh1', { at: new Date() });
+  leave('research-kit-commit-NoRepo', { repo: false });
+  leave('research-kit-commit-longer7');
+  fs.writeFileSync(path.join(tmp, 'rk-commit-1.txt'), 'not a scratch\n');
+  fs.utimesSync(path.join(tmp, 'rk-commit-1.txt'), old, old);
+  let scratch = null;
+  const result = gateLib.runSuiteOnCommit(dir, { tmp, runHere: (d) => { scratch = d; return { failures: 0, passed: 1 }; } });
+  assert.equal(result?.failures, 0, JSON.stringify(result));
+  assert.match(path.basename(scratch), /^research-kit-commit-[A-Za-z0-9]{6}$/, 'the scratch is not named as the sweep knows it');
+  assert.deepEqual(fs.readdirSync(tmp).sort(), ['research-kit-commit-Fresh1', 'research-kit-commit-NoRepo', 'research-kit-commit-longer7', 'rk-commit-1.txt'].sort());
+});
+
+// "git checkout-index failed" alone does not say whether a path was too long, the disk full or an
+// object missing; git's own first line does.
+test('a scratch that cannot be built says what git said', () => {
+  const { dir, git } = makeKitRepo();
+  const head = git(['rev-parse', 'HEAD']).trim();
+  // An entry whose object is in no store: the checkout cannot write it.
+  git(['update-index', '--add', '--cacheinfo', `100644,${'d'.repeat(head.length)},research-kit/lib/missing.mjs`]);
+  const tmp = tempDir();
+  const breach = suiteBreach(dir, ['research-kit/lib/core.mjs'], { run: () => gateLib.runSuiteOnCommit(dir, { tmp }) });
+  assert.equal(breach?.rule, SUITE_RULE, JSON.stringify(breach));
+  assert.match(breach.detail, /git checkout-index failed \([^)]*missing\.mjs/, `git's words are not in the detail: ${breach.detail}`);
+  assert.deepEqual(fs.readdirSync(tmp), [], 'the scratch was left behind');
+});
+
 test('the suite rule stops a suite that does not finish, and says so', () => {
   const dir = makePassingProject();
   for (const rel of ['research-kit/lib/core.mjs', 'research-kit/bin/gate.mjs', 'research-kit/test/.keep']) {

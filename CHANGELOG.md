@@ -5,6 +5,16 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The commit gate's suite rule runs the suite on the commit, not the working tree. It had run
+  the checkout's `bin/selftest.mjs` in place, so an unstaged red edit blocked a green commit (a
+  25-40 minute run on the operator's PC), and a red file staged and then fixed only on disk was
+  allowed - a partial commit too. The suite now runs in a scratch repository built from the
+  index being committed, in the commit's object format, at the real HEAD, and removed
+  afterwards (a killed gate's leftover is removed by a later run after a day). A scratch that
+  cannot be built blocks and names the step and git's error, an unmerged index blocks, an
+  intent-to-add entry is left out as the commit leaves it, and a green suite blocks when the
+  index changed while it ran (ADR-0183, superseding ADR-0120 in part). The deployed kit must be
+  refreshed for the hook to use it.
 - The MCP `fetch_corpus` link is built with the platform's own encoder
   (`pathToFileURL(path.resolve(file))`) instead of pasting `file:///` onto the path. A `#` in a
   package name became a fragment and a `?` a query, so the link addressed a file that does not

@@ -265,10 +265,10 @@ export function architectureMapBreach(root, stagedPaths) {
  * Scope is deliberately narrow. The rule fires only where all four markers of the kit's
  * checkout exist - a scaffolded project has none of them, so no other project ever pays
  * for a suite it does not own - and only for a commit that stages something under
- * `research-kit/`: a docs-only commit owes no suite. The runner is the checkout's own
- * `bin/selftest.mjs`, read through its result file, not its stdout: an unsupported test
- * (no Chromium, no Python - ADR-0108) is not red, and a runner that died before reporting
- * is a block, never a pass.
+ * `research-kit/`: a docs-only commit owes no suite. The runner is the commit's own
+ * `bin/selftest.mjs`, run in a scratch repository built from the index (ADR-0183), and read
+ * through its result file, not its stdout: an unsupported test (no Chromium, no Python -
+ * ADR-0108) is not red, and a runner that died before reporting is a block, never a pass.
  */
 export const SUITE_RULE = 'suite-green-before-commit';
 
@@ -381,6 +381,149 @@ export function runSuiteHere(root, { timeout = suiteBudgetMs() } = {}) {
   }
 }
 
+const SCRATCH_PREFIX = 'research-kit-commit-';
+const SCRATCH_NAME = /^research-kit-commit-[A-Za-z0-9]{6}$/;
+/** Older than this, a commit's scratch was left by a gate that was killed (Ctrl-C, the hook's watchdog). */
+export const ABANDONED_SCRATCH_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Remove the commit scratches a killed gate left in `tmp`: its `finally` never ran, and each one is
+ * a copy of the checkout. Only `runSuiteOnCommit`'s own folders - its name, a .git inside - and only
+ * past a day, so a gate still running in another checkout keeps its scratch.
+ */
+export function sweepAbandonedScratches(tmp, { now = Date.now() } = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(tmp);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!SCRATCH_NAME.test(name)) continue;
+    const dir = path.join(tmp, name);
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory() || now - stat.mtimeMs < ABANDONED_SCRATCH_MS || !exists(path.join(dir, '.git'))) continue;
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    } catch { /* best effort */ }
+  }
+}
+
+const asBytes = (out) => (Buffer.isBuffer(out) ? out : Buffer.from(String(out)));
+// git knows the empty tree in every repository without storing it.
+const EMPTY_TREE = {
+  sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+  sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321',
+};
+
+/**
+ * Run the suite on the commit (ADR-0183): in a scratch repository built from the index being
+ * committed, not in the working tree. Every other commit check judges the index (ADR-0024), and
+ * the suite had read the working tree - an unstaged red edit blocked a green commit, and a red
+ * file staged and then fixed on disk only was allowed.
+ *
+ * The index is read in the hook's environment, so a partial commit's temporary GIT_INDEX_FILE is
+ * the one read; `ls-files` and `diff-index` only read it (`write-tree` may write the cache-tree back
+ * into the index being committed), and an intent-to-add entry, which the commit leaves out, is left out. The scratch is a repository of its own - `git init` in the commit's object
+ * format, the real object store as an alternate, the entries put in with `update-index
+ * --index-info`, checked out, HEAD set to the real HEAD - so the suite's repo-hygiene tests find a
+ * repository whose top level is the checkout they judge, and its `git status` is the commit's.
+ * Without .git there is no index, and the files here are what is judged, as before.
+ *
+ * Returns the runner's result as `runSuiteHere` does - with `indexChanged: true` when the index
+ * was no longer the one tested by the time the suite finished - or `{ unbuilt: true, detail }`
+ * when the scratch could not be built. `suiteBreach` blocks both.
+ */
+export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tempBase(), timeout = suiteBudgetMs(),
+  runHere = (dir) => runSuiteHere(dir, { timeout }) } = {}) {
+  const cwd = top ?? root;
+  if (!isGitRepo(cwd)) return runHere(root);
+  const errors = [];
+  const unbuilt = (why) => {
+    // git's own first line, when it gave one: the step alone does not say a path was too long or a disk full.
+    const said = String(errors.at(-1) ?? '').split(/\r?\n/).find((line) => line.trim()) ?? '';
+    const words = said.slice(0, 200).replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+    return { unbuilt: true, detail: `could not build the commit's tree to run the suite on: ${why}${words ? ` (${words})` : ''}` };
+  };
+  // Bytes, not text: a path is put back exactly as git listed it.
+  const listIndex = () => git(['ls-files', '--stage', '-z'], { cwd, encoding: 'buffer', errors });
+  const listed = listIndex();
+  if (listed === null) return unbuilt('git ls-files failed');
+  const entries = asBytes(listed);
+  // `git commit` refuses an unmerged index before its hook runs; a gate run by hand on one would
+  // test a tree without the conflicted paths, which checkout-index skips without an error.
+  if (/(?:^|\0)\d+ [0-9a-f]+ [1-3]\t/.test(entries.toString('latin1'))) return unbuilt('the index has unmerged paths');
+  const objects = git(['rev-parse', '--git-path', 'objects'], { cwd, errors });
+  if (objects === null || !String(objects).trim()) return unbuilt('git rev-parse failed');
+  // The commit's object format, not the machine's default (init.defaultObjectFormat,
+  // GIT_DEFAULT_HASH): a sha256 scratch refuses a sha1 index. A git too old to say has only sha1.
+  const format = String(git(['rev-parse', '--show-object-format'], { cwd }) ?? '').trim();
+  // The paths the commit holds, by git's own reckoning: ls-files lists an intent-to-add entry
+  // (`git add -N`) as the empty blob, and the commit leaves it out. The index against the empty
+  // tree, with those entries invisible, is that list - and, unlike write-tree, only a read.
+  const held = git(['diff-index', '--cached', '--ita-invisible-in-index', '--ignore-submodules=none', '--no-renames', '--name-only', '-z',
+    format === 'sha256' ? EMPTY_TREE.sha256 : EMPTY_TREE.sha1], { cwd, encoding: 'buffer', errors });
+  if (held === null) return unbuilt('git diff-index failed');
+  const inCommit = new Set(asBytes(held).toString('latin1').split('\0').filter(Boolean));
+  const commit = Buffer.from(entries.toString('latin1').split('\0')
+    .filter((entry) => entry && inCommit.has(entry.slice(entry.indexOf('\t') + 1)))
+    .map((entry) => `${entry}\0`).join(''), 'latin1');
+  // Empty as well when HEAD is unborn - a first commit - and the scratch's HEAD stays unborn too.
+  const head = String(git(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { cwd }) ?? '').trim();
+  sweepAbandonedScratches(tmp);
+  let scratch;
+  try {
+    scratch = fs.mkdtempSync(path.join(tmp, SCRATCH_PREFIX));
+  } catch {
+    return unbuilt(`no folder could be created in ${tmp}`);
+  }
+  // The long spelling: Windows hands a temp folder over as an 8.3 short name (RUNNER~1 on CI) and
+  // git reports the long one, so repo-hygiene's tests would not know the scratch for the repository
+  // it is, and would return early - green, and silent.
+  try { scratch = fs.realpathSync.native(scratch); } catch { /* the name as made */ }
+  // The scratch is its own repository: the hook's GIT_DIR and GIT_INDEX_FILE must not reach it.
+  const env = { ...process.env };
+  for (const name of REPOSITORY_LOCATION) delete env[name];
+  const inScratch = (args, options = {}) => git(args, { cwd: scratch, env, errors, ...options });
+  // The step that failed, or null once the scratch holds the commit.
+  const build = () => {
+    const init = ['-c', 'init.templateDir=', 'init', '-q', ...(/^sha(1|256)$/.test(format) ? [`--object-format=${format}`] : [])];
+    if (inScratch(init) === null) return 'git init failed';
+    // Relative to where git ran (`.git/objects` in the hook), and absolute in the alternates file.
+    const store = path.resolve(cwd, String(objects).trim()).split(path.sep).join('/');
+    fs.mkdirSync(path.join(scratch, '.git', 'objects', 'info'), { recursive: true });
+    fs.writeFileSync(path.join(scratch, '.git', 'objects', 'info', 'alternates'), `${store}\n`);
+    if (inScratch(['update-index', '-z', '--index-info'], { input: commit }) === null) return 'git update-index failed';
+    // Windows refuses a path past 260 characters unless core.longpaths is set, and a temp root
+    // plus a deep tracked path can pass it (found 2026-10-19 under a 110-character root). A path
+    // still too long fails the checkout, and so blocks.
+    if (inScratch(['-c', 'core.longpaths=true', 'checkout-index', '--all', '--force', '-u']) === null) return 'git checkout-index failed';
+    if (head && inScratch(['update-ref', 'HEAD', head]) === null) return 'git update-ref failed';
+    return null;
+  };
+  try {
+    let failed;
+    try {
+      failed = build();
+    } catch {
+      failed = 'the scratch repository could not be written';
+    }
+    if (failed) return unbuilt(failed);
+    const inRepo = projectPrefix(top, root);
+    const result = runHere(inRepo ? path.join(scratch, ...inRepo.split('/').filter(Boolean)) : scratch);
+    // A plain `git commit` holds no lock on the index while its hook runs, and commits what the
+    // index holds when the hook returns: a `git add` from another terminal during the run would
+    // reach the commit untested. Stat data is not listed, so a refresh is not a change.
+    const after = listIndex();
+    if (result && typeof result === 'object' && (after === null || !asBytes(after).equals(entries))) return { ...result, indexChanged: true };
+    return result;
+  } finally {
+    // A suite stopped at its budget may leave a child holding a file here; the rest still goes,
+    // and the next run's sweep takes what is left after a day.
+    try { fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best effort */ }
+  }
+}
+
 // The scratch result is removed after reading it. Preserve enough of its failing
 // identifiers in the verdict to diagnose a red without an unbounded/control-filled log.
 function suiteFailureIdentifiers(failed) {
@@ -394,7 +537,7 @@ function suiteFailureIdentifiers(failed) {
   return `; failing tests: ${shown.join('; ')}${labels.length > 5 ? `; ${labels.length - 5} more identifiers omitted` : ''}`;
 }
 
-export function suiteBreach(root, stagedPaths, { run = () => runSuiteHere(root), announce = null } = {}) {
+export function suiteBreach(root, stagedPaths, { top = null, run = () => runSuiteOnCommit(root, { top }), announce = null } = {}) {
   if (!suiteOwed(root, stagedPaths)) return null;
   const fix = `make the suite green (node ${KIT_DIR}/bin/selftest.mjs), then commit again; git commit --no-verify overrides, and records nothing - say so in your reply`;
   // Called right before the run, so what a caller says about the suite running is true.
@@ -402,6 +545,14 @@ export function suiteBreach(root, stagedPaths, { run = () => runSuiteHere(root),
   const result = run();
   if (!result) {
     return { rule: SUITE_RULE, detail: 'the suite was run and the runner produced no result - it crashed before reporting', fix };
+  }
+  if (result.unbuilt) {
+    // As an index the gate cannot read blocks (ADR-0024): a suite not run on the commit is not green.
+    return {
+      rule: SUITE_RULE,
+      detail: `${result.detail} - a suite that did not run on the commit is not green (ADR-0183)`,
+      fix: `read git's words in the detail: check that git can read the index (git ls-files --stage), that no path is unmerged (git ls-files --unmerged), and that the temp folder (${tempBase()}) is writable with room for a copy of the checkout, then commit again; git commit --no-verify overrides, and records nothing - say so in your reply`,
+    };
   }
   if (result.timedOut) {
     // A slow host and a hung test read the same here; the remedy for the first is the operator's
@@ -426,6 +577,14 @@ export function suiteBreach(root, stagedPaths, { run = () => runSuiteHere(root),
   const exit = result.exit === undefined ? 0 : Number(result.exit);
   if (exit !== 0) {
     return { rule: SUITE_RULE, detail: `every test passed and the runner still exited ${exit} - run it and read its last lines (a stale test count in ${KIT_DIR}/README.md exits 1 on a green run)`, fix };
+  }
+  // Green, on an index that is no longer the commit's: what was staged during the run was not tested.
+  if (result.indexChanged) {
+    return {
+      rule: SUITE_RULE,
+      detail: 'the suite is green, and the index changed while the suite ran - what was staged since was not tested (ADR-0183)',
+      fix: 'stage nothing while the commit\'s suite runs, then commit again; git commit --no-verify overrides, and records nothing - say so in your reply',
+    };
   }
   return null;
 }
@@ -536,10 +695,12 @@ export function materializeIndex(root, { run = gitCapture, tmp = tempBase(), top
   return { ok: true, dir, root: inRepo ? path.join(dir, ...inRepo.split('/').filter(Boolean)) : dir, files: paths.length, empty: false };
 }
 
-function gitCapture(args, { cwd, env = process.env }) {
+// `errors`, when given, collects what git wrote to stderr on a failure, for a caller that names it.
+function gitCapture(args, { cwd, env = process.env, input = undefined, encoding = 'utf8', errors = null }) {
   try {
-    return execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
-  } catch {
+    return execFileSync('git', args, { cwd, env, input, encoding, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', errors ? 'pipe' : 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+  } catch (error) {
+    if (errors) errors.push(String(error?.stderr ?? ''));
     return null;
   }
 }
@@ -702,7 +863,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
     }
     // The suite rule runs LAST, because it is the expensive one: a map breach is answered
     // in a millisecond, and the suite is only paid for by a commit that can otherwise pass.
-    const suite = gate === 'commit' ? suiteBreach(root, stagedPaths, { ...(runSuite ? { run: runSuite } : {}), announce: announceSuite }) : null;
+    const suite = gate === 'commit' ? suiteBreach(root, stagedPaths, { top, ...(runSuite ? { run: runSuite } : {}), announce: announceSuite }) : null;
     if (suite) {
       return {
         ...base, verdict: 'block', allow: false, preflight, breach: suite,

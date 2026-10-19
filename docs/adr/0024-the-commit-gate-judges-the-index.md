@@ -1,7 +1,9 @@
 # ADR-0024 — The commit gate judges the index; every other caller judges the working tree
 
 - **Date:** 2026-09-17
-- **Status:** accepted
+- **Status:** accepted; the trigger of its rejected "materialise the whole index" fired with
+  ADR-0120 and was acted on in ADR-0183 (the suite rule runs on a scratch repository built from
+  the whole index; the corpus verdict still materialises `research/` only)
 - **Area:** the gate verdict, the commit hook
 - **Refines:** the hardening design's diff-scope rule, which said which PATHS are in scope and never said which BYTES
 
