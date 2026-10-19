@@ -71,21 +71,30 @@ function main(argv = process.argv.slice(2)) {
         result = { status: 'INCOMPLETE', errors: [{ code: 'LEDGER-KEYS-READ', message: error.message, path: parsed.keys, status: 'INCOMPLETE' }] };
       }
     }
-    if (!result) result = validateRelease({
-      root: path.resolve(parsed.root),
-      package: parsed.package,
-      registryPath: path.resolve(parsed.registry),
-      rolesPath: path.resolve(parsed.roles),
-      pointersDir: path.resolve(parsed.pointers),
-      schemaDir: parsed.schemas ? path.resolve(parsed.schemas) : DEFAULT_SCHEMA_DIR,
-      ledgerPath: parsed.ledger ? path.resolve(parsed.ledger) : null,
-      genesisPath: parsed.genesis ? path.resolve(parsed.genesis) : null,
-      checkpointsDir: parsed.checkpoints ? path.resolve(parsed.checkpoints) : null,
-      headPath: parsed.head ? path.resolve(parsed.head) : null,
-      genesisHash: parsed.genesishash ?? '0'.repeat(64),
-      publicKeys,
-      snapshotMaxAgeMs,
-    });
+    // The validator returns a verdict for any input, so a throw from it is a defect: it is
+    // VALIDATE-ERROR, INCOMPLETE, exit 2, with a report, as in path-authority. Uncaught it
+    // was a stack, exit 1 - FAIL's code - and nothing on stdout (review of the 2026-10-19 sweep).
+    if (!result) {
+      try {
+        result = validateRelease({
+          root: path.resolve(parsed.root),
+          package: parsed.package,
+          registryPath: path.resolve(parsed.registry),
+          rolesPath: path.resolve(parsed.roles),
+          pointersDir: path.resolve(parsed.pointers),
+          schemaDir: parsed.schemas ? path.resolve(parsed.schemas) : DEFAULT_SCHEMA_DIR,
+          ledgerPath: parsed.ledger ? path.resolve(parsed.ledger) : null,
+          genesisPath: parsed.genesis ? path.resolve(parsed.genesis) : null,
+          checkpointsDir: parsed.checkpoints ? path.resolve(parsed.checkpoints) : null,
+          headPath: parsed.head ? path.resolve(parsed.head) : null,
+          genesisHash: parsed.genesishash ?? '0'.repeat(64),
+          publicKeys,
+          snapshotMaxAgeMs,
+        });
+      } catch (error) {
+        result = { status: 'INCOMPLETE', errors: [{ code: 'VALIDATE-ERROR', message: String(error?.message ?? error), path: parsed.root, status: 'INCOMPLETE' }] };
+      }
+    }
   } else if (parsed.command === 'conform') {
     if (!parsed.schema) { console.error(usage()); return 2; }
     const root = parsed.root ? path.resolve(parsed.root) : process.cwd();

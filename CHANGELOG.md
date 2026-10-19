@@ -5,6 +5,16 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `researcher-release validate` names a ledger record, an envelope or a pointer that canonical
+  JSON refuses (an unpaired surrogate, the escape `\ud800`) instead of crashing. The #340 fix
+  guarded the ledger's payload hash but not the record hash on the next line or the record
+  schema's const/enum comparison, and the envelope's record hash and the pointer's hashes were
+  never guarded, so such a line ended `validate`, with or without `--ledger`, with a stack, exit
+  1 - FAIL's code - and nothing on stdout. Each is now the finding of the hash it has no
+  canonical bytes for (`LEDGER-RECORD-HASH`, `ENV-RECORD-HASH`, `PTR-LINK`, `PTR-HASH`, FAIL;
+  `PTR-SIGNATURE`, INCOMPLETE) or `LEDGER-SCHEMA-SCHEMA-CANONICAL` (FAIL), and a throw left in
+  validation is `VALIDATE-ERROR`, INCOMPLETE, exit 2, with a report, as in `path-authority`
+  (review of the 2026-10-19 sweep).
 - The commit hook finds a kit checkout below the top level under `git --literal-pathspecs
   commit` too. That option hands the hook `GIT_LITERAL_PATHSPECS=1`, the hook's glob for the
   tracked runners then matched nothing, and the watchdog stayed at 120 s - so the suite the gate

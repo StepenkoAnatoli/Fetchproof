@@ -128,6 +128,18 @@ function pointerHashFor(pointer) {
   return sha256(canonicalJson(unsigned));
 }
 
+// The finding message when a declared hash does not match the one `compute` builds from
+// canonical bytes, or null when it does. A value canonical JSON refuses (an unpaired
+// surrogate) has no canonical bytes, so it does not match either: the refusal is named in
+// the message instead of ending `validate` with a stack and exit 1 (review of the
+// 2026-10-19 sweep). Any other throw is not a refusal and propagates.
+function hashMismatch(declared, compute, message) {
+  try { return compute() === declared ? null : message; } catch (error) {
+    if (!/is not canonical JSON/.test(String(error?.message))) throw error;
+    return `${message}: ${error.message}`;
+  }
+}
+
 function pointerSigningFields(pointer) {
   const payload = nestedRecord(pointer) ? pointer.payload : pointer;
   return {
@@ -479,7 +491,12 @@ export function verifyQualificationLedger({ records: suppliedRecords, ledgerPath
     if (!record || typeof record !== 'object' || Array.isArray(record)) { add(errors, 'LEDGER-RECORD', 'ledger record must be an object', at, 'INCOMPLETE'); continue; }
     if (schemaLoaded.value) {
       const schemaErrors = [];
-      validateJsonSchema(record, schemaLoaded.value, { errors: schemaErrors });
+      // A const or enum comparison runs in canonical JSON and throws on a value it refuses,
+      // as in runSchemaConformance: the record is not canonical, a FAIL finding.
+      try { validateJsonSchema(record, schemaLoaded.value, { errors: schemaErrors }); } catch (error) {
+        if (!/is not canonical JSON/.test(String(error?.message))) throw error;
+        schemaErrors.push({ code: 'SCHEMA-CANONICAL', message: `record is not canonical JSON: ${error.message}`, path: '$' });
+      }
       for (const error of schemaErrors) add(errors, `LEDGER-SCHEMA-${error.code}`, error.message, `${at}:${error.path}`, 'FAIL');
     }
     if (record.ledgerVersion !== '1.0.0') add(errors, 'LEDGER-VERSION', 'ledgerVersion must be exactly 1.0.0', `${at}.ledgerVersion`, 'INCOMPLETE');
@@ -496,7 +513,10 @@ export function verifyQualificationLedger({ records: suppliedRecords, ledgerPath
     let canonicalPayloadHash = null;
     try { canonicalPayloadHash = payloadHash(record.payload); } catch { canonicalPayloadHash = null; }
     if (canonicalPayloadHash === null || record.payloadSha256 !== canonicalPayloadHash) add(errors, 'LEDGER-PAYLOAD-HASH', 'payloadSha256 does not match canonical payload', `${at}.payloadSha256`, 'FAIL');
-    if (record.recordHash !== qualificationRecordHash(record)) add(errors, 'LEDGER-RECORD-HASH', 'recordHash does not match canonical record bytes', `${at}.recordHash`, 'FAIL');
+    // The record hash canonicalises the whole record again, payload included, and threw on
+    // the same refusal (review of the 2026-10-19 sweep).
+    const recordMismatch = hashMismatch(record.recordHash, () => qualificationRecordHash(record), 'recordHash does not match canonical record bytes');
+    if (recordMismatch) add(errors, 'LEDGER-RECORD-HASH', recordMismatch, `${at}.recordHash`, 'FAIL');
     if (record.chainHash !== qualificationChainHash(record)) add(errors, 'LEDGER-CHAIN', 'chainHash does not match canonical chain bytes', `${at}.chainHash`, 'FAIL');
     previous = record.chainHash;
     if (record.chainHash) byChain.set(record.chainHash, record);
@@ -529,7 +549,8 @@ export function verifyQualificationLedger({ records: suppliedRecords, ledgerPath
   }
 
   const fields = pointerSigningFields(pointer);
-  if (!fields.pointerHash || pointerHashFor(pointer) !== fields.pointerHash) add(errors, 'PTR-SIGNATURE', 'pointerHash does not verify', '.pointerHash', 'INCOMPLETE');
+  const pointerMismatch = fields.pointerHash ? hashMismatch(fields.pointerHash, () => pointerHashFor(pointer), 'pointerHash does not verify') : 'pointerHash does not verify';
+  if (pointerMismatch) add(errors, 'PTR-SIGNATURE', pointerMismatch, '.pointerHash', 'INCOMPLETE');
   const key = publicKeyFor(publicKeys, fields.signerKeyId);
   if (!fields.signerKeyId || !fields.signature) add(errors, 'PTR-SIGNATURE', 'signed pointer requires signerKeyId and signature', '.signature', 'INCOMPLETE');
   else if (!key) add(errors, 'PTR-SIGNATURE', `unknown or invalid signer key ${fields.signerKeyId}`, '.signerKeyId', 'INCOMPLETE');
@@ -890,7 +911,8 @@ export function validateEnvelope(record, entry, context = {}) {
     try { if (payloadHash(record.payload) !== meta.payloadSha256) add(errors, 'ENV-HASH', 'payloadSha256 does not match canonical payload bytes', '.payloadSha256'); }
     catch (error) { add(errors, 'ENV-PAYLOAD', error.message, '.payload'); }
   }
-  if (meta.recordHash && recordHash(record) !== meta.recordHash) add(errors, 'ENV-RECORD-HASH', 'recordHash does not match canonical record bytes', '.recordHash');
+  const recordMismatch = meta.recordHash && hashMismatch(meta.recordHash, () => recordHash(record), 'recordHash does not match canonical record bytes');
+  if (recordMismatch) add(errors, 'ENV-RECORD-HASH', recordMismatch, '.recordHash');
   if (context.roster) roleAuthorized(record, context.roster, errors, entry);
   checkCandidateVisibility(record, errors);
   checkRoleSeparation(record, errors, context.roleConflicts ?? []);
@@ -919,8 +941,10 @@ function validatePointer(pointer, entry, context, errors) {
   if (meta.state !== undefined && meta.state !== 'sealed') add(errors, 'PTR-STATE', 'pointer envelope must be sealed', '.state');
   if (context.registry?.benchmarkSpecSha256 && meta.benchmarkSpecSha256 && meta.benchmarkSpecSha256 !== context.registry.benchmarkSpecSha256) add(errors, 'PTR-LINK', 'pointer benchmark hash does not match registry', '.benchmarkSpecSha256');
   if (context.registry?.roleRosterSha256 && meta.roleRosterSha256 && meta.roleRosterSha256 !== context.registry.roleRosterSha256) add(errors, 'ROLE-10', 'pointer role roster hash does not match registry', '.roleRosterSha256', 'REOPEN');
-  if (meta.payloadSha256 && 'payload' in pointer && payloadHash(pointer.payload) !== meta.payloadSha256) add(errors, 'PTR-LINK', 'pointer payload hash does not verify', '.payloadSha256');
-  if (meta.recordHash && recordHash(pointer) !== meta.recordHash) add(errors, 'PTR-HASH', 'pointer recordHash does not verify', '.recordHash');
+  const payloadMismatch = meta.payloadSha256 && 'payload' in pointer && hashMismatch(meta.payloadSha256, () => payloadHash(pointer.payload), 'pointer payload hash does not verify');
+  if (payloadMismatch) add(errors, 'PTR-LINK', payloadMismatch, '.payloadSha256');
+  const recordMismatch = meta.recordHash && hashMismatch(meta.recordHash, () => recordHash(pointer), 'pointer recordHash does not verify');
+  if (recordMismatch) add(errors, 'PTR-HASH', recordMismatch, '.recordHash');
   const declaredPointerHash = pointer.payload?.pointerHash ?? pointer.pointerHash;
   if (declaredPointerHash) {
     const unsigned = nestedRecord(pointer)
@@ -933,7 +957,8 @@ function validatePointer(pointer, entry, context, errors) {
       delete unsigned.pointerHash;
       delete unsigned.signature;
     }
-    if (sha256(canonicalJson(unsigned)) !== declaredPointerHash) add(errors, 'PTR-HASH', 'pointerHash does not verify', '.payload.pointerHash');
+    const pointerMismatch = hashMismatch(declaredPointerHash, () => sha256(canonicalJson(unsigned)), 'pointerHash does not verify');
+    if (pointerMismatch) add(errors, 'PTR-HASH', pointerMismatch, '.payload.pointerHash');
   }
   const expectedGate = GATES[entry.package];
   if (promotion.package !== entry.package) add(errors, 'PTR-PACKAGE', 'pointer package does not match registry', '.promotion.package');

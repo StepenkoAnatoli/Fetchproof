@@ -502,6 +502,126 @@ test('ledger verification reports a record without a payload as LEDGER-PAYLOAD-H
   assert(result.errors.some((error) => error.code === 'LEDGER-PAYLOAD-HASH'), JSON.stringify(result.errors));
 });
 
+// Review of the 2026-10-19 sweep: a lone surrogate (the JSON escape \ud800) is a value
+// canonical JSON refuses. The fix above guarded payloadHash only, so the record hash on the
+// next line threw, and so did the record schema's const/enum comparison: `validate --ledger`
+// crashed with a stack. Each refusal is now a named FAIL finding.
+test('ledger verification names a record canonical JSON refuses instead of throwing', async () => {
+  const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+  const base = { ledgerVersion: '1.0.0', physicalSequence: 1, recordKind: 'prepare', state: 'pending', prevChainHash: '0'.repeat(64), payloadSha256: 'e'.repeat(64), payload: {} };
+  const cases = [
+    [{ ...base, payload: { note: '\ud800' } }, ['LEDGER-PAYLOAD-HASH', 'LEDGER-RECORD-HASH']],
+    [{ ...base, actorId: '\udc00' }, ['LEDGER-RECORD-HASH']],
+    [{ ...base, recordKind: '\ud800' }, ['LEDGER-SCHEMA-SCHEMA-CANONICAL', 'LEDGER-RECORD-HASH']],
+  ];
+  for (const [record, codes] of cases) {
+    let result;
+    try { result = verifyQualificationLedger({ records: [record], pointer: {} }); } catch (error) { assert(false, `threw ${error.stack}`); }
+    assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+    for (const code of codes) {
+      const found = result.errors.find((error) => error.code === code);
+      assert(found, `${code} missing: ${JSON.stringify(result.errors)}`);
+      assertEqual(found.status, 'FAIL', JSON.stringify(found));
+    }
+  }
+});
+
+test('validateEnvelope names a record hash canonical JSON refuses instead of throwing', async () => {
+  const { validateEnvelope } = await import('../lib/release-validator.mjs');
+  const entry = registryFor().artifacts[0];
+  for (const record of [
+    envelope({ payload: { note: '\ud800' }, recordHash: 'f'.repeat(64) }),
+    envelope({ ownerId: '\ud800', recordHash: 'f'.repeat(64) }),
+  ]) {
+    let result;
+    try { result = validateEnvelope(record, entry, { roster: roster(), records: new Map() }); } catch (error) { assert(false, `threw ${error.stack}`); }
+    assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+    assert(result.errors.some((error) => error.code === 'ENV-RECORD-HASH' && /not canonical JSON/.test(error.message)), JSON.stringify(result.errors));
+  }
+});
+
+// The pointer is hashed three times in validatePointer (payload, record, pointerHash) and once
+// more by the ledger check; each threw on the same escape.
+test('a pointer canonical JSON refuses is named by validate, with and without --ledger', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const { ledgerPath, ...paths } = await writePointerRelease(root);
+    const pointerFile = path.join(paths.pointersDir, 'R28-04.json');
+    const pointer = JSON.parse(fs.readFileSync(pointerFile, 'utf8'));
+    pointer.payload.note = '\ud800';
+    pointer.payload.pointerHash = 'c'.repeat(64);
+    fs.writeFileSync(pointerFile, JSON.stringify(pointer, null, 2), 'utf8');
+    for (const inputs of [paths, { ...paths, ledgerPath }]) {
+      let result;
+      try { result = validateRelease(inputs); } catch (error) { assert(false, `threw ${error.stack}`); }
+      const named = (code, at) => result.errors.some((error) => error.code === code && error.path === at && /not canonical JSON/.test(error.message));
+      assert(named('PTR-LINK', '.payloadSha256'), JSON.stringify(result.errors));
+      assert(named('PTR-HASH', '.recordHash'), JSON.stringify(result.errors));
+      assert(named('PTR-HASH', '.payload.pointerHash'), JSON.stringify(result.errors));
+      if (inputs.ledgerPath) assert(named('PTR-SIGNATURE', '.pointerHash'), JSON.stringify(result.errors));
+      assert(result.status !== 'PASS', JSON.stringify(result));
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+const STACK_LINE = /\n\s+at /;
+
+test('researcher-release validate --ledger prints a report for a ledger line canonical JSON refuses', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    // One line whose payload string is the six-character escape \ud800.
+    fs.writeFileSync(inputs.ledgerPath, `{"ledgerVersion":"1.0.0","physicalSequence":1,"recordKind":"prepare","state":"pending","prevChainHash":"${'0'.repeat(64)}","payloadSha256":"${'e'.repeat(64)}","payload":{"note":"\\ud800"}}\n`, 'utf8');
+    const run = spawnSync(process.execPath, [
+      'research-kit/bin/researcher-release.mjs', 'validate',
+      '--root', root, '--package', 'R28', '--registry', inputs.registryPath,
+      '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir, '--ledger', inputs.ledgerPath, '--json',
+    ], { encoding: 'utf8' });
+    const output = `${run.stdout}${run.stderr}`;
+    assert(!STACK_LINE.test(output), `a stack reached the operator:\n${output.slice(-600)}`);
+    let report;
+    try { report = JSON.parse(run.stdout); } catch { assert(false, `stdout is not a report (exit ${run.status}):\n${output.slice(-600)}`); }
+    // The line carries no contract or roster hash, which is REOPEN; the refusal adds FAIL findings.
+    assert(['FAIL', 'REOPEN'].includes(report.status), run.stdout);
+    assertEqual(run.status, 1, output);
+    const codes = report.errors.map((error) => error.code);
+    assert(codes.includes('LEDGER-PAYLOAD-HASH') && codes.includes('LEDGER-RECORD-HASH'), codes.join(', '));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// The backstop, as path-authority has it: validation that still throws is VALIDATE-ERROR,
+// INCOMPLETE, exit 2, with a report - never exit 1 (FAIL's code) and a stack. A malformed
+// schema in --schemas makes the schema subset throw a TypeError, which is not a refusal.
+test('researcher-release validate reports a validator throw as VALIDATE-ERROR, exit 2, not a stack', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const schemas = path.join(root, 'schemas');
+    fs.mkdirSync(schemas);
+    fs.writeFileSync(path.join(schemas, 'r28-r32-envelope.schema.json'), '{"enum":5}', 'utf8');
+    const run = spawnSync(process.execPath, [
+      'research-kit/bin/researcher-release.mjs', 'validate',
+      '--root', root, '--package', 'R28', '--registry', inputs.registryPath,
+      '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir, '--schemas', schemas, '--json',
+    ], { encoding: 'utf8' });
+    const output = `${run.stdout}${run.stderr}`;
+    assert(run.status !== 1, `a validator throw exited 1, FAIL's code:\n${output.slice(-600)}`);
+    assertEqual(run.status, 2, output);
+    assert(!STACK_LINE.test(output), `a stack reached the operator:\n${output.slice(-600)}`);
+    const report = JSON.parse(run.stdout);
+    assertEqual(report.status, 'INCOMPLETE', run.stdout);
+    assertEqual(report.errors[0]?.code, 'VALIDATE-ERROR', run.stdout);
+    assertEqual(report.errors[0]?.status, 'INCOMPLETE', run.stdout);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('nested promotion pointers require a committed promotion and verify pointer linkage', async () => {
   const { validateRelease, payloadHash, sha256, canonicalJson, recordHash } = await import('../lib/release-validator.mjs');
   const root = tempRoot();
