@@ -16,7 +16,7 @@ import { test, describe, assert, fs, path } from './harness.mjs';
 import { parseCapture } from '../lib/corpus.mjs';
 import {
   sketch, similarity, shingles, documentGroups, isMirror, closestPair,
-  MIRROR_THRESHOLD, MIN_SHINGLES, SHINGLE_WORDS,
+  MIRROR_THRESHOLD, MIN_SHINGLES, SHINGLE_WORDS, CHARS_PER_WORD,
 } from '../lib/similarity.mjs';
 
 describe('similarity');
@@ -179,6 +179,64 @@ test('canonically equivalent text is one word, composed or decomposed', () => {
   assert.equal(similarity(sketch(composed), sketch(decomposed)), 1, 'é and e + U+0301 are the same word');
 });
 
+// #333, ADR-0176. Chinese, Japanese and Thai put no space between words, so the rule above read a
+// page in them as one "word" per clause - or one per page, with no punctuation - and it
+// shingled to too little: `sketch` returned null and a republished copy was an independent
+// witness. A character is now a token, and fifteen of them weigh what five words do.
+const PHRASES_ZH = ['免费计划每分钟可发送请求', '请求次数超过限制时报错', '账户管理员可以修改设置', '页面上方显示当前的用量', '超过上限后接口返回错误', '每个错误代码都有说明', '用量在每月一日零点重置', '服务接口的版本号说明', '数据在服务器保存九十天', '同时连接数量不能超过十', '响应格式默认是纯文本', '计费周期结束时发送账单'];
+/** A page of these phrases in one of many orders, with no punctuation and no space anywhere. */
+const zhPage = (step) => Array.from({ length: 48 }, (_, i) => PHRASES_ZH[(i * step + Math.floor(i / PHRASES_ZH.length)) % PHRASES_ZH.length]).join('');
+
+test('a page in a script without word spaces is fingerprinted, and two copies of it are one document', () => {
+  const page = zhPage(5);
+  assert.ok(!/[\s\p{P}A-Za-z0-9]/u.test(page), 'no space, punctuation or Latin character may appear, or the word rule would have had something to split on');
+  const a = sketch(page);
+  assert.notEqual(a, null, 'a Chinese page with no punctuation must be judgeable at all');
+  assert.equal(isMirror(a, sketch(page.replace('管理员', '负责人'))), true, 'two copies of one page are one document, not two witnesses');
+});
+
+test('a Japanese page whose sentences end only in 。 is judged, and so is a Thai page', () => {
+  // Thirty sentences: under the word rule, thirty tokens and 26 shingles - under MIN_SHINGLES.
+  const WHO = ['無料プラン', '有料プラン', '管理者', '利用者', '開発者', '請求担当'];
+  const WHAT = ['一分あたりの要求数', '月間の上限', '保存期間', '同時接続数', '応答の形式'];
+  const DO = ['確認できます', '変更できません', '設定画面に表示されます', '翌月に戻ります', '通知されます'];
+  const ja = Array.from({ length: 30 }, (_, i) => `${WHO[i % 6]}では${WHAT[i % 5]}を${DO[(i * 2) % 5]}`).join('。');
+  assert.equal(isMirror(sketch(ja), sketch(ja.replace('管理者', '担当者'))), true);
+  // Thai marks (the vowel and tone signs written on a consonant) stay on their consonant.
+  const TH = ['การ', 'ตั้งค่า', 'ความ', 'ปลอดภัย', 'บัญชี', 'ผู้ใช้', 'ข้อมูล', 'ส่วนตัว', 'หน้า', 'แสดง', 'จำนวน', 'คำขอ', 'ต่อ', 'นาที', 'เกิน', 'ขีดจำกัด', 'รายเดือน', 'บริการ'];
+  const th = Array.from({ length: 120 }, (_, i) => TH[(i * 5 + Math.floor(i / TH.length)) % TH.length]).join('');
+  const thTokens = [...shingles(th)].flatMap((s) => s.split(' '));
+  assert.ok(thTokens.includes('ตั้'), 'a consonant and the marks on it are one token');
+  assert.ok(!thTokens.some((t) => /^\p{M}/u.test(t)), 'no mark stands alone as a token');
+  assert.equal(isMirror(sketch(th), sketch(th.replace('บัญชี', 'ระบบ'))), true);
+});
+
+test('two different pages built from the same phrases are not a mirror: why a shingle is fifteen characters, not five', () => {
+  // A UI catalog or a templated page repeats its phrases; a character 5-gram is shorter than
+  // most of them, so it matches what the pages share in VOCABULARY, not in text. The pair below
+  // scores above MIRROR_THRESHOLD on plain character 5-grams. Measured on real catalogs: two
+  // halves of Chrome's Thai strings, 0.177 on 5-grams, 0.021 on fifteen (ADR-0176).
+  const a = zhPage(5);
+  const b = zhPage(7);
+  const grams = (t) => new Set(Array.from({ length: [...t].length - 4 }, (_, i) => [...t].slice(i, i + 5).join('')));
+  const [x, y] = [grams(a), grams(b)];
+  const shared = [...x].filter((g) => y.has(g)).length;
+  assert.ok(shared / (x.size + y.size - shared) >= MIRROR_THRESHOLD, 'the pair must be one that character 5-grams would call a mirror, or this test proves nothing');
+  assert.equal(CHARS_PER_WORD, 3);
+  assert.equal(isMirror(sketch(a), sketch(b)), false);
+});
+
+test('MIN_SHINGLES asks the same amount of text of a page in every script', () => {
+  // A token per character gives a page without word spaces three shingles for every word's
+  // worth of text, so it would pass a count of forty on a third of the text English needs.
+  let han = '';
+  for (let i = 0; han.length < 200; i += 1) han += String.fromCodePoint(0x4e00 + ((i * 7919) % 20000));
+  const short = han.slice(0, 130);
+  assert.ok(shingles(short).size > MIN_SHINGLES, 'the short page has more shingles than the floor counts');
+  assert.equal(sketch(short), null, 'and still too little text: 116 shingles at a third of a word each');
+  assert.notEqual(sketch(han), null, '186 shingles weigh 62 words, over the floor');
+});
+
 // The guard for the two fixes above. Every page that is plain ASCII must shingle EXACTLY as the
 // ASCII-only rule did, because MIRROR_THRESHOLD and the pinned Jaccard in this file were
 // measured on that: after `toLowerCase`, `[^a-z0-9\s]` kept exactly a-z, 0-9 and whitespace,
@@ -194,4 +252,30 @@ test('ASCII text shingles exactly as the ASCII-only rule did', () => {
   const expected = new Set();
   for (let i = 0; i + SHINGLE_WORDS <= oldRule.length; i += 1) expected.add(oldRule.slice(i, i + SHINGLE_WORDS).join(' '));
   assert.deepEqual([...shingles(sample)].sort(), [...expected].sort());
+});
+
+// The guard for ADR-0176: a page in a script that separates its words - and Korean is one -
+// shingles exactly as ADR-0163's rule had it, so making a character a token in Chinese,
+// Japanese and Thai moves no other page. Passes before and after that change, by design.
+test('a page in a script with word spaces shingles exactly as the word rule did', () => {
+  const samples = [
+    'Тариф включает сто запросов в месяц, а лимит сбрасывается первого числа.',
+    'Το δωρεάν πρόγραμμα επιτρέπει δέκα αιτήματα ανά λεπτό σε κάθε λογαριασμό.',
+    'تسمح الخطة المجانية بعشرة طلبات في الدقيقة لكل حساب مسجل لدى الخدمة.',
+    'התוכנית החינמית מאפשרת עשר בקשות בדקה לכל חשבון רשום בשירות הזה.',
+    'मुफ़्त योजना हर मिनट दस अनुरोध की अनुमति देती है और महीने में सीमा रीसेट होती है।',
+    '무료 요금제는 계정마다 분당 열 번의 요청을 허용하며 한도는 매월 초기화됩니다.',
+    'Le forfait gratuit numéro 1 autorise des requêtes limitées chaque mois, déjà réinitialisées.',
+  ];
+  for (const sample of samples) {
+    const words = sample.toLowerCase().normalize('NFC')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/[^\p{L}\p{N}\p{M}\s]+/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+    const expected = new Set();
+    for (let i = 0; i + SHINGLE_WORDS <= words.length; i += 1) expected.add(words.slice(i, i + SHINGLE_WORDS).join(' '));
+    assert.ok(expected.size > 0, `the sample must shingle at all: ${sample}`);
+    assert.deepEqual([...shingles(sample)].sort(), [...expected].sort(), sample);
+  }
 });

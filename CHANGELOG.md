@@ -18,6 +18,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   (rank 17, `docs/review-2026-10-04-gap-audit.md`; rank 14 of `docs/review-2026-10-03-gap-audit.md`).
   ASCII input is unchanged, so `MIRROR_THRESHOLD` still rests on the corpus it was measured
   against (ADR-0163).
+- Near-duplicate detection also reads Chinese, Japanese, Thai, Lao, Khmer and Burmese, the
+  scripts that put no space between their words. A page in them was one "word" per clause, or
+  one per page, so it shingled to too little, `sketch` returned null for it, and a republished
+  copy of it was an independent witness again. In those scripts a character is a token and a
+  shingle is fifteen of them: the length at which real Chinese, Japanese and Thai text scores
+  on the scale `MIRROR_THRESHOLD` was measured on, where the plain character 5-gram put two
+  different Thai texts at 0.18. `MIN_SHINGLES` asks the same amount of text of a page in every
+  script. Every other page shingles as before (#333, ADR-0176).
 - The collector stamps a fetch's ledger `at` with the moment it happened instead of midnight
   of its day; a failed fetch already did, so the two sorted against each other wrongly, and the
   day the capture was retrieved is unchanged in `retrieved` (rank 9,
