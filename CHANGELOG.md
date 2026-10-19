@@ -15,6 +15,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   intent-to-add entry is left out as the commit leaves it, and a green suite blocks when the
   index changed while it ran (ADR-0183, superseding ADR-0120 in part). The deployed kit must be
   refreshed for the hook to use it.
+- The commit hook widens its watchdog for a kit checkout below the top level too. The gate
+  runs the suite there (#309, ADR-0182), but the hook recognised the kit only at the top level,
+  so it killed that suite at 120 s and the commit was decided by posture - allowed on a
+  fail-open machine. The hook now lists the runners the index tracks and widens when a folder
+  holding one has the whole checkout.
 - The MCP `fetch_corpus` link is built with the platform's own encoder
   (`pathToFileURL(path.resolve(file))`) instead of pasting `file:///` onto the path. A `#` in a
   package name became a fragment and a `?` a query, so the link addressed a file that does not

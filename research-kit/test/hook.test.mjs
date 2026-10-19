@@ -82,7 +82,7 @@ test('the hook widens its watchdog only in the kit\'s own checkout, and only whe
   const text = readText(HOOK);
   assert.match(text, /research-kit\/bin\/selftest\.mjs/, 'the hook does not know the kit\'s checkout');
   assert.match(text, /RESEARCH_KIT_GATE_TIMEOUT:-/, 'an operator\'s own timeout must win');
-  const widened = /GATE_TIMEOUT=(\d+)\s*$/m.exec(text.split('selftest.mjs')[1] ?? '');
+  const widened = /GATE_TIMEOUT=(\d+)\s*$/m.exec(text.slice(text.indexOf('selftest.mjs')));
   // ADR-0142: the node side decides. The watchdog in the kit's checkout is the suite's budget plus
   // the rest of the gate's allowance, so it never fires on a suite the gate could still report on;
   // it had been 1500 s against a 1200 s budget, and the budget was the number a slow host met.
@@ -92,6 +92,44 @@ test('the hook widens its watchdog only in the kit\'s own checkout, and only whe
     `the watchdog in the kit's checkout must be the suite's budget plus the rest of the gate's allowance: ${widened?.[0]}`);
   const fallback = /GATE_TIMEOUT="\$\{OPERATOR_TIMEOUT:-(\d+)\}"/.exec(text);
   assert.equal(Number(fallback?.[1]), GATE_REST_S, 'the rest of the gate\'s allowance is the hook\'s own default watchdog');
+});
+
+// Found 2026-10-19 (the review of ADR-0183): the gate runs the suite for a kit checkout BELOW the
+// top level too (#309, ADR-0182), and the hook widened its watchdog only for one AT the top level,
+// so that suite was killed at 120 s - an internal error, decided by posture, which on a fail-open
+// machine allows the commit the suite would have refused. The hook now asks the index where a
+// runner is tracked, and widens for any folder that holds the whole checkout.
+test('the hook widens its watchdog for a kit checkout below the top level, and only for a whole one', () => {
+  requireCapability(SH, 'SHELL-NOT-FOUND', `no POSIX sh on this host (tried: ${SH_TRIED.join(', ')})`);
+  const scriptFile = path.join(tempDir('research-kit-watchdog-'), 'watchdog.sh');
+  writeText(scriptFile, `${readText(HOOK).split('# --- the watchdog')[0]}\nprintf '%s' "$GATE_TIMEOUT"\n`);
+  const markers = ['research-kit/lib/core.mjs', 'research-kit/bin/gate.mjs', 'research-kit/bin/selftest.mjs', 'research-kit/test/.keep'];
+  const repo = (tracked, loose = []) => {
+    const dir = tempDir('research-kit-watchdog-repo-');
+    git(dir, fixtureInitArgs());
+    for (const rel of [...tracked, ...loose]) {
+      fs.mkdirSync(path.dirname(resolve(dir, rel)), { recursive: true });
+      writeText(resolve(dir, rel), '// stand-in\n');
+    }
+    if (tracked.length) git(dir, ['add', '-f', '--', ...tracked]);
+    return dir;
+  };
+  const watchdogIn = (dir) => {
+    const env = { ...process.env, RESEARCH_KIT_HOME: KIT_ROOT, RESEARCH_KIT_CONFIG: isolatedConfig() };
+    delete env.RESEARCH_KIT_GATE_TIMEOUT;
+    const shell = spawnSync(SH, [scriptFile], { cwd: dir, encoding: 'utf8', timeout: 30_000, env });
+    assert.equal(shell.status, 0, `${shell.stdout}${shell.stderr}`);
+    return shell.stdout;
+  };
+  const widened = String(SUITE_TIMEOUT_MS / 1000 + gateLib.GATE_REST_S);
+  assert.equal(watchdogIn(repo(markers.map((rel) => `kit/${rel}`))), widened,
+    'a kit checkout below the top level kept the default watchdog, which kills its suite');
+  assert.equal(watchdogIn(repo(markers.map((rel) => `a/b/${rel}`))), widened, 'two folders down');
+  assert.equal(watchdogIn(repo(markers)), widened, 'the kit at the top level');
+  assert.equal(watchdogIn(repo([])), '120', 'a repository with no kit');
+  assert.equal(watchdogIn(repo(['vendor/research-kit/bin/selftest.mjs'])), '120', 'a runner alone is not a kit checkout');
+  assert.equal(watchdogIn(repo([], markers.map((rel) => `kit/${rel}`))), '120',
+    'a checkout the index does not hold is not one the gate runs a suite for');
 });
 
 // Found 2026-10-05 (ADR-0142): RESEARCH_KIT_GATE_TIMEOUT reached the hook's watchdog and not the
