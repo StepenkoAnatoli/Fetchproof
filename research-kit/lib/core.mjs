@@ -389,6 +389,34 @@ export function renameRetrying(from, to, { rename = fs.renameSync, sleep = sleep
   }
 }
 
+/** How many times a held folder's removal is tried again before it is left. */
+export const REMOVE_RETRIES = 6;
+
+/**
+ * Remove the folder `dir` and everything in it, tried again while it is held, and never throw:
+ * true when it is gone (or `dir` is empty), false when it was left.
+ *
+ * A render's folder holds the browser's profile and net log (ADR-0185). The browser's helper
+ * processes can still hold files in it for a moment after the browser exits - on Windows a
+ * removal then fails with EPERM, EBUSY or EACCES, anywhere with ENOTEMPTY when a helper wrote
+ * one more file while the folder was emptied. Waits of 25 ms doubling, about 1.6 s in all.
+ * A folder that will not go is left: cleaning a temp folder never changes what a collection
+ * found (ADR-0185).
+ */
+export function removeRetrying(dir, { rm = fs.rmSync, sleep = sleepSync, platform = process.platform } = {}) {
+  if (!dir) return true;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rm(dir, { recursive: true, force: true });
+      return true;
+    } catch (err) {
+      const held = err?.code === 'ENOTEMPTY' || (platform === 'win32' && HELD.has(err?.code));
+      if (!held || attempt >= REMOVE_RETRIES) return false;
+      sleep(25 * 2 ** attempt);
+    }
+  }
+}
+
 export function writeBytes(p, data, encoding = null) {
   ensureDir(path.dirname(p));
   let target = p;

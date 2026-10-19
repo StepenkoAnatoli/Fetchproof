@@ -5,6 +5,17 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A browser render no longer leaves its profile or its net log in the temp folder. Chromium
+  ran without `--user-data-dir`, so each render left a `HeadlessChrome*` profile there - killed
+  or not, on the operator's PC - and a guard child the transport killed at its allowance never
+  removed its `rk-netlog-*` folder: 1841 profiles (656 MB) and 72 net-log folders had built up
+  in `%TEMP%` there. Each render now has one `rk-render-` folder, made by the transport,
+  holding the profile (`--user-data-dir`) and the net log; the guard child removes it, and the
+  transport removes it again once the child is gone, however it ended. A removal Windows holds
+  is retried for about 1.6 s, and a folder that will not go is left without changing the
+  render's result (ADR-0185, break-test of the 2026-10-19 review, B1). Folders already in the
+  temp folder stay; remove them while no headless Chrome is running, e.g.
+  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/rk-netlog-*` on Windows.
 - A commit that removes a project's `research/` is judged by #312's rule again. `rm -rf research
   && git add -A` at the top level left no gate marker, so the gate answered not-gated and the
   commit took the corpus and turned the gate off with no record; `git rm -r research`, with the

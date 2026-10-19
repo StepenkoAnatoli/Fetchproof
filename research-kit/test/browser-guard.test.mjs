@@ -357,6 +357,138 @@ test('the transport\'s half passes the child\'s net log and its own internal-add
   assert.equal(old.allowInternal, undefined, 'an absent decision is left for the transport to make');
 });
 
+/**
+ * A stand-in for the browser's profile (B1, review of the 2026-10-19 sweep). Chromium given no
+ * `--user-data-dir` makes a `HeadlessChrome<n>` profile in the temp folder and does not always
+ * remove it - never when it is killed - and this PC's %TEMP% held over 1800 of them. This one does the
+ * same: with no `--user-data-dir` it makes `HeadlessChrome<random>` in the temp folder and removes
+ * it only when it finishes; given one, it writes its profile there and leaves it. It writes the net
+ * log it is given, records where its profile went in the file `--rk-said=` names, and then
+ * finishes, hangs until it is killed (`--rk-hang`), or kills the guard child that launched it
+ * before that child's own cleanup can run (`--rk-kill-guard`).
+ */
+function profileBrowser() {
+  const file = path.join(tempDir('rk-profile-browser-'), 'browser.mjs');
+  fs.writeFileSync(file, `
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const args = process.argv.slice(2);
+const value = (name) => args.find((a) => a.startsWith('--' + name + '='))?.slice(name.length + 3);
+const given = value('user-data-dir');
+const profile = given ?? fs.mkdtempSync(path.join(os.tmpdir(), 'HeadlessChrome'));
+fs.mkdirSync(path.join(profile, 'Default'), { recursive: true });
+fs.writeFileSync(path.join(profile, 'Default', 'Preferences'), '{}');
+const log = value('log-net-log');
+if (log) fs.writeFileSync(log, '{"constants":{},"events":[');
+fs.writeFileSync(value('rk-said'), JSON.stringify({ profile, given: Boolean(given), log: log ?? null }));
+if (args.includes('--rk-hang')) setInterval(() => {}, 1 << 30);
+else if (args.includes('--rk-kill-guard')) { process.kill(process.ppid, 'SIGKILL'); process.exit(0); }
+else { process.stdout.write('<html><body>done</body></html>'); if (!given) fs.rmSync(profile, { recursive: true, force: true }); }
+`);
+  return file;
+}
+
+/** Run `fn` with the temp folder pointed at an empty one of its own, so what a render leaves there can be counted. */
+async function inPrivateTemp(fn) {
+  const temp = tempDir('rk-private-temp-');
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  Object.assign(process.env, { TMPDIR: temp, TEMP: temp, TMP: temp });
+  try {
+    return await fn(temp);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+// B1 (review of the 2026-10-19 sweep): every suite run, and every page a collection abandoned at
+// its deadline, left a Chromium profile in the temp folder - the browser was given none, and one
+// the guard kills never removes the one it made itself. The browser's profile is now a folder of
+// the render's, beside its net log, and goes with it on every way out.
+test('a browser killed at its deadline leaves no profile and no net log in the temp folder: both are the render\'s, and go with it', async () => {
+  const browser = profileBrowser();
+  const said = path.join(tempDir('rk-profile-said-'), 'said.json');
+  const url = 'http://127.0.0.1:9/none';
+  await inPrivateTemp(async (temp) => {
+    const killed = await renderThroughGuard({ binary: process.execPath, args: [browser, `--rk-said=${said}`, '--rk-hang', '--dump-dom', url], url, allowInternal: true, timeout: 4000 });
+    assert.equal(killed.errorCode, 'ETIMEDOUT', JSON.stringify(killed));
+    assert.ok(fs.existsSync(said), 'the stand-in browser had not started when the guard killed it: this host took over 4 s to start a node script');
+    assert.deepEqual(fs.readdirSync(temp), [], 'a browser the guard killed left its profile or its net log in the temp folder');
+    const hung = JSON.parse(fs.readFileSync(said, 'utf8'));
+    assert.equal(hung.given, true, 'the browser was given no --user-data-dir, so its profile went to the temp folder');
+    assert.equal(path.dirname(hung.profile), path.dirname(hung.log), 'the profile is not in the render\'s folder beside the net log');
+    assert.equal(fs.existsSync(path.dirname(hung.profile)), false, 'the render\'s folder outlived the render');
+
+    // A browser that finishes: the profile it was given goes too, though it left it in place.
+    fs.rmSync(said);
+    const done = await renderThroughGuard({ binary: process.execPath, args: [browser, `--rk-said=${said}`, '--dump-dom', url], url, allowInternal: true, timeout: 10_000 });
+    assert.equal(done.status, 0, done.stderr);
+    assert.match(done.stdout, /done/);
+    const finished = JSON.parse(fs.readFileSync(said, 'utf8'));
+    assert.equal(finished.given, true);
+    assert.notEqual(path.dirname(finished.profile), path.dirname(hung.profile), 'two renders shared a folder');
+    assert.deepEqual(fs.readdirSync(temp), [], 'a finished render left its folder in the temp folder');
+  });
+});
+
+// The guard child removes the render's folder in its `finally`, which never runs when the child
+// is killed - by the transport at its allowance (a LIVE test's guard child, 2026-10-19, left
+// `rk-netlog-pROoS3`), or any other way. So the transport makes the folder, hands it to the child,
+// and removes it itself once the child is gone.
+test('a guard child killed before its own cleanup leaves nothing in the temp folder: the transport made the render\'s folder, and removes it', async () => {
+  const browser = profileBrowser();
+  const said = path.join(tempDir('rk-profile-said-'), 'said.json');
+  const url = 'http://127.0.0.1:9/none';
+  await inPrivateTemp(async (temp) => {
+    const r = renderGuarded(process.execPath, [browser, `--rk-said=${said}`, '--rk-kill-guard', '--dump-dom', url], { url, env: { ...process.env }, timeout: 10_000, allowInternalRedirects: true });
+    assert.ok(fs.existsSync(said), `the stand-in browser never started: ${JSON.stringify(r)}`);
+    assert.equal(r.stdout, '', 'the killed guard child reported a render');
+    assert.deepEqual(fs.readdirSync(temp), [], 'a guard child killed mid-render left the render\'s folders in the temp folder');
+    const { profile, given } = JSON.parse(fs.readFileSync(said, 'utf8'));
+    assert.equal(given, true, 'the browser was given no --user-data-dir');
+    assert.equal(fs.existsSync(profile), false);
+  });
+});
+
+// Windows keeps a file a process holds open from being deleted, and a browser just killed can
+// hold its profile's files for a moment: the removal is tried again, briefly, and a folder that
+// still will not go is left - its removal never decides the render's result.
+test('a render\'s folder Windows still holds is removed on a later try, and one that will not go is left without an error', async () => {
+  const { removeRetrying, REMOVE_RETRIES } = await import('../lib/core.mjs');
+  const held = (code, times) => {
+    const calls = [];
+    const rm = (dir, options) => { calls.push([dir, options]); if (calls.length <= times) throw Object.assign(new Error(`${code}: held`), { code }); };
+    return { rm, calls };
+  };
+  const slept = [];
+  const sleep = (ms) => slept.push(ms);
+  for (const code of ['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']) {
+    const { rm, calls } = held(code, 2);
+    assert.equal(removeRetrying('/t/rk-render-x', { rm, sleep, platform: 'win32' }), true, `${code}: a folder held twice was not removed on the third try`);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[0], ['/t/rk-render-x', { recursive: true, force: true }]);
+  }
+  slept.length = 0;
+  const stuck = held('EBUSY', Infinity);
+  assert.equal(removeRetrying('/t/rk-render-x', { rm: stuck.rm, sleep, platform: 'win32' }), false, 'a folder that will not go is reported, not thrown');
+  assert.equal(stuck.calls.length, REMOVE_RETRIES + 1, 'a folder held for good was retried without end');
+  const waited = slept.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(waited > 0 && waited <= 2000, `the retries are brief: ${slept.join(', ')} ms`);
+  for (const [platform, code] of [['linux', 'EBUSY'], ['darwin', 'EPERM'], ['win32', 'EINVAL']]) {
+    const once = held(code, Infinity);
+    assert.equal(removeRetrying('/t/rk-render-x', { rm: once.rm, sleep, platform }), false);
+    assert.equal(once.calls.length, 1, `${platform} ${code} was retried: it is a refusal, not a moment's hold`);
+  }
+  // A process still writing into the tree, on any platform.
+  assert.equal(removeRetrying('/t/rk-render-x', { rm: held('ENOTEMPTY', 1).rm, sleep, platform: 'linux' }), true);
+  let called = false;
+  assert.equal(removeRetrying(null, { rm: () => { called = true; }, sleep }), true, 'no folder is nothing to remove');
+  assert.equal(called, false);
+});
+
 // The previous fixture measured `node -e 0`, then relied on a different ESM child's boot
 // fitting around an artificial sleep. A 434 ms sample gave a 2170 ms allowance, but that
 // child made no request before it expired (2026-10-09). Its mute case also bounded setup
