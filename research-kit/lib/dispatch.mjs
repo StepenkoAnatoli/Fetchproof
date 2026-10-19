@@ -25,8 +25,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeBytes, tempBase } from './core.mjs';
 import { fetchFailure } from './runtime.mjs';
-import { openZip } from './artifact-zip.mjs';
-import { validateArtifact } from './artifact-validator.mjs';
+import { openZip, ZIP_LIMITS } from './artifact-zip.mjs';
+import { validateArtifact, MANIFEST_PATH } from './artifact-validator.mjs';
 
 /** The version whose dispatch response carries the run id. Changing this is a decision. */
 export const API_VERSION = '2026-03-10';
@@ -70,6 +70,15 @@ export function redact(text) {
  * text. `value` is undefined when there is nothing to send, so a dispatch without either
  * looks exactly like one from before these options existed.
  */
+function credentialHost(line) {
+  try {
+    const url = new URL(line);
+    if (['http:', 'https:'].includes(url.protocol) && (url.username || url.password)) return `…@${url.host}`;
+  } catch { /* judged by its spelling below */ }
+  const spelled = /^https?:[\\/]*[^\\/?#\s]*@([^\\/?#\s]*)/i.exec(line);
+  return spelled ? `…@${spelled[1]}` : '';
+}
+
 export function queriesInput({ queries = [], urls = [] } = {}) {
   const items = (list) => (Array.isArray(list) ? list : [list]).map((item) => String(item ?? ''));
   const searches = items(queries);
@@ -81,6 +90,15 @@ export function queriesInput({ queries = [], urls = [] } = {}) {
   }
   const clean = (list) => list.map((item) => item.trim()).filter(Boolean);
   const pages = clean(addresses);
+  // A user name or password in a URL would become a workflow input anyone who can read the
+  // collector repository sees, and a ledger line nobody may edit (#308). Every line is read,
+  // searches too: collect.yml fetches any line that is an http(s) URL, whichever list it came
+  // in. A line that only looks like one - `https://user:pass@host:99999/` does not parse - is
+  // refused as well, since it would be published as a search. Named by host, never the secret.
+  const credentialed = [...clean(searches), ...pages].map(credentialHost).filter(Boolean);
+  if (credentialed.length) {
+    return { value: undefined, error: `a URL carries credentials (${credentialed.join(', ')}) - a page behind a login is a KNOWN-UNKNOWN, not a fetch` };
+  }
   const bad = pages.filter((page) => {
     if (!/^https?:\/\/./i.test(page)) return true;
     try { new URL(page); return false; } catch { return true; }
@@ -367,6 +385,45 @@ export async function listArtifacts({ repository, runId, token, fetch: doFetch =
   return body.artifacts ?? [];
 }
 
+/**
+ * The most bytes a download may hold: the one package GitHub's wrapper carries, which the
+ * package reader refuses past its per-entry ceiling anyway, plus room for the wrapper's own
+ * headers. Every other remote body the kit reads is bounded before it is held (ADR-0082,
+ * artifact-zip.mjs); this one comes from a repository the operator may not control (#329).
+ */
+export const MAX_ARTIFACT_BYTES = ZIP_LIMITS.maxEntryBytes + 1024 * 1024;
+
+/**
+ * The body, refused when Content-Length declares it over the bound - before a byte is read -
+ * or when a body that declared nothing (chunked) grows past it, mid-stream. `response.body` is
+ * a stream on every real fetch; one without it (an empty body, a test double) is read whole
+ * and judged after.
+ */
+async function boundedDownload(response, artifactId) {
+  const tooLarge = (size) => new DispatchError('TOO_LARGE', `artifact ${artifactId} is ${size} bytes, over the ${MAX_ARTIFACT_BYTES}-byte limit for a corpus package - not read`, {
+    remedy: 'nothing was written. A package that large cannot be validated either - re-collect with fewer pages',
+  });
+  const declared = Number(response.headers?.get?.('content-length'));
+  if (declared > MAX_ARTIFACT_BYTES) {
+    await response.body?.cancel?.().catch(() => {});
+    throw tooLarge(declared);
+  }
+  if (!response.body) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_ARTIFACT_BYTES) throw tooLarge(bytes.length);
+    return bytes;
+  }
+  const chunks = [];
+  let size = 0;
+  // Throwing out of the loop cancels the stream, so the rest of an oversized body is never fetched.
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > MAX_ARTIFACT_BYTES) throw tooLarge(`more than ${MAX_ARTIFACT_BYTES}`);
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, size);
+}
+
 export async function downloadArtifact({ repository, artifactId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API }) {
   const [owner, name] = splitRepository(repository);
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/artifacts/${artifactId}/zip`, {
@@ -380,20 +437,26 @@ export async function downloadArtifact({ repository, artifactId, token, fetch: d
     });
   }
   if (!response.ok) throw new DispatchError('HTTP', `could not download artifact ${artifactId}: HTTP ${response.status}`, { status: response.status });
-  return Buffer.from(await response.arrayBuffer());
+  return boundedDownload(response, artifactId);
 }
 
 /**
  * GitHub wraps every uploaded artifact in a ZIP of its own, so downloading ours yields a
  * ZIP containing a ZIP. Unwrapped here rather than in the validator, which should judge
  * one format and not guess how many layers of packaging a transport added.
+ *
+ * The wrapper is the download's only `.zip`, AT THE ROOT, beside no manifest.json (#329). A
+ * package that carries an audit bundle (`audit --zip`) also holds exactly one `.zip`, three
+ * folders down beside its manifest - and taking that for the wrapper wrote the bundle as the
+ * corpus.
  */
 export function unwrapArtifact(bytes) {
   let zip;
   try { zip = openZip(bytes); } catch { return { bytes, unwrapped: false }; }
   if (zip.problems.length) return { bytes, unwrapped: false };
+  if (zip.has(MANIFEST_PATH)) return { bytes, unwrapped: false };
   const inner = zip.names.filter((n) => n.endsWith('.zip'));
-  if (inner.length !== 1) return { bytes, unwrapped: false };
+  if (inner.length !== 1 || inner[0].includes('/')) return { bytes, unwrapped: false };
   // An inner package that cannot be read is handed on as it came, as a wrapper that cannot be
   // opened is: judging such bytes is the validator's job, and a ZIP-READ thrown from here went
   // past it (found 2026-10-01, break-test).
@@ -418,13 +481,23 @@ export async function getRunSummary({ repository, runId, token, fetch: doFetch =
  * Exported because every caller that downloads should check it before it spends
  * anything: `collect-remote` before it dispatches a paid run, the MCP server before it
  * reads the run, and `fetchCorpus` before it downloads.
+ *
+ * `{ create: false }` leaves no folder behind (#295): it is created, checked, and what this
+ * call created is removed again. The early callers check that way, because a folder they
+ * created stayed behind, empty, when the run was then refused for a missing token or an
+ * unreadable run; `fetchCorpus` creates it once the run has a package to fetch. Creating is
+ * the check: looking only at the nearest folder that exists passed a name no folder can
+ * have - a component past 255 characters, a `"` or `|` on Windows - and that was found
+ * after the paid run and the wait (review of #295, 2026-10-18).
  */
-export function usableOutDir(dir) {
+export function usableOutDir(dir, { create = true } = {}) {
   let absolute;
   try {
     absolute = path.resolve(dir);
-    fs.mkdirSync(absolute, { recursive: true });
-    fs.accessSync(absolute, fs.constants.W_OK);
+    const first = fs.mkdirSync(absolute, { recursive: true });
+    try { fs.accessSync(absolute, fs.constants.W_OK); } finally {
+      if (!create && first) fs.rmSync(first, { recursive: true, force: true });
+    }
   } catch (err) {
     throw new DispatchError('OUT_DIR', `${dir} is not a folder this process can write (${err.code ?? err.message})`, {
       remedy: 'pass an existing writable folder, or omit it for the default',
@@ -447,18 +520,23 @@ export async function fetchCorpus({
   expectedClientRef = null,
 } = {}) {
   // The folder is checked first: the download is the slow, rate-limited part, and an
-  // unusable folder found after it would waste it and surface as a raw ENOTDIR.
-  let dir;
-  try {
-    dir = outDir == null
-      ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
-      : usableOutDir(outDir);
-  } catch (err) {
-    if (err instanceof DispatchError) throw err;
-    throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
-      remedy: 'pass an existing writable folder, or repair the system temp directory',
-    });
-  }
+  // unusable folder found after it would waste it and surface as a raw ENOTDIR. It is
+  // created only once there is one package to write into it (#295): created before the
+  // listing, it stayed behind, empty, for a run whose artifact had expired.
+  const folder = (check) => {
+    try {
+      if (check) return usableOutDir(outDir ?? tempBase(), { create: false });
+      return outDir == null
+        ? fs.mkdtempSync(path.join(usableOutDir(tempBase()), 'research-kit-corpus-'))
+        : usableOutDir(outDir);
+    } catch (err) {
+      if (err instanceof DispatchError) throw err;
+      throw new DispatchError('OUT_DIR', `could not create a private download folder (${err.code ?? err.message})`, {
+        remedy: 'pass an existing writable folder, or repair the system temp directory',
+      });
+    }
+  };
+  folder(true);
 
   const artifacts = await listArtifacts({ repository, runId, token, fetch: doFetch, api });
   const wanted = artifacts.filter((a) => !a.expired && a.name.startsWith('research-kit-corpus-v1-'));
@@ -471,6 +549,7 @@ export async function fetchCorpus({
         : 'more than one corpus artifact on one run is not a shape this format defines',
     });
   }
+  const dir = folder(false);
   const bytes = await downloadArtifact({ repository, artifactId: wanted[0].id, token, fetch: doFetch, api });
   const { bytes: pkg, unwrapped, name } = unwrapArtifact(bytes);
 

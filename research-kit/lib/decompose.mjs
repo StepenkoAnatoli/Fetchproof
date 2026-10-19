@@ -9,9 +9,9 @@
 
 import path from 'node:path';
 import {
-  PATHS, HEADERS, resolve, exists, readText, writeText, today, hostOf, uniq, listFiles,
+  PATHS, HEADERS, resolve, exists, readText, writeText, today, hostOf, uniq, listFiles, keepBackup,
 } from './core.mjs';
-import { readCorpus, cacheDecision, tableRow, appendJsonLine, parseCapture } from './corpus.mjs';
+import { readCorpus, cacheDecision, tableRow, appendJsonLine, parseCapture, parseTable, sectionOf } from './corpus.mjs';
 import { seedRows, UNIVERSAL_DIMENSIONS } from './dimensions.mjs';
 import { collectOne, DEFAULT_SOURCE_TYPE } from './collect.mjs';
 import { assertAppendable } from './provenance.mjs';
@@ -251,6 +251,18 @@ function outlinesOf(root, captures, material) {
   return { outlines: out, captured };
 }
 
+/**
+ * Whether a map holds anything a run or a reviewer put there: a subtopic row, or candidate
+ * material - or text that is not the template's shape at all. The scaffold's map has the
+ * table header and a placeholder line, and a dry run may write over that, or over nothing.
+ */
+function mapHoldsContent(text) {
+  if (!String(text ?? '').trim()) return false;
+  const table = parseTable(text, HEADERS.subtopics);
+  if (!table.found) return true;
+  return table.rows.length > 0 || /^\s*-\s+\S/m.test(sectionOf(text, 'Candidate material'));
+}
+
 function mapBody({ topic, rows, hosts, material, date, recipe, failures = [], dryRun = false, outlines = null, ownerSkipped = [] }) {
   const lines = [
     '# MAP - topic decomposition',
@@ -400,6 +412,8 @@ export function decompose(root, {
   // query and the lists are interleaved by rank, as research.mjs does (ADR-0027). The CLI
   // passed only the first, while printing that both were searched (found 2026-09-28).
   searchAdapters = null,
+  // The operator named the search provider: a failure on it is not degraded (#317).
+  searchExplicit = false,
   recipe = '',
   limit = 8,
   maxScrapes = 0,
@@ -426,12 +440,18 @@ export function decompose(root, {
 
   const file = resolve(root, PATHS.map);
   const existing = readText(file, '');
-  if (existing.trim() && !force && !/^\s*$/.test(existing) && existing.includes('| ID |')) {
-    const filled = existing.match(/\|\s*(COVERED|DISMISSED|GAP)\s*\|/);
-    if (filled) {
-      return { written: false, reason: `${PATHS.map} already holds judged rows - re-run with --force to redraft over them` };
-    }
+  const judged = existing.includes('| ID |') && /\|\s*(COVERED|DISMISSED|GAP)\s*\|/.test(existing);
+  if (judged && !force && !dryRun) {
+    return { written: false, reason: `${PATHS.map} already holds judged rows - re-run with --force to redraft over them (the judged map is kept as ${PATHS.map}.bak-<date>)` };
   }
+  // A dry run writes the seeded map only where there is no map yet (#305). Over a drafted one -
+  // rows the reviewer has not judged yet, material a real run paid for - it wrote "No material
+  // gathered", and with --force it did the same to a judged map, on a builder too, which
+  // refuses the real run. It still previews below; it just keeps the map. A `.bak` was the
+  // alternative, set aside: a dry run that writes a backup is still a dry run that wrote.
+  const kept = dryRun && mapHoldsContent(existing)
+    ? `${PATHS.map} is already drafted - a dry run does not write over it; run without --dry-run to redraft${judged ? ' (the judged rows need --force)' : ''}`
+    : '';
 
   const loaded = recipe ? loadRecipe(recipe) : { name: '', dimensions: [] };
   const rows = seedRows(loaded.dimensions);
@@ -442,7 +462,7 @@ export function decompose(root, {
   // HOW a query is put to the search providers is the session's (ADR-0135), shared with
   // `runResearch`: the merge, the one degrade to the fetch provider's own search, the
   // meters. Phase 0 asks once per query, with no rate-limit patience (one call, as before).
-  const session = searchSession({ adapter, searchAdapter, searchAdapters, limit, maxRateLimitRetries: 0, log, record: (row) => failures.push(row) });
+  const session = searchSession({ adapter, searchAdapter, searchAdapters, searchExplicit, limit, maxRateLimitRetries: 0, log, record: (row) => failures.push(row) });
   // A search provider that cannot run is refused before anything is spent, as `runResearch`
   // refuses it (ADR-0135): until then only the CLI checked, so a library caller searched
   // through a provider with no key and degraded onto the fetch provider's meter.
@@ -470,6 +490,18 @@ export function decompose(root, {
     const meter = session.meter || 'the search provider this machine selects';
     for (const query of queries) log(`  would search "${query}" on ${meter}, keeping up to ${limit} result(s)`);
     if (maxScrapes > 0) log(`  and scrape up to ${maxScrapes} of the pages found`);
+  }
+  // Not an error: the preview is done, and the map it would have replaced is kept (#305). It
+  // still says what it would have seeded - which rows a recipe adds is what `--dry-run
+  // --recipe` is run to see, and the CLI's "wrote N rows" line is never reached.
+  if (kept) {
+    const recipeName = loaded.name || recipe;
+    log(`  would seed ${rows.length} rows (${UNIVERSAL_DIMENSIONS.length} universal${loaded.dimensions.length ? ` + ${loaded.dimensions.length} from recipe ${recipeName}` : ''})`);
+    for (const row of rows.slice(UNIVERSAL_DIMENSIONS.length)) log(`    ${row.id}  ${row.text}`);
+    return {
+      written: false, preview: true, reason: kept, file: PATHS.map,
+      rows: rows.length, universal: UNIVERSAL_DIMENSIONS.length, added: loaded.dimensions.length, recipe: recipeName,
+    };
   }
   if (!dryRun && adapter) {
     searches = queries.length;
@@ -558,6 +590,9 @@ export function decompose(root, {
   // Read after the scrapes, so the pages this run captured are outlined too. No fetch: only
   // what is already on disk.
   const outlines = material.length ? outlinesOf(root, corpus.captures, material) : null;
+  // --force over judged rows keeps them beside the redraft, as `brief --force` keeps a brief:
+  // the redraft wrote blank statuses over every COVERED / DISMISSED / GAP and kept nothing (#301).
+  const backup = judged ? keepBackup(root, PATHS.map, existing, date) : undefined;
   writeText(file, mapBody({ topic, rows, hosts, material: material.slice(0, 20), date, recipe: loaded.name || recipe, failures, dryRun: dryRun || !adapter, outlines, ownerSkipped }));
   return {
     written: true,
@@ -574,6 +609,7 @@ export function decompose(root, {
     material: material.length,
     hosts,
     spent,
+    ...(backup ? { backup } : {}),
   };
 }
 

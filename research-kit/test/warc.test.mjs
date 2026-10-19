@@ -127,6 +127,67 @@ test('a refused write is named in words, and one record is "1 record"', () => {
   assert.match(r.stdout, /wrote 1 record \(0 captures\)/);
 });
 
+// #330: --out over the ledger, over a cited capture or anywhere in research/raw/ wrote a WARC
+// there, said "wrote" and exited 0 - the corpus's provenance gone in place, and the first to
+// notice was the commit gate refusing the altered evidence.
+test('--out over the ledger, a cited capture or into research/raw/ is refused by name, and nothing changes', () => {
+  const bin = fileURLToPath(new URL('../bin/export-warc.mjs', import.meta.url));
+  const dir = makePassingProject();
+  const capture = readLedger(dir).entries.find((e) => e.op === 'scrape').raw;
+  const files = [PATHS.ledger, capture].map((rel) => path.join(dir, ...rel.split('/')));
+  const before = files.map((f) => sha256(fs.readFileSync(f)));
+  const cases = [
+    [PATHS.ledger, /research\/raw\/\.fetches\.jsonl is the fetch ledger/],
+    [capture, /is the capture E-01 cites/],
+    [files[1], /is the capture E-01 cites/],                        // the same file, typed absolute
+    [`${PATHS.raw}/x.warc.gz`, /research\/raw\/x\.warc\.gz is inside research\/raw\//],
+  ];
+  for (const [out, named] of cases) {
+    const r = spawnSync(process.execPath, [bin, '--out', out], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 2, `${out}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /^export-warc: refused - /, r.stderr);
+    assert.match(r.stderr, named, r.stderr);
+    assert.match(r.stderr, /written only by research\.mjs\. Name a path outside research\/raw\/\./, r.stderr);
+    assert.equal(r.stdout, '', 'nothing was written, so nothing says "wrote"');
+  }
+  assert.deepEqual(files.map((f) => sha256(fs.readFileSync(f))), before, 'the ledger and the capture are byte-identical');
+  assert.equal(fs.existsSync(path.join(dir, 'research', 'raw', 'x.warc.gz')), false);
+
+  // A capture an evidence row cites is evidence wherever it sits.
+  fs.writeFileSync(path.join(dir, 'research', 'kept.md'), 'kept');
+  corrupt(dir, PATHS.evidence, (text) => text.replace(capture, 'research/kept.md'));
+  const r = spawnSync(process.execPath, [bin, '--out', 'research/kept.md'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /research\/kept\.md is the capture E-01 cites; a cited capture is evidence/, r.stderr);
+  assert.equal(fs.readFileSync(path.join(dir, 'research', 'kept.md'), 'utf8'), 'kept');
+});
+
+// Review of #330: the corpus's own files were not refused (a typo replaced the evidence table
+// with a WARC), and only this project's research/raw/ was guarded - from a project nested in
+// another, --out ../../../research/raw/.fetches.jsonl landed on the outer ledger.
+test('--out over a corpus file, or into an enclosing project\'s research/raw/, is refused too', () => {
+  const bin = fileURLToPath(new URL('../bin/export-warc.mjs', import.meta.url));
+  const outer = makePassingProject();
+  const inner = makePassingProject(path.join(outer, 'docs', 'decisions', 'nested'));
+  const files = [PATHS.evidence, PATHS.discovery, PATHS.brief, 'AGENTS.md', PATHS.ledger].map((rel) => path.join(outer, ...rel.split('/')));
+  const before = files.map((f) => sha256(fs.readFileSync(f)));
+  for (const [cwd, out, named] of [
+    [outer, PATHS.evidence, /^export-warc: refused - research\/EVIDENCE\.md is the evidence table \(research\/EVIDENCE\.md\), one of the corpus's own files/],
+    [outer, PATHS.discovery, /is the Discovery Contract/],
+    [outer, PATHS.brief, /is the brief/],
+    [outer, 'AGENTS.md', /is the standing protocol/],
+    [inner, '../../../research/raw/.fetches.jsonl', /is the fetch ledger/],
+    [outer, 'docs/decisions/nested/research/raw/.fetches.jsonl', /docs\/decisions\/nested\/research\/raw\/\.fetches\.jsonl is the fetch ledger/],
+  ]) {
+    const r = spawnSync(process.execPath, [bin, '--out', out], { cwd, encoding: 'utf8' });
+    assert.equal(r.status, 2, `${out}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, named, r.stderr);
+    assert.equal(r.stdout, '');
+  }
+  assert.deepEqual(files.map((f) => sha256(fs.readFileSync(f))), before, 'the outer corpus is byte-identical');
+  assert.ok(fs.existsSync(path.join(inner, ...PATHS.ledger.split('/'))));
+});
+
 test('the default export is ignored by git, in a scaffolded project and in this repository', () => {
   // Declared, not assumed: every assertion below is a `git check-ignore` exit status, and
   // on a host without git they were raw failures instead of the UNSUP this harness reports

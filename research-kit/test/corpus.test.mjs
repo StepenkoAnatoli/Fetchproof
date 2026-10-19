@@ -352,6 +352,73 @@ test('the table-split scan skips fences and comments, runs past deeper headings,
   assert.match(named[0].detail, /separator/, named[0].detail);
 });
 
+// #331: GFM makes a row's outer pipes optional, so `E-03 | ... |` renders as the third row on
+// GitHub. The kit ended the table there, and named every later row as standing after a blank
+// line the file did not have - 24 times, and never the one line at fault.
+test('a row without its leading pipe is read as GitHub renders it: a row of the table', () => {
+  const header = ['ID', 'Retrieved', 'Type', 'URL', 'Finding', 'Raw'];
+  const row = (n) => `| E-0${n} | 2026-01-01 | P | https://example.invalid/${n} | Reading ${n}. | research/raw/${n}.md |`;
+  const piped = ['# Evidence', '', `| ${header.join(' | ')} |`, '|---|---|---|---|---|---|', row(1), row(2), row(3), row(4), ''].join('\n');
+  const want = parseTable(piped, header);
+  assert.equal(want.rows.length, 4);
+  for (const pipeless of [piped.replace('| E-03 | ', 'E-03 | '), piped.replace(/^\| (E-03 .*) \|$/m, '$1')]) {
+    const got = parseTable(pipeless, header);
+    assert.deepEqual(got.rows, want.rows, pipeless);
+    assert.deepEqual(got.problems, [], JSON.stringify(got.problems));
+  }
+
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => `${text}U-2 | A second question? | It decides the design | OPEN | |\n| U-3 | A third question? | It decides the design | OPEN | |\n`);
+  const corpus = readCorpus(dir);
+  assert.deepEqual(corpus.unknowns.map((u) => u.id), ['U-1', 'U-2', 'U-3']);
+  assert.deepEqual(corpus.problems.filter((p) => p.kind === 'table-split'), []);
+});
+
+test('a pipe-bearing line that is not a row ends the table and is named once, with no blank line claimed', () => {
+  const dir = makePassingProject();
+  // One cell short of the header: not a row by arity, but GitHub still shows it in the table.
+  corrupt(dir, PATHS.discovery, (text) => `${text}U-2 | A second question? | OPEN |\n| U-3 | A third question? | It decides the design | OPEN | |\n| U-4 | A fourth question? | It decides the design | OPEN | |\n`);
+  const split = readCorpus(dir).problems.filter((p) => p.kind === 'table-split');
+  assert.equal(split.length, 1, JSON.stringify(split));
+  assert.equal(split[0].line, lineOf(dir, PATHS.discovery, 'U-2 |'));
+  assert.match(split[0].detail, /does not start with \|/, split[0].detail);
+  assert.match(split[0].detail, /add the leading pipe if it is a row, or a blank line above it if it is prose/, split[0].detail);
+  assert.doesNotMatch(split[0].detail, /after a blank line/, split[0].detail);
+
+  // Review of #331: prose holding a | straight below the table is the same line to GitHub, and
+  // "add the leading pipe" alone would turn it into a malformed row - the advice names both.
+  const tiers = makePassingProject();
+  corrupt(tiers, PATHS.discovery, (text) => `${text}Tiers: P | S | L are the grades.\n`);
+  const named = readCorpus(tiers).problems.filter((p) => p.kind === 'table-split');
+  assert.equal(named.length, 1, JSON.stringify(named));
+  assert.equal(named[0].line, lineOf(tiers, PATHS.discovery, 'Tiers:'));
+  assert.equal(named[0].detail, '`Tiers: P | S | L are the grades.` does not start with |, and splits to 3 cells, not the header\'s 5, '
+    + 'so the table ended there and no check reads the rows below it - add the leading pipe if it is a row, or a blank line above it if it is prose');
+
+  // A line of prose directly below the rows ends the table too; the row after it is named
+  // with the line that ended the table, not with a blank line that is not there.
+  const prose = makePassingProject();
+  corrupt(prose, PATHS.discovery, (text) => `${text}A note written straight below the table.\n| U-2 | A second question? | It decides the design | OPEN | |\n`);
+  const after = readCorpus(prose).problems.filter((p) => p.kind === 'table-split');
+  assert.equal(after.length, 1, JSON.stringify(after));
+  assert.equal(after[0].line, lineOf(prose, PATHS.discovery, '| U-2'));
+  assert.doesNotMatch(after[0].detail, /blank line/, after[0].detail);
+  assert.match(after[0].detail, /A note written/, after[0].detail);
+});
+
+// Review of #331: a row without its leading pipe BELOW a blank line was not row-shaped to the
+// stray scan, so it was dropped in silence - a blocking unknown hidden, and the gate passed.
+test('a row without its leading pipe after a blank line is a table-split problem at its line', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => `${text}\nU-2 | Q2? | it decides the design | OPEN | |\n`);
+  const corpus = readCorpus(dir);
+  assert.deepEqual(corpus.unknowns.map((u) => u.id), ['U-1'], 'GFM ends the table at the blank line');
+  const split = corpus.problems.filter((p) => p.kind === 'table-split');
+  assert.equal(split.length, 1, JSON.stringify(corpus.problems));
+  assert.equal(split[0].line, lineOf(dir, PATHS.discovery, 'U-2 |'));
+  assert.match(split[0].detail, /row `U-2` stands after a blank line/, split[0].detail);
+});
+
 // A `.source.html` under raw/ that no ledger entry names is a planted file, not a source.
 test('a source sibling no ledger entry names is a corpus problem', () => {
   const dir = makePassingProject();

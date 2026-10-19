@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, cleanup, tempDir } from './harness.mjs';
+import { test, describe, assert, assertEqual, cleanup, tempDir, requireSymlink } from './harness.mjs';
 
 // Ported 2026-09-20 under ADR-0029. The source tree's runner labelled by file
 // automatically; this one is told, so a failure names release-validator rather than
@@ -114,6 +114,21 @@ test('JSON Schema conformance runner accepts a valid envelope and rejects an unk
     const bad = runSchemaConformance({ files: [file], schemaPath: schema });
     assertEqual(bad.status, 'FAIL', JSON.stringify(bad));
     assert(bad.errors.some((error) => error.code === 'SCHEMA-ADDITIONAL'), JSON.stringify(bad.errors));
+    // #336: a member named after an Object.prototype property is a member like any other.
+    // `key in value` answered true for every prototype name, so an extra `constructor` or
+    // `hasOwnProperty` passed additionalProperties:false, and a record whose only member
+    // was "__proto__" (the reader fed it to the prototype setter) "had" every required key.
+    delete record.unexpected;
+    for (const name of ['constructor', 'hasOwnProperty', 'toString']) {
+      fs.writeFileSync(file, JSON.stringify({ ...record, [name]: 'planted' }), 'utf8');
+      const planted = runSchemaConformance({ files: [file], schemaPath: schema });
+      assertEqual(planted.status, 'FAIL', `${name}: ${JSON.stringify(planted)}`);
+      assert(planted.errors.some((error) => error.code === 'SCHEMA-ADDITIONAL' && error.path.endsWith(`$.${name}`)), `${name}: ${JSON.stringify(planted.errors)}`);
+    }
+    fs.writeFileSync(file, `{"__proto__":${JSON.stringify(record)}}`, 'utf8');
+    const proto = runSchemaConformance({ files: [file], schemaPath: schema });
+    assertEqual(proto.status, 'FAIL', JSON.stringify(proto));
+    assert(proto.errors.some((error) => error.code === 'SCHEMA-REQUIRED' && error.path.endsWith('$.artifactId')), JSON.stringify(proto.errors));
   } finally {
     cleanup(root);
   }
@@ -378,6 +393,115 @@ test('schema conformance enforces numeric minimums and exact artifact IDs', asyn
   }
 });
 
+// #335 (2026-10-17): additionalProperties was applied only when it was `false` and the
+// schema also had `properties`. Both shipped schemas write externalRoots as a map whose
+// members must be hashes - additionalProperties as a schema, no properties - so any value
+// passed, and a malformed root surfaced much later as a "missing" one.
+test('schema conformance applies additionalProperties when it is a schema, and false with no properties', async () => {
+  const { runSchemaConformance, validateJsonSchema } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const genesis = {
+      ledgerVersion: '1.0.0', releaseId: 'release-1', benchmarkSpecVersion: '1.0.0',
+      benchmarkSpecSha256: CONTRACT_HASH, registrySha256: 'c'.repeat(64), roleRosterSha256: ROSTER_HASH,
+      externalRoots: { 'benchmark-spec': CONTRACT_HASH }, genesisHash: 'd'.repeat(64), signerKeyId: 'release-key', signature: 'sig',
+    };
+    for (const [name, value] of [['qualification-ledger-genesis', genesis], ['artifact-registry', registryFor()]]) {
+      const schemaPath = path.resolve(`research-kit/schemas/${name}.schema.json`);
+      const file = path.join(root, `${name}.json`);
+      writeJson(file, value);
+      const good = runSchemaConformance({ files: [file], schemaPath });
+      assertEqual(good.status, 'PASS', `${name}: ${JSON.stringify(good)}`);
+      writeJson(file, { ...value, externalRoots: { 'benchmark-spec': 'not-a-hash', 'role-roster': 42 } });
+      const bad = runSchemaConformance({ files: [file], schemaPath });
+      assertEqual(bad.status, 'FAIL', `${name}: ${JSON.stringify(bad)}`);
+      assert(bad.errors.some((error) => error.code === 'SCHEMA-PATTERN' && error.path.endsWith('$.externalRoots.benchmark-spec')), `${name}: ${JSON.stringify(bad.errors)}`);
+      assert(bad.errors.some((error) => error.code === 'SCHEMA-TYPE' && error.path.endsWith('$.externalRoots.role-roster')), `${name}: ${JSON.stringify(bad.errors)}`);
+    }
+    const closed = { type: 'object', additionalProperties: false };
+    assertEqual(validateJsonSchema({}, closed).length, 0, 'an empty object has no member to refuse');
+    const refused = validateJsonSchema({ a: 1 }, closed);
+    assert(refused.some((error) => error.code === 'SCHEMA-ADDITIONAL' && error.path === '$.a'), JSON.stringify(refused));
+    const mixed = { type: 'object', properties: { n: { type: 'integer' } }, additionalProperties: { type: 'string' } };
+    assertEqual(validateJsonSchema({ n: 1, s: 'x' }, mixed).length, 0, 'a listed member is judged by its own schema only');
+    const unlisted = validateJsonSchema({ n: 1, s: 2 }, mixed);
+    assertEqual(unlisted.length, 1, JSON.stringify(unlisted));
+    assertEqual(unlisted[0].path, '$.s');
+    assertEqual(validateJsonSchema({ any: [1] }, { type: 'object', additionalProperties: true }).length, 0, 'true allows everything');
+  } finally {
+    cleanup(root);
+  }
+});
+
+// #335: with the schema now refusing a malformed root, the predecessor check is left to
+// tell an absent root from a present, wrong one; "missing" named an absence for both.
+test('the predecessor check names a malformed external root apart from a missing one', async () => {
+  const { validateEnvelope } = await import('../lib/release-validator.mjs');
+  const entry = { ...registryFor('R28-02').artifacts[0], predecessors: [{ kind: 'external', id: 'benchmark-spec' }, { kind: 'external', id: 'absent' }] };
+  const record = envelope({ artifactId: 'R28-02', predecessorHashes: [] });
+  record.payloadSha256 = await sha256(canonical(record.payload));
+  const result = validateEnvelope(record, entry, { roster: roster(), records: new Map(), registry: { externalRoots: { 'benchmark-spec': 'not-a-hash' } } });
+  const messages = result.errors.filter((error) => error.code === 'PRE-MISSING').map((error) => error.message);
+  assert(messages.some((message) => /external root benchmark-spec is malformed/.test(message)), JSON.stringify(messages));
+  assert(messages.some((message) => /missing external root absent/.test(message)), JSON.stringify(messages));
+  assert(!messages.some((message) => /missing external root benchmark-spec/.test(message)), JSON.stringify(messages));
+});
+
+// #341 (2026-10-17): the pointer schema accepts a FLAT pointer ({ artifactId, promotion })
+// and forbids it any other member, but validate compared metaOf(pointer).package - for a
+// flat pointer, an absent value - with the registry, so such a pointer was PTR-PACKAGE
+// every time. The flat form is judged by promotion.package alone.
+test('a schema-valid flat promotion pointer reaches the promotion checks instead of PTR-PACKAGE', async () => {
+  const { validateRelease, runSchemaConformance } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const { ledgerPath, ...paths } = await writePointerRelease(root);
+    const pointerFile = path.join(paths.pointersDir, 'R28-04.json');
+    const nested = JSON.parse(fs.readFileSync(pointerFile, 'utf8'));
+    const flat = { artifactId: 'R28-04', promotion: nested.payload.promotion };
+    writeJson(pointerFile, flat);
+    const conform = runSchemaConformance({ files: [pointerFile], schemaPath: path.resolve('research-kit/schemas/promotion-pointer.schema.json') });
+    assertEqual(conform.status, 'PASS', JSON.stringify(conform));
+    const result = validateRelease(paths);
+    assert(!result.errors.some((error) => error.code === 'PTR-PACKAGE'), JSON.stringify(result.errors));
+    assert(!result.errors.some((error) => /^SCHEMA-/.test(error.code)), JSON.stringify(result.errors));
+    assert(result.errors.some((error) => error.code === 'PTR-COMMIT'), `the promotion checks must still run: ${JSON.stringify(result.errors)}`);
+    writeJson(pointerFile, { ...flat, promotion: { ...flat.promotion, package: 'R29' } });
+    const wrong = validateRelease(paths);
+    assert(wrong.errors.some((error) => error.code === 'PTR-PACKAGE' && error.path === '.promotion.package'), JSON.stringify(wrong.errors));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// Review of #336 (2026-10-18): summarizeLedgerHistory looked a promotion's package up with
+// `promotionTimelines[packageName]`, so "constructor", "__proto__" or "toString" found an
+// Object.prototype member and `.push` threw - on every `validate --ledger`. A package that
+// is not one of the six is skipped, as an unknown one always was.
+test('the ledger history summary skips a promotion whose package is a prototype name', async () => {
+  const { summarizeLedgerHistory } = await import('../lib/release-validator.mjs');
+  const records = ['constructor', '__proto__', 'toString', 'R28'].map((packageName, index) => ({
+    recordKind: 'promotion-commit', recordId: `rec-${index}`, package: packageName, physicalSequence: index + 1, payload: {},
+  }));
+  records.push({ recordKind: 'promotion-commit', recordId: 'rec-payload', physicalSequence: 9, payload: { package: 'hasOwnProperty' } });
+  let summary;
+  try { summary = summarizeLedgerHistory(records); } catch (error) { assert(false, `threw ${error.stack}`); }
+  assertEqual(JSON.stringify(Object.keys(summary.promotionTimelines)), JSON.stringify(['R28', 'R29', 'R30', 'R31', 'R32', 'R33']));
+  assertEqual(JSON.stringify(summary.promotionTimelines.R28.map((entry) => entry.recordId)), JSON.stringify(['rec-3']));
+});
+
+// Review of #340 (2026-10-18): a ledger record with no `payload` made payloadHash throw
+// "undefined is not canonical JSON" out of verifyQualificationLedger, so `validate
+// --ledger` crashed with a stack instead of naming the record. It is LEDGER-PAYLOAD-HASH.
+test('ledger verification reports a record without a payload as LEDGER-PAYLOAD-HASH', async () => {
+  const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+  const records = [{ ledgerVersion: '1.0.0', physicalSequence: 1, recordKind: 'prepare', prevChainHash: '0'.repeat(64), payloadSha256: 'e'.repeat(64) }];
+  let result;
+  try { result = verifyQualificationLedger({ records, pointer: {} }); } catch (error) { assert(false, `threw ${error.stack}`); }
+  assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+  assert(result.errors.some((error) => error.code === 'LEDGER-PAYLOAD-HASH'), JSON.stringify(result.errors));
+});
+
 test('nested promotion pointers require a committed promotion and verify pointer linkage', async () => {
   const { validateRelease, payloadHash, sha256, canonicalJson, recordHash } = await import('../lib/release-validator.mjs');
   const root = tempRoot();
@@ -527,6 +651,175 @@ test('validate refuses a genesis or checkpoints path it would not read', async (
     assert(noLedger.status !== 'PASS', JSON.stringify(noLedger));
   } finally {
     cleanup(root);
+  }
+});
+
+// Found 2026-10-11 (#342): a file where a directory was expected reached readdirSync, and
+// its ENOTDIR stack exited 1 - this command's code for FAIL - for what is a usage error.
+test('researcher-release names a file given where a directory is expected, exit 2 and no stack', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const afile = path.join(root, 'afile');
+    fs.writeFileSync(afile, 'not a directory\n', 'utf8');
+    const cli = (...args) => spawnSync(process.execPath, ['research-kit/bin/researcher-release.mjs', ...args, '--json'], { encoding: 'utf8' });
+    const named = (run, code, word) => {
+      const output = `${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, output);
+      assert(!/ENOTDIR|scandir|\n\s+at /.test(output), `a stack reached the operator: ${output}`);
+      const errors = JSON.parse(run.stdout).errors;
+      assert(errors.some((error) => error.code === code && error.message.includes(word)), `${code} "${word}" not named: ${JSON.stringify(errors)}`);
+    };
+    const schema = path.resolve('research-kit/schemas/r28-r32-envelope.schema.json');
+    named(cli('conform', '--schema', schema, '--root', afile), 'INPUT-ROOT', 'directory');
+    named(cli('conform', '--schema', schema, '--root', path.join(root, 'nope')), 'INPUT-ROOT', 'does not exist');
+    const validate = ['validate', '--root', root, '--package', 'R28', '--registry', inputs.registryPath, '--roles', inputs.rolesPath];
+    named(cli(...validate, '--pointers', afile), 'PTR-MISSING', 'directory');
+    // A package with no pointer entry never reached the walk, so the same mistake was PASS.
+    const noPointer = registryFor('R28-04');
+    noPointer.artifacts[0].ownerRoles = ['evidence-custodian'];
+    const noPointerPath = path.join(root, 'registry-no-pointer.json');
+    writeJson(noPointerPath, noPointer);
+    named(cli('validate', '--root', root, '--package', 'R28', '--registry', noPointerPath, '--roles', inputs.rolesPath, '--pointers', afile), 'PTR-MISSING', 'directory');
+    named(cli(...validate, '--pointers', inputs.pointersDir, '--ledger', inputs.ledgerPath, '--checkpoints', afile), 'LEDGER-PATH', 'directory');
+    // A ledger directory's own segments/ or checkpoints/ as a file: segments reached readdirSync
+    // unchecked (re-review of the #342 fix, 2026-10-18).
+    for (const child of ['segments', 'checkpoints']) {
+      const ledgerDir = path.join(root, `ledger-${child}-file`);
+      fs.mkdirSync(ledgerDir);
+      fs.writeFileSync(path.join(ledgerDir, child), 'not a directory\n', 'utf8');
+      named(cli(...validate, '--pointers', inputs.pointersDir, '--ledger', ledgerDir), 'LEDGER-PATH', `ledger ${child} must name a directory`);
+    }
+    // ...and a library caller, which has no validateRelease to refuse it first.
+    const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+    const pointer = JSON.parse(fs.readFileSync(path.join(inputs.pointersDir, 'R28-04.json'), 'utf8'));
+    const direct = verifyQualificationLedger({ ledgerPath: path.join(root, 'ledger-segments-file'), pointer });
+    assert(direct.errors.some((error) => error.code === 'LEDGER-PATH' && error.message.includes('segments')), JSON.stringify(direct.errors));
+    named(cli('validate', '--root', afile, '--package', 'R28', '--registry', inputs.registryPath, '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir), 'INPUT-ROOT', 'directory');
+  } finally {
+    cleanup(root);
+  }
+});
+
+// Found 2026-10-11 (#344): the flag paths were held inside the record root by NAME only, so
+// a link below the root that leads outside it was read. A junction needs no privilege on
+// Windows, so the directory cases run everywhere; the ledger FILE link needs requireSymlink.
+test('validate refuses a pointers or ledger link that leads outside the record root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    // A pointer set outside the root: if it were read, promotion.pointer would name it.
+    fs.mkdirSync(path.join(outside, 'ptrs'));
+    fs.copyFileSync(path.join(inputs.pointersDir, 'R28-04.json'), path.join(outside, 'ptrs', 'R28-04.json'));
+    const ptrlink = path.join(root, 'ptrlink');
+    fs.symlinkSync(path.join(outside, 'ptrs'), ptrlink, 'junction');
+    const viaLink = validateRelease({ ...inputs, pointersDir: ptrlink, ledgerPath: null });
+    assert(viaLink.errors.some((error) => error.code === 'PATH-CONTAINMENT' && error.path === ptrlink), `a pointer link outside the root was accepted: ${JSON.stringify(viaLink.errors)}`);
+    assertEqual(viaLink.promotion.pointer, null, 'the pointer behind the link was read');
+    assert(viaLink.status !== 'PASS', JSON.stringify(viaLink));
+
+    // A ledger directory outside the root, holding a line that would be reported if read.
+    fs.mkdirSync(path.join(outside, 'ledger'));
+    fs.writeFileSync(path.join(outside, 'ledger', 'ledger.qlog'), 'not json\n', 'utf8');
+    const ledgerlink = path.join(root, 'ledgerlink');
+    fs.symlinkSync(path.join(outside, 'ledger'), ledgerlink, 'junction');
+    const viaLedgerDir = validateRelease({ ...inputs, ledgerPath: ledgerlink });
+    assert(viaLedgerDir.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === ledgerlink), `a ledger link outside the root was accepted: ${JSON.stringify(viaLedgerDir.errors)}`);
+    assertEqual(viaLedgerDir.ledger.checked, false, 'the ledger behind the link was read');
+    assert(!viaLedgerDir.errors.some((error) => String(error.path).startsWith(ledgerlink) && error.code !== 'LEDGER-PATH'), JSON.stringify(viaLedgerDir.errors));
+
+    // The lexical case keeps its refusal, and is no longer read either.
+    const byName = validateRelease({ ...inputs, pointersDir: path.join(outside, 'ptrs'), ledgerPath: path.join(outside, 'ledger', 'ledger.qlog') });
+    assert(byName.errors.some((error) => error.code === 'PATH-CONTAINMENT' && error.message === 'pointer directory escapes record root'), JSON.stringify(byName.errors));
+    assert(byName.errors.some((error) => error.code === 'LEDGER-PATH' && error.message.includes('ledger')), JSON.stringify(byName.errors));
+    assertEqual(byName.promotion.pointer, null, 'a pointer outside the root by name was read');
+    assertEqual(byName.ledger.checked, false, 'a ledger outside the root by name was read');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+// Review of the #344 fix (2026-10-18): a ledger DIRECTORY brings children the verifier reads
+// without their being named - checkpoints/, segments/, genesis.json - and a link among them
+// led outside the root unchecked, with or without an explicit --checkpoints naming it.
+async function writeLedgerDirRelease(root, outside) {
+  const inputs = await writePointerRelease(root);
+  const ledgerDir = path.join(root, 'ledgerdir');
+  // A real, unsigned genesis inside: checkpoints are verified - and so reported - only beside one.
+  writeJson(path.join(ledgerDir, 'genesis.json'), { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+  writeJson(path.join(outside, 'checkpoints', 'checkpoint-1.json'), { ledgerVersion: '1.0.0', releaseId: 'release-1' });
+  fs.mkdirSync(path.join(outside, 'segments'));
+  fs.writeFileSync(path.join(outside, 'segments', '00000001.qlog'), 'not json\n', 'utf8');
+  return { ...inputs, ledgerPath: ledgerDir };
+}
+
+test('validate refuses a ledger directory whose checkpoints or segments lead outside the root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writeLedgerDirRelease(root, outside);
+    const unread = (result, link, what) => {
+      assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === link), `${what} was not refused: ${JSON.stringify(result.errors)}`);
+      assertEqual(result.ledger.checked, false, `the ledger beside ${what} was read`);
+      assert(!result.errors.some((error) => String(error.path).startsWith('.checkpoints[') || error.code === 'LEDGER-JSON'), `bytes behind ${what} were read: ${JSON.stringify(result.errors)}`);
+    };
+    const checkpointsLink = path.join(inputs.ledgerPath, 'checkpoints');
+    fs.symlinkSync(path.join(outside, 'checkpoints'), checkpointsLink, 'junction');
+    unread(validateRelease(inputs), checkpointsLink, 'a checkpoints link in the ledger directory');
+    // The same link named by --checkpoints: refusing the flag left the default to read it.
+    unread(validateRelease({ ...inputs, checkpointsDir: checkpointsLink }), checkpointsLink, 'a checkpoints link given by flag');
+    fs.rmSync(checkpointsLink, { recursive: true, force: true });
+    assert(fs.existsSync(path.join(outside, 'checkpoints', 'checkpoint-1.json')), 'removing the link removed its target');
+
+    const segmentsLink = path.join(inputs.ledgerPath, 'segments');
+    fs.symlinkSync(path.join(outside, 'segments'), segmentsLink, 'junction');
+    unread(validateRelease(inputs), segmentsLink, 'a segments link in the ledger directory');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+test('validate refuses a ledger directory whose genesis.json leads outside the root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writeLedgerDirRelease(root, outside);
+    const genesisLink = path.join(inputs.ledgerPath, 'genesis.json');
+    fs.rmSync(genesisLink);
+    writeJson(path.join(outside, 'genesis.json'), { ledgerVersion: '1.0.0', releaseId: 'outside' });
+    requireSymlink(path.join(outside, 'genesis.json'), genesisLink, 'a genesis.json link in the ledger directory');
+    const result = validateRelease(inputs);
+    assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === genesisLink), `a genesis link outside the root was accepted: ${JSON.stringify(result.errors)}`);
+    assertEqual(result.ledger.checked, false, 'the genesis behind the link was read');
+    assert(!result.errors.some((error) => String(error.path).startsWith('.genesis')), JSON.stringify(result.errors));
+  } finally {
+    cleanup(root);
+    cleanup(outside);
+  }
+});
+
+test('validate refuses a ledger file link that leads outside the record root, unread', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  const outside = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const target = path.join(outside, 'ledger.qlog');
+    fs.writeFileSync(target, 'not json\n', 'utf8');
+    const link = path.join(root, 'ledgerlink.qlog');
+    requireSymlink(target, link, 'a ledger file link outside the record root');
+    const result = validateRelease({ ...inputs, ledgerPath: link });
+    assert(result.errors.some((error) => error.code === 'LEDGER-PATH' && error.path === link), `a ledger file link outside the root was accepted: ${JSON.stringify(result.errors)}`);
+    assertEqual(result.ledger.checked, false, 'the ledger behind the link was read');
+  } finally {
+    cleanup(root);
+    cleanup(outside);
   }
 });
 

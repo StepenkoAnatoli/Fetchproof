@@ -121,9 +121,15 @@ export function summarise(findings, needle) {
   // not, so "only the shape is public" needs every probe answered. Found 2026-09-27: with no
   // network, every probe was unreachable and the verdict still read as clean, exit 0.
   const unmeasured = findings.filter((f) => f.status === 0).map((f) => f.id);
+  // The run's own metadata refused with 403 or 429 is not an answer about the run either: a
+  // stranger is told 404 for a private repository or a missing run, and 403/429 is what
+  // GitHub's anonymous rate limit (60 requests an hour, five a probe) answers. Counted as
+  // unmeasured, it reads "could not measure", exit 3 - not a clean result (#303 review).
+  const rateLimited = findings.filter((f) => f.id === 'run' && (f.status === 403 || f.status === 429)).map((f) => f.id);
   return {
     unmeasured,
-    conclusive: unmeasured.length === 0,
+    rateLimited,
+    conclusive: unmeasured.length === 0 && rateLimited.length === 0,
     exposedNames: readable.includes('run') || readable.includes('jobs') || readable.includes('artifacts'),
     exposedContent: readable.includes('artifact-download') || readable.includes('logs'),
     exposedSubject: leaked.length > 0,
@@ -168,14 +174,33 @@ export function render(report) {
   ];
 
   if (!report.exposedContent && !report.exposedSubject && report.conclusive === false) {
-    lines.push(`NOT MEASURED: ${report.unmeasured.length} probe(s) never reached GitHub (${report.unmeasured.join(', ')}).`,
-      'Nothing above says what a stranger can see. Run it again where api.github.com is reachable.');
+    if (report.unmeasured.length) {
+      lines.push(`NOT MEASURED: ${report.unmeasured.length} probe(s) never reached GitHub (${report.unmeasured.join(', ')}).`,
+        'Nothing above says what a stranger can see. Run it again where api.github.com is reachable.');
+    } else {
+      const run = report.findings.find((f) => f.id === 'run');
+      lines.push(`NOT MEASURED: the run metadata was refused with ${run?.status}, which is what GitHub's anonymous`,
+        'rate limit answers (60 requests an hour), not what it answers about a run - a private',
+        'repository or a missing run is 404. Nothing above says what a stranger can see; run it again later.');
+    }
     return lines.join('\n');
   }
   if (report.exposedContent || report.exposedSubject) {
     lines.push('This run discloses more than its shape. Research whose subject matters does not',
       'belong here: see docs/adr/0031 for why a visibility toggle alone is not the fix on a',
       'free plan, where converting to private makes environment secrets IGNORED.');
+  } else if (!report.exposedNames) {
+    // Every probe refused is not "the shape is public" (#303): the run metadata was refused
+    // too, and the line above says so. A private repository and a run id that names nothing
+    // both answer 404 to a stranger, so this says what was measured and no more.
+    const run = report.findings.find((f) => f.id === 'run');
+    lines.push('Nothing of this run was readable anonymously - not even its shape.');
+    if (run?.status === 404) {
+      lines.push('Either the repository is private to a stranger, or no run with this id exists there;',
+        'GitHub answers 404 to both, and this probe cannot tell them apart.');
+    } else {
+      lines.push(`The run metadata was refused with ${run?.status ?? 'no answer'}; this probe cannot say why.`);
+    }
   } else {
     lines.push('Only the SHAPE of the run is public: names, sizes, timings, step titles.',
       'That is why the collector keeps the topic out of the run name and the artifact name -',

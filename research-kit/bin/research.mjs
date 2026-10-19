@@ -10,15 +10,21 @@
 import { parseFlags, flagList, refuseUnknownFlags, checkFlagValues, resolve, readText, parseJson, operatorPath, kitCommand, writeFailure, NAMED_RUN_REFUSALS } from '../lib/core.mjs';
 import { collectionPolicy, collectionRefusal, loadConfig } from '../lib/machine.mjs';
 import { findBrowser } from '../lib/browser-transport.mjs';
+import { internalRedirectsSetting } from '../lib/runtime.mjs';
 import { selectTransport, TRANSPORTS, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
-import { runResearch, searchSummaryLine, readPlan, planProblems, usageSummary, topicMatch, DEPTHS, DEPTH_SCRAPES } from '../lib/research-run.mjs';
+import { runResearch, searchSummaryLine, readPlan, planProblems, planWarnings, contractUnknownIds, usageSummary, topicMatch, DEPTHS, DEPTH_SCRAPES } from '../lib/research-run.mjs';
 import { parseCapture, readLedger, duplicateKey } from '../lib/corpus.mjs';
 import { readPrior } from '../lib/prior.mjs';
 import { heading } from '../lib/render.mjs';
 const { flags } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['depth', 'dry-run', 'fallback', 'force', 'help', 'no-fallback', 'only', 'plan', 'refresh-days', 'search-transport', 'status', 'transport', 'witness']);
+refuseUnknownFlags(flags, ['depth', 'dry-run', 'fallback', 'force', 'help', 'no-fallback', 'only', 'plan', 'refresh-days', 'search-transport', 'status', 'transport', 'witness'], { repeatable: ['only'] });
 checkFlagValues(flags, { depth: { choices: DEPTHS }, 'refresh-days': { int: true, min: 0 }, plan: 'value', only: 'value', transport: 'value', 'search-transport': 'value' });
 const root = process.cwd();
+// A posture value the transports could not read is said once, at the start (#290): read as
+// the refusal, it is otherwise named only by doctor, and a refusal that says "set it to 1"
+// reads as wrong to an operator who believes they did.
+const internalPosture = internalRedirectsSetting();
+if (internalPosture.problem) process.stderr.write(`warning: ${internalPosture.problem}\n`);
 
 if (flags.help) {
   process.stdout.write(`research - collect primary evidence into this project's corpus.
@@ -144,11 +150,14 @@ function vendorMeter(search) {
     process.stderr.write(`${planPath} ${duplicate} - fix it, then run this again.\n`);
     process.exit(2);
   }
-  const problems = planProblems(parseJson(planText));
+  // A `why` is judged against the contract's own unknowns (#291) here, before the spend,
+  // rather than in preflight after it.
+  const problems = planProblems(parseJson(planText), { unknowns: contractUnknownIds(root) });
   if (problems.length) {
     process.stderr.write(`${planPath} has ${problems.length} problem(s) - fix them, then run this again:\n${problems.map((p) => `  ${p}`).join('\n')}\n`);
     process.exit(2);
   }
+  for (const warning of planWarnings(parseJson(planText))) process.stdout.write(`note:      ${planPath} ${warning}\n`);
   const planned = readPlan(root, typeof flags.plan === 'string' ? flags.plan : '');
   // --only filters queries. Matching none ran nothing and read as a search that found nothing.
   const only = flagList(flags.only);
@@ -179,8 +188,9 @@ try {
 }
 // An explicit search provider that cannot run (no key, no instance) is refused before anything
 // is searched. selectSearch reports it on the SELECTION; this passed only the provider module
-// to runResearch, whose own check therefore never fired (found 2026-09-30).
-if (spends && chosen.search.notReady) {
+// to runResearch, whose own check therefore never fired (found 2026-09-30). The dry run is
+// refused the same way (#311): it previewed searches on a provider that cannot run, exit 0.
+if (chosen.search.notReady) {
   process.stderr.write(`${chosen.search.notReady}\n`);
   process.exit(2);
 }
@@ -217,6 +227,7 @@ try {
     fallbackAdapter,
     searchAdapter: chosen.search.adapter,
     searchAdapters: chosen.search.adapters ?? null,
+    searchExplicit: Boolean(chosen.search.explicit),
     plan: typeof flags.plan === 'string' ? readPlan(root, flags.plan) : null,
     depth: typeof flags.depth === 'string' ? flags.depth : '',
     refreshDays: flags['refresh-days'] === undefined ? null : Number(flags['refresh-days']),

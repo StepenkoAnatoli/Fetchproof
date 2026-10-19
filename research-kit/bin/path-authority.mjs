@@ -46,10 +46,18 @@ export function main(argv = process.argv.slice(2)) {
   let result;
   if (parsed.command === 'validate') {
     if (parsed.files.length !== 1) { console.error(usage()); return 2; }
+    // JSON-READ is the read's code alone (#340): the validator returns a verdict for any
+    // snapshot, so a throw from it is a defect - reported as VALIDATE-ERROR, INCOMPLETE,
+    // exit 2 with a report on stdout, never as a read error and never as a bare stack.
+    const incomplete = (code, error) => ({ validatorVersion: '1.0.0', status: 'INCOMPLETE', snapshotId: null, envelopeCanonicalSha256: null, errors: [{ code, message: error.message, path: parsed.files[0], status: 'INCOMPLETE' }] });
+    let snapshot;
     try {
-      result = validatePathAuthoritySnapshot(readPathAuthoritySnapshot(path.resolve(parsed.files[0])), { schemaPath });
+      snapshot = readPathAuthoritySnapshot(path.resolve(parsed.files[0]));
     } catch (error) {
-      result = { validatorVersion: '1.0.0', status: 'INCOMPLETE', snapshotId: null, envelopeCanonicalSha256: null, errors: [{ code: 'JSON-READ', message: error.message, path: parsed.files[0], status: 'INCOMPLETE' }] };
+      result = incomplete('JSON-READ', error);
+    }
+    if (!result) {
+      try { result = validatePathAuthoritySnapshot(snapshot, { schemaPath }); } catch (error) { result = incomplete('VALIDATE-ERROR', error); }
     }
   } else if (parsed.command === 'conform') {
     const files = parsed.files.length ? parsed.files.map((file) => path.resolve(file)) : [];

@@ -161,12 +161,18 @@ That file is `~/.agents/research-kit.config.json`. The other keys it takes are u
 | `~/.claude/skills/` | `research-first` and the shipped skill set, including `skill-router`, as siblings |
 | `~/.claude/settings.json` | the edit-time gate, a Claude Code hook |
 | git `core.hooksPath` | the commit gate, machine-wide, every agent and every human |
+| `<project>/.claude/skills/` | only for a project bound with `--into`: `research-first` and the skill set; every later `install.mjs` refreshes them |
 
 Pass `--into <project>` to `install.mjs` to also bind `research-first` and the skill set into
-that project's skill directory.
+that project's skill directory. The install records each bound project, and every later run
+writes into each one that is still there: a copy the project edited is left as it is and
+named, a set skill it deleted is written again, and a project deleted, or whose skill folder
+was removed by hand, is forgotten; one on a drive that is not there is kept and skipped.
 
-**Update.** Pull and deploy again. `doctor` reports when the deployed copy no longer
-matches the checkout, and its last line names the version this machine runs (`kit 0.9.5`).
+**Update.** Pull and deploy again; that also refreshes every bound project. `doctor` reports
+when the deployed copy no longer matches the checkout - and, run inside a bound project,
+when that project's copy does not - and its last line names the version this machine runs
+(`kit 0.9.5`).
 Each release is tagged `v<version>` and has its entry in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash

@@ -340,6 +340,284 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   is in flight. They had waited behind the call, so the keep-alive went unanswered for as
   long as `fetch_corpus` took. Tool calls still run one at a time and in order, and a closed
   stdin still waits for every outstanding answer (#347).
+- `researcher-release` names a file given where a directory is expected - `conform --root`,
+  `validate --pointers`, `--checkpoints`, or a `--ledger` directory's `segments/` or
+  `checkpoints/` - as `INPUT-ROOT`, `PTR-MISSING` or `LEDGER-PATH`
+  with exit 2, instead of an `ENOTDIR` stack with exit 1, its code for FAIL; a `--pointers` file
+  is refused even for a package with no pointer entry, where it had been PASS. `validate --root`
+  requires a directory, and `conform --root` on a missing directory says it does not exist (#342).
+- `validate` holds `--pointers`, `--ledger`, `--head`, `--genesis` and `--checkpoints` inside
+  the record root by realpath as well as by name, so a link below the root that leads outside
+  it is refused - and so are a ledger directory's own `genesis.json`, `checkpoints/` and
+  `segments/`, which the verifier reads unnamed. A refused path is no longer read after the
+  refusal is reported (#344).
+- The release schema subset applies `additionalProperties` when it is a schema, and `false`
+  without `properties` refuses every member. The `externalRoots` maps in the artifact-registry
+  and qualification-ledger-genesis schemas now refuse a non-hash value under `conform` and
+  `validate`. The predecessor check tells a malformed external root from a missing one (#335).
+- The release JSON reader keeps a `"__proto__"` key as an own member, as `JSON.parse` and
+  Python do, so Node and Python canonicalise and hash it alike. The schema checker tests
+  membership with `Object.hasOwn`: an extra `constructor` member is `SCHEMA-ADDITIONAL`, and
+  a record holding only `"__proto__"` fails `SCHEMA-REQUIRED`. The FI sidecar runner's patch
+  paths walk own members only, so a vector patch `/__proto__/polluted` is refused as absent
+  instead of setting `Object.prototype.polluted` for the process, and the ledger history
+  summary skips a promotion whose package is `constructor` or `__proto__` instead of throwing
+  on every `validate --ledger` (#336).
+- `path-authority validate` judges a null row or a non-array section FAIL with the schema's
+  `SCHEMA-TYPE`, exit 1, as `conform` does. The semantic pass reads only array sections and
+  object rows, and the CLI reports `JSON-READ` only for a file it could not read. The
+  validator returns a verdict for any snapshot: an unpaired surrogate is `SNAP-ENVELOPE-HASH`
+  or `SNAP-CANONICAL`, and a member that cannot become a string is shown as JSON. A throw
+  from validation itself is `VALIDATE-ERROR`, INCOMPLETE, exit 2. `path-authority conform` and
+  `researcher-release conform` report a lone surrogate in an enum or const field as FAIL
+  (`SNAP-CANONICAL`, `SCHEMA-CANONICAL`), exit 1, with a report. `validate --ledger` reports
+  a ledger record without a payload as `LEDGER-PAYLOAD-HASH` instead of crashing (#340).
+- A flat promotion pointer (`{ artifactId, promotion }`) that passes the pointer schema
+  reaches the promotion and ledger checks. Only a pointer with an envelope package compares
+  it with the registry; the flat form is judged by `promotion.package` (#341).
+- The Python FI sidecar conformance runner answers as the Node validator does on schema
+  patterns and numbers: `$` matches only at the end of the value (a hash with a trailing
+  newline is SCHEMA-PATTERN), `.` stops at U+2028/U+2029, `\d` matches only 0-9, `maxLength`
+  counts UTF-16 code units, a one-item `uniqueItems` array is not canonicalised, `1e400` is a
+  JSON-PARSE "non-finite number" in every Python runner, and `0.0` is an integer. A patch path
+  takes only a canonical ASCII array index (not `00` or `\u0660`), and a refused patch path is
+  VECTOR-PACKET, as in Node, rather than JSON-PARSE. The Python
+  runners write `--json` reports as UTF-8, so a Windows cp1252 pipe no longer turns a non-Latin-1
+  character into an error. The shipped FI packet pins the trailing newline, the digit, `1e400`
+  and `0.0` (#338).
+- The Python property-vector runner computes descendant invalidation by Node's rule: a
+  pointer's closure includes its own targetHash, identity is (package, generation,
+  recordId) so pointers may share a target, an empty set is `descendants.none`, R26/R27
+  rank before R28, and an integer past 2**53 is the double Node holds. Node's
+  `computeDescendantInvalidation` ranks a recordId `__proto__` and a package `constructor`
+  like any other name. The shipped packet records the rule in `sourceCases` and pins an
+  own-target root, a leaf's own target, a shared target and no roots (#339).
+- `fi-validate` reads the completed workbook through the artifact package reader's bounds:
+  an entry over the per-entry ceiling or the 200:1 ratio, an entry whose declared size lies,
+  and an entry running past the end of the file are `WB-PACKAGE-UNTRUSTED` with the ZIP
+  reason, before anything is inflated. A 1 MB workbook holding 1 GiB of zeros had taken
+  15 s and 3 GB before failing on V8's string limit. Each entry is inflated and each sheet
+  parsed at most once, and the workbook's XML is read in linear time: 256 KiB of unclosed
+  `<c>` in an 871-byte file had taken 55 s (#318).
+- `fi-validate` reads a self-closing workbook element as empty. A styled empty cell such as
+  `<c r="G5" s="1"/>`, the form spreadsheet writers use for one, was read as an opening that
+  ran to the next cell's `</c>`: G5 took H5's value and the status in H5 read as missing.
+  `<si/>` and `<t/>` are read the same way (#318).
+- The remote client's artifact download is bounded at the package ceiling plus the wrapper's
+  headers: a declared `content-length` over it is `TOO_LARGE` before the body is read, and a
+  chunked body is cut when it passes it; nothing is written. `unwrapArtifact` takes the
+  download for GitHub's wrapper only when its one `.zip` is at the root and there is no
+  `manifest.json`, so a package carrying an audit bundle is no longer replaced by it (#329).
+- `buildZip` refuses by name more than 65,534 entries before any entry is hashed or
+  deflated, a name over 65,535 bytes or an entry of 0xFFFFFFFF bytes or more before that
+  entry is, and an archive offset or central directory reaching 0xFFFFFFFF as soon as it is
+  reached, so the kit no longer writes an archive its own reader refuses as ZIP64 or fails
+  with a raw `ERR_OUT_OF_RANGE`. A `Uint8Array` payload is stored as its bytes; any other non-string
+  payload is refused instead of stored as its text (#348).
+- `export-warc --out` and `artifact create --output` refuse, by name and before anything is
+  read or packaged, a path that lands on the ledger, on a capture an evidence row cites,
+  anywhere in a `research/raw/`, or on one of the corpus's own files (`EVIDENCE.md`,
+  `DISCOVERY.md`, `BRIEF.md` and the rest) - in `--root`'s project, the working folder's, or any
+  project enclosing the path: they wrote there, said "wrote" and exited 0, and the commit gate
+  refusing the altered evidence was the first anyone heard of it (#330).
+- A table row written without its leading `|` is read as GitHub renders it, a row of the table,
+  when it splits to the header's cells; a pipe-bearing line that does not is named once, at its
+  own line, as the place the table ended, and one below a blank line is a `table-split` like a
+  piped one. Every later row was reported as standing after a blank line that was not there,
+  and every unknown citing one as a dangling citation (#331).
+- `prior` decides its refusal on the ledger it appends to, inside one section of the lock, and the
+  success line reads the entry's position instead of asserting it. A registration that waited on a
+  collector holding the lock was appended after that collector's scrape and reported as made
+  "before any page was collected" with exit 0; it is now refused with exit 2 (#352).
+- `prior` refuses a corpus whose ledger is missing or empty while captures or evidence rows are on
+  disk, naming the files and both remedies; `provenance/prior-precedes-collection`, `prior`'s
+  read-back and the brief no longer present a prior on such a ledger as made "before anything was
+  collected". A stray capture beside scrapes on record stays a hygiene warning (#353).
+- `prior ""` (or a blank positional) is a registration attempt refused by the length floor with exit
+  2, not the read-back path with exit 0; `--file` over the 10 MB capture bound is refused by name
+  before it is read, so the brief no longer inlines a prior of any size (#355).
+- `decompose --dry-run` no longer writes the seeded map over a map that is already drafted -
+  subtopic rows, judged or not, or gathered candidate material, `--force` or not. It prints
+  the searches it would make and the rows it would seed (a recipe's rows by name), says the
+  map was kept, and exits 0; a fresh scaffold's template map is still replaced by the seeded
+  one (#305).
+- `research --dry-run` and `decompose --dry-run` refuse an explicitly chosen search provider
+  that cannot run (no SerpAPI key, no SearXNG instance) with the real run's message and exit
+  2, instead of previewing searches on it and exiting 0; `decompose --dry-run` also refuses an
+  unknown search provider or transport name, as its real run does (#311).
+- A failed search on a provider chosen explicitly (`--search-transport`,
+  `RESEARCH_KIT_SEARCH_TRANSPORT` or `searchTransport` in the machine config) is a failed
+  search, counted on that provider and logged as "not degraded"; it is no longer sent to the
+  fetch provider's own search - for SearXNG on the keyless route, lite.duckduckgo.com. An
+  automatically selected provider still degrades once (RR-1) (#317).
+- `research` refuses a plan url whose `type` is not P, S or L (read trimmed and in any case, as
+  the gate reads it; a blank type is absent and runs as P), and a query or url whose `why` names
+  an unknown `research/DISCOVERY.md` does not declare, before anything is fetched and on
+  `--dry-run`: both were collected and recorded, and only the gate - after the spend - said the
+  row was unusable. A `why` is judged once the contract declares an unknown, and only the
+  contract is read to judge it; a missing `why`, or one naming no unknown, is said on a `note:`
+  line ("the row will not support any closure"), not refused, since an exploratory query is
+  allowed. The browser-transport decision project's plan named an undeclared `U-04` for the
+  ArchiveBox page its contract cites under U-03, and now names U-03 (#291).
+- `research` searches a query listed twice in a plan once - compared trimmed and case-folded -
+  and names the copy (`skipped   search "Same Question" - same query as "same question",
+  searched once`), on `--dry-run` too: each copy was a paid call on a metered provider whose
+  results the first had already returned. Each later copy is still ranked from that one answer
+  with its own `prefer` and `why`, so it takes pages of its own for its own unknown, as before;
+  a copy skipped because its unknowns are closed, or whose search failed, does not stand in for
+  the next (#300).
+- A URL carrying a user name or password is refused in a plan (`planProblems`, naming the host,
+  never the secret; a URL that does not parse is repeated with its user information masked),
+  dropped as a search result (`isWebUrl`, so `decompose` and `research` neither list nor scrape
+  it), and refused by `collect-remote` and the MCP `collect` tool before dispatch (`queriesInput`)
+  in either list - `collect.yml` fetches any line that is an http(s) URL, a query included - and
+  when it only looks like one: it was queued, and a real run would have written the credential
+  into the ledger, which is never edited, and handed it to the fetch transport (#308).
+- On the keyless and browser routes an HTTP 429, or a 503 that carries `Retry-After`, is
+  waited out instead of recorded as failed: the server's delta-seconds or HTTP-date is handed
+  to the collector's and the search's wait loop as `retryAfterMs`, capped at the minute the
+  Firecrawl path uses, and a 429 with no header waits that minute. A server that asks for
+  longer than the cap is tried once more after the cap, then recorded. A host or search
+  provider that ran out of retries is not waited on again in the same run, so the waits do
+  not add up per page and per query; a `Retry-After` that is neither seconds nor a date is
+  treated as absent (#313).
+- Behind a configured proxy the browser transport honours `NO_PROXY`/`no_proxy`, which the
+  keyless route already did through Node: a listed host is connected to directly and judged
+  as with no proxy, and the rest still go to the proxy. The list is read as curl reads it (a
+  name and its subdomains, an IP, a CIDR range, `:port`, or `*`); Node's own reading, on the
+  keyless route, ignores CIDR ranges and unbracketed IPv6 addresses and matches a bare name
+  exactly (#314).
+- The browser transport reads the document response's Content-Type and the net error its
+  read ended in from Chromium's net log. A PDF or other binary response is refused by name,
+  as the keyless route refuses it (ADR-0105); a JSON or text response is kept as its text, and one that rendered no text is a failure; a
+  body Chromium could not decode or one cut off is a failure naming the error, not a partial
+  capture of what arrived (#315).
+- A page the kit refused for what it is - over the size a capture may hold, or a binary
+  response - is remembered as `refused` within the refresh window and not fetched or paid for
+  again; a standing 4xx such as a 401, 402 or 403 is remembered for the transport that got
+  it, so another route still tries the page. A rate limit (a 403 naming one included) and a
+  proxy's 405 or 407 are never remembered; `--force` retries anything. A keyless 404
+  or 410 is now remembered as gone too. A Firecrawl payload with `success: false` is
+  reported with the vendor's own error instead of "no page text" (ADR-0174, #316).
+- A target page that answers 402 with "Insufficient credits" in its title is a failed page,
+  no longer read as Firecrawl's own exhaustion: the run neither stops nor asks for a top-up,
+  and the pages after it are still fetched (#350).
+- An auto-collect request with nothing to read - its fetches failed, its page is gone by
+  the ledger, or its searches returned nothing - is recorded as `failed`, naming why part by
+  part (never only because nothing new was fetched), committed as `research: request <id> failed`, and its `next`
+  says what to change; a run that collected some pages stays `collected` with `pages`
+  counting only collected pages and a `failed` count beside it. A request whose pages
+  were all already captured - named, or found by its searches - is `collected` with a
+  `cached` count and a `next` naming them; the run's usage line now records what each
+  search returned for this. Another run's ledger entries are not attributed to the request. The panel still shows pages used, and the
+  daily meter still charges the measured page attempts (ADR-0149) (#321).
+- A builder request processed again - edited, or its result untrusted on this collector -
+  reuses the contract row its earlier run made and replaces that run's plan entries,
+  instead of adding another OPEN row for the same fact; a row CLOSED since is refused as
+  before. Searches a request adds now carry `U-n request <id>` in `why`, as its pages
+  did, and only tagged entries are reused or replaced: the builder's `<id>.plan.json`
+  decides nothing, and a search the operator had already planned is kept (#322).
+- A topic request on a collector with no approved topics folder waits, with the reason,
+  instead of receiving a final refusal; it runs unchanged once the operator sets the
+  folder (ADR-0173). A topic request already refused under the old rule keeps that result;
+  editing the request queues it again (#323).
+- A restarted panel no longer re-delivers results that are already upstream: a delivery is
+  retried only when git shows something to deliver. A committed result is pushed, never
+  re-staged, and only while the upstream has not moved past HEAD; an uncommitted one is
+  staged alone, or with its run's corpus while that is still exactly what the run left
+  (a delivery fingerprint, as partial results carry), and otherwise waits with a sentence
+  naming it - so the operator's unfinished edits are never committed under an old
+  request's subject, and a request held back by an earlier failed push still arrives (#325).
+- `install` no longer mirrors into a folder the install state records as the kit's home when
+  that folder holds none of the kit's marker files: a removed kit whose path was reused for
+  other files is refused as any unrecorded folder is (ADR-0111), naming the stale record and
+  saying to move those files out, instead of having them pruned as retired. A recorded deployment that lost one marker
+  is still updated (#327).
+- A plain `install` refreshes every project bound with `--into`, as ADR-0006 says. The install
+  state lists them under `boundProjects`; `bound` stays the last-bound path an older kit reads,
+  and a project an older kit bound is folded into the list. A research-first or set skill copy
+  the project edited is left as it is and named (`--into` that project replaces it); a project
+  deleted, or whose skill folder was removed by hand, is dropped; one whose folder cannot be
+  reached at all (an unmounted drive, an offline share) is kept and skipped; one that cannot be
+  read or written is reported and the install goes on, and the state is written with what was
+  written even when an explicit `--into` fails. `doctor` run inside a bound project compares that project's copy too, and
+  warns with `install.mjs --into .` when it differs (#328).
+- `install-hooks` refuses the commit gate, exit 1 with git's own message and no install state
+  written, when git cannot run or write its global config (one it cannot parse, a directory, a
+  held `.lock`), the dry run included; it had reported the gate installed. `--uninstall` refuses
+  the same way, exit 1, and keeps the install state, instead of clearing it while
+  `core.hooksPath` still named the kit's gate. `doctor` says "git is not on PATH" only when git
+  cannot be started, and otherwise "git cannot run here" with git's message (#363).
+- A machine-config key present with the wrong type - a list for `transport`, a string for
+  `skillRoots`, a number for `serpapiKey`, any other typed key - still takes its default, and
+  is now named by doctor's `config-ill-typed` line with what it should hold (ADR-0180). An
+  `editGate` that is not an object (`"editGate": "hard-block"`) is the mode ill-typed: named,
+  and resolved to `hard-block` rather than `ask`. A config that parses to an array, a string or
+  another non-object is unreadable (held from the snapshot, or fail-closed with role unknown)
+  instead of an empty config reported readable, and doctor says it is not a JSON object rather
+  than that it does not parse (#310).
+- A relative `RESEARCH_KIT_CONFIG` is resolved against the repository's top level, where git
+  runs the commit hook, or the working directory outside a repository, so every folder of a
+  repository reads one file: a declared builder no longer becomes the collector default one
+  directory down. A trailing `/` or `\` no longer reads as an absent config, in the module or
+  the hook. Doctor's `machine-config` line names the resolved file and warns about a relative
+  value (#367).
+- A config read rewrites `.last-good` only when the snapshot differs and the config still has
+  the size, mtime, ctime and inode seen before the read, so a reader that started before `saveConfig`
+  no longer replaces the saved role in the snapshot; unchanged reads no longer write (#370).
+- A project below the repository root is judged by the commit gate (ADR-0182). git runs the
+  hook at the top level, and an ungated top level answered "not-gated" before reading a staged
+  path, so code staged in a failing `packages/a` committed. Each staged path is now judged by
+  its nearest project below the top level - a folder whose tracked `research/DISCOVERY.md` is
+  the contract new-project wrote, or sits beside `research/raw/`, so a data folder, an
+  experiment plan or a vendored kit template in a repository without the kit is not one, and a
+  clone whose repository ignores `raw/` still is - from the index, and the verdict names it ("BLOCKED in
+  packages/a"), with the fix and the `GATE_OFF` override spelled for that project. The edit gate
+  judges a file by the same project instead of by the agent's cwd, asks a gated top level alone,
+  and keeps its `research/raw/` and `GATE_OFF` refusals for every project above the file; doctor
+  says where the commit gate runs when the project is below the root (#309).
+- The commit gate blocks a commit that removes evidence HEAD holds: a staged deletion, or the
+  deleting half of a rename, of a capture HEAD's or the staged ledger names; the ledger itself
+  deleted (`git rm -r research/raw`); or a ledger entry dropped with its capture. It names the
+  file or seq and `git checkout HEAD -- <file>`. These had committed as phase-1 work while an
+  edit to the same capture was refused (ADR-0093), and the builder's handoff then reported a
+  corpus that "did not travel". A capture never committed, or not yet staged, stays
+  committable, as does the sanctioned ledger migration (#312).
+- A flag given twice is refused by name (`--out was given twice`) by every CLI that refuses
+  unknown flags, `artifact` and `disclosure` included, unless it repeats by design
+  (`preflight --check`, `research --only`, `gate --staged`, `collect-remote --query`/`--url`).
+  It had been joined with a comma or replaced by the default: `collect-remote --out a --out b`
+  created a folder named `a,b`, `artifact create --ref a --ref b` wrote `"ref": "a,b"`, and
+  `new-project --topic a --topic b` scaffolded "Untitled topic" (#286).
+- A positional argument a command does not take is refused by name, with exit 2 (3 for
+  `collect-remote` and `disclosure`) and nothing written: `doctor /other/project` had described
+  the current directory in silence, and `timeline stray-word` wrote TIMELINE.md (#289). A word
+  after a flag that takes no value is an argument too: `doctor --json /other/project` and
+  `research --dry-run word` are refused, and `new-project --force dir` scaffolds `dir`, where
+  it had scaffolded the current directory. `--force=false` (or `=0`, `=no`, `=off`) leaves such a
+  flag off - it had read as true, so `new-project --force=false` overwrote files - and a value
+  other than those or true/1/yes/on is refused. `prior --file x extra` and `evidence-context U-1
+  --all` name the flag the argument conflicts with instead of saying to change directory.
+- `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS` with any value but exactly `1` or `0` resolves to the
+  refusal (`0`), and `doctor` names it as `config-ill-typed`; `=false`, `=no` or `= 0` had read
+  as unset, which fetches an internal URL the plan names; `research` and `decompose` print the
+  same line as a warning when they start (#290).
+- `new-project`, `decompose` and `collect-remote` refuse a `--topic` that is blank after
+  trimming (`--topic needs a value`) or holds a line break (`--topic must be one line`), and
+  store a padded topic trimmed; the MCP `collect` tool and builder requests refuse a two-line
+  topic at intake, where the runner's `new-project` would have refused it after the dispatch (#293).
+- `collect-remote --json` reports a refused flag value, an unknown or repeated flag and a stray
+  argument as the JSON payload its later failures use (`code: "BAD_FLAG"`, with a remedy),
+  where stdout had been empty and the reason only on stderr (#294).
+- `collect-remote` and the MCP server's `fetch_corpus` check the output folder without creating
+  it; the download creates it, so a run refused for a missing token, a failed dispatch or an
+  unreadable run leaves no empty folder behind; the check creates and removes the folder, so a
+  name no folder can have (a part past 255 characters) is still refused before a paid run, and
+  `fetchCorpus` creates it only once the run has one package, not for an expired artifact (#295).
+- Eight `lib/` exports nothing referenced are removed (`stagedPathsFromStdin`, `PROTOCOL_VERSION`, `loadCorpus`, `truncate`, `bullet`, `SUBTOPIC_STATUSES`, `ROLE_STATES`, `requestExample`), the architecture map's `gate.mjs` and `mcp.mjs` rows say what the code does instead, and a repo-hygiene test fails by name on an export nothing references; ADR-0012's `RETIRED_FLAGS` and `RETIRED_PROJECT_SKILL_DIRS` stay, allow-listed (#297).
+- `new-project --force` and `decompose --force` keep what they replace as `<file>.bak-<date>[-n]`, as `brief --force` already did, through one `keepBackup` helper - scaffolding outside `research/` (AGENTS.md, .gitignore) under `research/backups/`, so the result still commits in phase 1, and nothing that is still exactly the template; `new-project --force` on a project whose ledger holds entries exits 2 and writes nothing - a different topic is a different project - and the hint without `--force` no longer offers it there (#301).
+- `disclosure` refuses a non-integer, non-positive or repeated `--run` and a `--repository` that is not one OWNER/REPO with exit 3, before any request; a run whose every probe was refused with 404 no longer reads "Only the SHAPE of the run is public" but says nothing was readable and that a private repository and a missing run both answer 404, another refusal is named by its status, and run metadata refused with 403 or 429 (the anonymous rate limit) is NOT MEASURED, exit 3 (#303).
+- `audit` continues a manifest record whose slug the current `makeSlug` no longer produces when it is the same topic - one holding the same topic text, or a record written before topic text was stored that is keyed by the old spelling of the topic or names it in its main audit - instead of starting a second topic at v0.1, so `--zip` and `--show` need no `--topic` afterwards; a record of another topic is never continued (#304).
 
 ## 0.9.5 — 2026-10-04
 

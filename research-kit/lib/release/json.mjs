@@ -78,7 +78,12 @@ class JsonReader {
       this.whitespace();
       if (this.text[this.index] !== ':') this.error('missing colon after object key');
       this.index += 1;
-      result[key] = this.value();
+      // A "__proto__" key assigned with `=` runs the prototype setter instead of creating a
+      // member: the member vanished from the canonical form, its fields became inherited,
+      // and Node hashed other bytes than JSON.parse and Python do (#336). Every other name,
+      // `constructor` included, is a writable data property and assigns as an own member.
+      if (key === '__proto__') Object.defineProperty(result, key, { value: this.value(), enumerable: true, writable: true, configurable: true });
+      else result[key] = this.value();
       this.whitespace();
       if (this.text[this.index] === '}') { this.index += 1; this.depth -= 1; return result; }
       if (this.text[this.index] !== ',') this.error('missing comma between object members');

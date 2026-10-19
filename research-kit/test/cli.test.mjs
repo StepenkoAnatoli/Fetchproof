@@ -16,7 +16,7 @@ import { test, describe, assert, tempDir, fs, path, KIT_ROOT, makePassingProject
 import { resolveProgramPath } from '../lib/firecrawl.mjs';
 import { renderBrief } from '../lib/brief.mjs';
 import { scaffoldProject } from '../lib/scaffold.mjs';
-import { spellCommand, documentCommand, parseFlags, writeFailure, writeText } from '../lib/core.mjs';
+import { spellCommand, documentCommand, parseFlags, refuseUnknownFlags, checkFlagValues, writeFailure, writeText } from '../lib/core.mjs';
 import { renderTable } from '../lib/render.mjs';
 
 describe('cli');
@@ -317,10 +317,16 @@ test('an explicit search provider that cannot run is refused before anything is 
   }));
   for (const [bin, extra] of [['research.mjs', ['--plan', 'research/plan.json']], ['decompose.mjs', []]]) {
     for (const [provider, names] of [['serpapi', /SERPAPI_API_KEY/], ['searxng', /SEARXNG_URL/]]) {
-      const r = run(bin, [...extra, '--transport', 'http-keyless', '--search-transport', provider], { root });
-      assert.notEqual(r.status, 0, `${bin} --search-transport ${provider} ran with the provider unready:\n${r.out}${r.err}`);
-      assert.match(r.err, names, `${bin} ${provider}: ${r.err}`);
-      assert.doesNotMatch(r.out + r.err, /search failed/, `${bin} ${provider} searched before refusing`);
+      // #311: the dry run too - it previewed "would search ... on serpapi" and exited 0 for a
+      // run that refuses, because both guards were `spends && notReady`.
+      for (const dry of [[], ['--dry-run']]) {
+        const r = run(bin, [...extra, ...dry, '--transport', 'http-keyless', '--search-transport', provider], { root });
+        const label = `${bin} ${dry.join(' ')} --search-transport ${provider}`;
+        assert.notEqual(r.status, 0, `${label} ran with the provider unready:\n${r.out}${r.err}`);
+        assert.match(r.err, names, `${label}: ${r.err}`);
+        assert.doesNotMatch(r.out + r.err, /search failed/, `${label} searched before refusing`);
+        assert.doesNotMatch(r.out, /would search/, `${label} previewed searches a real run refuses:\n${r.out}`);
+      }
     }
   }
 });
@@ -365,6 +371,19 @@ test('--plan and prior --file take an absolute path as it is', () => {
   const prior = run('prior.mjs', ['--file', note], { root });
   assert.equal(prior.status, 0, prior.out + prior.err);
   assert.match(fs.readFileSync(path.join(root, 'research', 'PRIOR.md'), 'utf8'), /outside file to be read/);
+});
+
+// Found 2026-10 (#355): a blank positional was read as "no argument" and printed the prior on
+// record with exit 0, so `prior "$PREDICTION"` with the variable unset succeeded and
+// registered nothing.
+test('prior with a blank positional is a registration attempt, refused by the floor', () => {
+  const root = project('blank prior');
+  for (const blank of ['', '   ']) {
+    const result = run('prior.mjs', [blank], { root });
+    assert.equal(result.status, 2, result.out + result.err);
+    assert.match(result.err, /a prior of 0 character\(s\) is not a prediction/);
+    assert.ok(!fs.existsSync(path.join(root, 'research', 'PRIOR.md')), 'a refused prior wrote PRIOR.md');
+  }
 });
 
 test('pages left out by the budget are named, and --status states the budget the run will use', () => {
@@ -598,6 +617,15 @@ test('FR-6: decompose --dry-run announces the providers and writes a map', () =>
   const r = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run'], { root });
   assert.equal(r.status, 0, r.err);
   assert.ok(fs.existsSync(path.join(root, 'research/MAP.md')), 'no map was written');
+  // #305: a second dry run finds a drafted map, previews, and leaves it alone - exit 0, since
+  // nothing is wrong, and the reason said rather than the "wrote" paragraph.
+  const drafted = fs.readFileSync(path.join(root, 'research/MAP.md'), 'utf8');
+  const again = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run', '--recipe', 'api-integration'], { root });
+  assert.equal(again.status, 0, again.all);
+  assert.match(again.out, /would search "cli probe"/, again.all);
+  assert.match(again.all, /already drafted - a dry run does not write over it/, again.all);
+  assert.doesNotMatch(again.out, /^wrote /m, again.all);
+  assert.equal(fs.readFileSync(path.join(root, 'research/MAP.md'), 'utf8'), drafted, 'the drafted map was rewritten');
 });
 
 test('decompose refuses an unknown search provider before doing any work', () => {
@@ -605,6 +633,17 @@ test('decompose refuses an unknown search provider before doing any work', () =>
   const r = run('decompose.mjs', ['--topic', 'cli probe', '--search-transport', 'bing'], { root });
   assert.equal(r.status, 2, r.all);
   assert.match(r.all, /unknown search provider/);
+  // The dry run too (#311): its selection error was swallowed, and it previewed and exited 0.
+  for (const [args, env, want] of [
+    [['--search-transport', 'bing'], {}, /unknown search provider/],
+    [[], { RESEARCH_KIT_SEARCH_TRANSPORT: 'bing' }, /unknown search provider/],
+    [['--transport', 'curl'], {}, /unknown transport/],
+  ]) {
+    const dry = run('decompose.mjs', ['--topic', 'cli probe', '--dry-run', ...args], { root, env });
+    assert.equal(dry.status, 2, `${args.join(' ')} ${JSON.stringify(env)}:\n${dry.all}`);
+    assert.match(dry.err, want, dry.all);
+    assert.doesNotMatch(dry.out, /would search/, dry.all);
+  }
 });
 
 // Found 2026-09-27: `decompose --topic x` in a project scaffolded for another topic wrote
@@ -841,6 +880,50 @@ test('collect-remote refuses a bare --out, --workflow or --ref before it creates
   }
 });
 
+// Found 2026-10-11 (#294): with --json every failure after the flag checks is a JSON payload
+// on stdout, and the flag checks themselves printed prose to stderr with an empty stdout.
+test('collect-remote --json refuses a bad flag value or an unknown flag with a JSON payload', () => {
+  for (const [args, names] of [
+    [['--depth', 'deep'], /--depth/], [['--max-pages', '99'], /--max-pages/], [['--nope'], /--nope/],
+    [['--out', 'a', '--out', 'b'], /--out was given twice/], [['stray-word'], /stray-word/],
+    [['--run-id', '12x'], /--run-id/], [['--client-ref', 'a/b'], /client_ref/],
+  ]) {
+    const r = run('collect-remote.mjs', ['--json', '--repository', 'o/r', '--topic', 't', ...args], { root: project() });
+    assert.equal(r.status, 3, `${args.join(' ')}: ${r.all}`);
+    let payload;
+    assert.doesNotThrow(() => { payload = JSON.parse(r.out); }, `${args.join(' ')}: stdout is not one JSON document:\n${r.out}`);
+    assert.match(payload.error, names, `${args.join(' ')}: ${r.out}`);
+    assert.equal(payload.code, 'BAD_FLAG');
+    assert.ok(payload.remedy, 'the payload carries a remedy, as every later failure does');
+    assert.equal(r.out.trim().split('\n').length, 1, `nothing but the payload on stdout:\n${r.out}`);
+  }
+  const missing = run('collect-remote.mjs', ['--json', '--repository', 'o/r'], { root: project() });
+  assert.equal(missing.status, 3, missing.all);
+  assert.match(JSON.parse(missing.out).error, /needs --topic/);
+  // A refusal names a stray argument, and a token pasted as one is redacted, in either mode.
+  const secret = `github_pat_${'A1b2C3d4E5'.repeat(4)}`;
+  for (const mode of [[], ['--json']]) {
+    const pasted = run('collect-remote.mjs', [...mode, '--repository', 'o/r', '--topic', 't', secret], { root: project() });
+    assert.equal(pasted.status, 3, pasted.all);
+    assert.ok(!pasted.all.includes(secret), `a pasted token was echoed:\n${pasted.all}`);
+  }
+});
+
+// Found 2026-10-11 (#295): the --out check CREATED the folder, so a run then refused for a
+// missing token (or a failed dispatch) left an empty folder behind.
+test('collect-remote leaves no --out folder behind when it refuses to start', () => {
+  const root = project();
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', path.join(root, 'newdir', 'deeper')], { root });
+  assert.equal(r.status, 3, r.all);
+  assert.match(r.err, /no GitHub token/, r.all);
+  assert.ok(!fs.existsSync(path.join(root, 'newdir')), 'the --out folder was created by a run that never started');
+  // A name no folder can have is refused before the token is asked for, not after a paid run.
+  const long = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', path.join(root, 'x'.repeat(300))], { root });
+  assert.equal(long.status, 3, long.all);
+  assert.match(long.err.split('\n')[0] ?? '', /OUT_DIR/, long.all);
+  assert.ok(!fs.readdirSync(root).some((name) => name.startsWith('xxxx')), 'the refused --out was left behind');
+});
+
 test('collect-remote refuses empty required and optional values before token lookup or creating out', () => {
   for (const flag of ['repository', 'topic', 'client-ref', 'prior', 'prefer']) {
     const required = flag === 'repository' ? ['--topic', 't']
@@ -1011,19 +1094,21 @@ test('every CLI refuses a flag it does not know, before it does anything', () =>
     // refusal is exit 3 (BLOCKED) and artifact-cli.test.mjs covers it. panel refuses before
     // it listens on anything.
     ['measure.mjs', []], ['export-warc.mjs', []], ['artifact.mjs', []], ['panel.mjs', []],
+    // Since #286 these two refuse through the shared helper too, with their own exit 3.
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't'], 3], ['disclosure.mjs', ['--repository', 'o/r', '--run', '1'], 3],
   ];
   // Found 2026-10-11 (#271): four CLIs called refuseUnknownFlags and had no row here, so a new
   // CLI could be forgotten again. Every file under bin/ that refuses unknown flags by that name
-  // must have a row; a CLI with its own refusal (collect-remote, disclosure, mcp-server,
-  // path-authority) is covered by its own tests.
+  // must have a row; a CLI with its own refusal (mcp-server, path-authority) is covered by its
+  // own tests.
   const refusing = fs.readdirSync(path.join(KIT_ROOT, 'bin'))
     .filter((name) => name.endsWith('.mjs') && /refuseUnknownFlags\(/.test(fs.readFileSync(path.join(KIT_ROOT, 'bin', name), 'utf8')));
   const missing = refusing.filter((name) => !cases.some(([bin]) => bin === name));
   assert.deepEqual(missing, [], `these CLIs refuse unknown flags but have no row in this table: ${missing.join(', ')}`);
-  for (const [bin, args] of cases) {
+  for (const [bin, args, exit = 2] of cases) {
     const root = planned('flags');
     const r = run(bin, [...args, '--no-such-flag'], { root, env: { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') } });
-    assert.equal(r.status, 2, `${bin} exited ${r.status} on an unknown flag:\n${r.all.slice(0, 400)}`);
+    assert.equal(r.status, exit, `${bin} exited ${r.status} on an unknown flag:\n${r.all.slice(0, 400)}`);
     assert.match(r.err, /unknown option --no-such-flag/, `${bin} did not name the flag:\n${r.all.slice(0, 400)}`);
   }
 });
@@ -1067,6 +1152,220 @@ test('a flag given a bad value, or none, is refused before anything runs', () =>
   assert.equal(only.status, 2, `preflight --only is accepted and never read:\n${only.all.slice(0, 300)}`);
 });
 
+/** Every file under a folder, relative and sorted: what a refused command must leave as it was. */
+function listing(root) {
+  return fs.readdirSync(root, { recursive: true }).map((name) => String(name).split(path.sep).join('/')).sort();
+}
+
+/** The problem lines a shared refusal would print, caught through its `report` hook. */
+function refusalOf(check) {
+  try {
+    check((found) => { throw Object.assign(new Error('refused'), { found }); });
+  } catch (err) {
+    if (err.found) return err.found.join('\n');
+    throw err;
+  }
+  return '';
+}
+
+// Found 2026-10-11 (#286, #289): parseFlags collects a repeated flag into an array and every CLI
+// but panel read it as one value, and no CLI but panel looked at a positional it did not take.
+test('refuseUnknownFlags refuses a flag given twice unless it repeats, and an argument the command does not take', () => {
+  const problems = (argv, known, options = {}) => refusalOf((report) => refuseUnknownFlags(parseFlags(argv).flags, known, { ...options, report }));
+  assert.equal(problems(['--check', 'a', '--check', 'b'], ['check'], { repeatable: ['check'] }), '');
+  assert.match(problems(['--out', 'a', '--out', 'b'], ['out']), /^--out was given twice/);
+  assert.match(problems(['--json', '--json', '--json'], ['json']), /^--json was given 3 times/);
+  assert.equal(problems(['--out', 'a'], ['out']), '');
+  assert.match(problems(['stray'], ['out']), /takes no arguments, and "stray" would not be read.*current directory/);
+  assert.equal(problems(['dir'], ['out'], { takes: 1 }), '');
+  assert.match(problems(['dir', 'extra'], ['out'], { takes: 1 }), /takes 1 argument at most, and "extra" would not be read/);
+  assert.equal(problems(['a', 'b', 'c'], ['out'], { takes: Infinity }), '');
+  assert.equal(problems(['--', '--looks-like-a-flag'], ['out'], { takes: 1 }), '', 'a positional after -- is still a positional');
+});
+
+// Found 2026-10-11 (#293): `new-project --topic "   "` scaffolded a project decompose then
+// called untitled, and a topic with a line break split the contract's heading in two.
+test('checkFlagValues refuses a one-line value that is blank or holds a line break', () => {
+  const problems = (flags, specs) => refusalOf((report) => checkFlagValues(flags, specs, { report }));
+  assert.equal(problems({ topic: '   ' }, { topic: { line: true } }), '--topic needs a value');
+  assert.equal(problems({ topic: 'a\nb' }, { topic: { line: true } }), '--topic must be one line');
+  assert.equal(problems({ topic: 'a\r\nb' }, { topic: { line: true } }), '--topic must be one line');
+  assert.equal(problems({ topic: ' real ' }, { topic: { line: true } }), '');
+  assert.equal(problems({ out: '   ' }, { out: {} }), '', 'a plain value spec is unchanged');
+});
+
+test('a flag given twice is refused by name, and nothing is made from the pair', () => {
+  const home = tempDir('rk-twice-home-');
+  const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') };
+  const parent = tempDir('rk-twice-np-');
+  const cases = [
+    ['new-project.mjs', [path.join(parent, 'p'), '--topic', 'a', '--topic', 'b'], 'topic'],
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', 'a', '--out', 'b'], 'out', 3],
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--depth', 'quick', '--depth', 'probe'], 'depth', 3],
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 'a', '--topic', 'b'], 'topic', 3],
+    ['export-warc.mjs', ['--out', 'x.warc.gz', '--out', 'y.warc.gz'], 'out'],
+    ['install.mjs', ['--dry-run', '--into', 'a', '--into', 'b'], 'into'],
+    ['decompose.mjs', ['--dry-run', '--limit', '5', '--limit', '8'], 'limit'],
+    ['evidence-context.mjs', ['--unknown', 'U-1', '--unknown', 'U-2'], 'unknown'],
+    ['disclosure.mjs', ['--repository', 'o/r', '--repository', 'p/q', '--run', '1'], 'repository', 3],
+  ];
+  for (const [bin, args, flag, exit = 2] of cases) {
+    const root = planned('twice');
+    const before = listing(root);
+    const r = run(bin, args, { root, env });
+    assert.equal(r.status, exit, `${bin} ${args.join(' ')} exited ${r.status}:\n${r.all.slice(0, 400)}`);
+    assert.match(r.err, new RegExp(`--${flag} was given twice`), `${bin} did not name --${flag}:\n${r.all.slice(0, 400)}`);
+    assert.deepEqual(listing(root), before, `${bin} ${args.join(' ')} wrote into the project`);
+  }
+  assert.ok(!fs.existsSync(path.join(parent, 'p')), 'new-project scaffolded from a repeated --topic');
+  // The flags that repeat by design still do.
+  for (const [bin, args] of [['preflight.mjs', ['--check', 'citations', '--check', 'provenance']],
+    ['research.mjs', ['--dry-run', '--only', 'a', '--only', 'b']], ['gate.mjs', ['--gate', 'commit', '--staged', 'a', '--staged', 'b']],
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--query', 'a', '--query', 'b', '--url', 'https://a.example/', '--url', 'https://b.example/']]]) {
+    const r = run(bin, args, { root: planned('repeat'), env });
+    assert.doesNotMatch(r.err, /was given twice/, `${bin} refused a flag that repeats by design:\n${r.all.slice(0, 400)}`);
+  }
+});
+
+test('a gate or corpus command refuses an argument it does not take, and writes nothing', () => {
+  const home = tempDir('rk-stray-home-');
+  const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') };
+  const elsewhere = tempDir('rk-stray-other-');
+  const word = 'stray-word';
+  const cases = [
+    // The natural mistake: naming the project instead of standing in it.
+    ['doctor.mjs', [elsewhere], elsewhere], ['preflight.mjs', [elsewhere], elsewhere],
+    ['handoff.mjs', [word]], ['measure.mjs', [word]], ['brief.mjs', [word]], ['bundle.mjs', [word]],
+    ['timeline.mjs', [word]], ['audit.mjs', [word]], ['export-warc.mjs', [word]],
+    // Before a bare flag, not after it: `--all stray-word` gives --all a value, not a positional.
+    ['evidence-context.mjs', [word, '--all']], ['evidence-context.mjs', ['U-1', word]],
+    ['research.mjs', [word, '--dry-run']], ['decompose.mjs', [word, '--dry-run']],
+    ['install.mjs', [word, '--dry-run']], ['install-hooks.mjs', [word, '--dry-run']], ['gate.mjs', [word]],
+    ['new-project.mjs', [path.join(tempDir('rk-stray-np-'), 'p'), word]], ['prior.mjs', ['--file', 'x.md', word]],
+    ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', word], word, 3],
+    ['disclosure.mjs', ['--repository', 'o/r', '--run', '1', word], word, 3],
+  ];
+  // Every CLI that refuses through the shared helper and reads no positional has a row here.
+  const takesNone = fs.readdirSync(path.join(KIT_ROOT, 'bin')).filter((name) => {
+    const text = name.endsWith('.mjs') ? fs.readFileSync(path.join(KIT_ROOT, 'bin', name), 'utf8') : '';
+    return /refuseUnknownFlags\(flags/.test(text) && !/takes:/.test(text);
+  });
+  const missing = takesNone.filter((name) => !cases.some(([bin]) => bin === name));
+  assert.deepEqual(missing, [], `these CLIs take no argument and have no row in this table: ${missing.join(', ')}`);
+  for (const [bin, args, named = word, exit = 2] of cases) {
+    const root = planned('stray');
+    const before = listing(root);
+    const r = run(bin, args, { root, env });
+    assert.equal(r.status, exit, `${bin} ${args.join(' ')} exited ${r.status}:\n${r.all.slice(0, 400)}`);
+    assert.ok(r.err.includes(`"${named}"`), `${bin} did not name the argument:\n${r.all.slice(0, 400)}`);
+    assert.deepEqual(listing(root), before, `${bin} ${args.join(' ')} wrote into the project`);
+  }
+});
+
+// Found 2026-10-18 (#289, the same class): parseFlags gives a flag the next word as its value,
+// so `doctor --json /other/project` described the cwd and `new-project --force dir` scaffolded
+// the cwd. A word after a flag that takes no value is an argument, judged as one.
+test('a word after a flag that takes no value is an argument, refused unless the command takes one', () => {
+  const home = tempDir('rk-bare-home-');
+  const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') };
+  const elsewhere = tempDir('rk-bare-other-');
+  for (const [bin, args, named] of [['doctor.mjs', ['--json', elsewhere], elsewhere],
+    ['research.mjs', ['--dry-run', 'stray-word'], 'stray-word'], ['handoff.mjs', ['--json', 'stray-word'], 'stray-word']]) {
+    const root = planned('bare');
+    const before = listing(root);
+    const r = run(bin, args, { root, env });
+    assert.equal(r.status, 2, `${bin} ${args.join(' ')} exited ${r.status}:\n${r.all.slice(0, 400)}`);
+    assert.ok(r.err.includes(`${args[0]} takes no value, so "${named}" after it is an argument`), `${bin}:\n${r.all.slice(0, 400)}`);
+    assert.deepEqual(listing(root), before, `${bin} ${args.join(' ')} wrote into the project`);
+  }
+  // Where the command takes an argument, the word is that argument, in its place.
+  const parent = tempDir('rk-bare-np-');
+  const made = run('new-project.mjs', ['--force', 'p', '--topic', 'bare'], { root: parent });
+  assert.equal(made.status, 0, made.all);
+  assert.ok(fs.existsSync(path.join(parent, 'p', 'research', 'plan.json')), 'new-project --force p did not scaffold p');
+  assert.ok(!fs.existsSync(path.join(parent, 'research')), 'new-project --force p scaffolded the cwd');
+  // A value given with = is the flag's own, as asked, and a value flag still takes the next word.
+  assert.equal(run('research.mjs', ['--dry-run=1'], { root: planned('bare'), env }).status, 0);
+  assert.equal(run('research.mjs', ['--dry-run', '--depth', 'probe'], { root: planned('bare'), env }).status, 0);
+  // Every CLI that refuses through the shared helper names its value flags to checkFlagValues.
+  const silent = fs.readdirSync(path.join(KIT_ROOT, 'bin')).filter((name) => {
+    const text = name.endsWith('.mjs') ? fs.readFileSync(path.join(KIT_ROOT, 'bin', name), 'utf8') : '';
+    return /refuseUnknownFlags\(flags/.test(text) && !/checkFlagValues\(flags/.test(text);
+  });
+  assert.deepEqual(silent, [], `these CLIs never say which flags take a value: ${silent.join(', ')}`);
+});
+
+// Found 2026-10-18 (review of the #289 change): `--force=false` read as TRUE, so
+// `new-project --force=false` overwrote the files it was asked to keep.
+test('--flag=false on a flag that takes no value leaves it off, and a value it cannot read is refused', () => {
+  const dir = path.join(tempDir('rk-eq-bare-'), 'p');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'eq'], { root: tempDir() }).status, 0);
+  const agents = path.join(dir, 'AGENTS.md');
+  fs.writeFileSync(agents, 'KEPT\n');
+  for (const off of ['--force=false', '--force=0', '--force=no', '--force=OFF']) {
+    const r = run('new-project.mjs', [dir, '--topic', 'eq', off], { root: tempDir() });
+    assert.equal(r.status, 0, `${off}: ${r.all}`);
+    assert.equal(fs.readFileSync(agents, 'utf8'), 'KEPT\n', `${off} overwrote a kept file`);
+  }
+  const maybe = run('new-project.mjs', [dir, '--topic', 'eq', '--force=maybe'], { root: tempDir() });
+  assert.equal(maybe.status, 2, maybe.all);
+  assert.match(maybe.err, /--force takes no value \(or true or false\), not "maybe"/);
+  assert.equal(fs.readFileSync(agents, 'utf8'), 'KEPT\n');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'eq', '--force=true'], { root: tempDir() }).status, 0);
+  assert.notEqual(fs.readFileSync(agents, 'utf8'), 'KEPT\n', '--force=true did not force');
+});
+
+// Found 2026-10-18 (review of the #289 change): a command that takes an argument, given one
+// beside the flag that replaces it, was told it "takes no arguments" and to cd elsewhere.
+test('an argument beside the flag that replaces it is refused naming that flag, without the cd advice', () => {
+  const root = planned('beside');
+  for (const [bin, args, flag] of [['prior.mjs', ['--file', 'notes.md', 'extra'], '--file'], ['evidence-context.mjs', ['U-1', '--all'], '--all'],
+    ['evidence-context.mjs', ['--unknown', 'U-1', 'U-2'], '--unknown']]) {
+    const r = run(bin, args, { root });
+    assert.equal(r.status, 2, `${bin} ${args.join(' ')}: ${r.all}`);
+    assert.ok(r.err.includes(`takes no arguments beside ${flag}`), `${bin} ${args.join(' ')}:\n${r.err}`);
+    assert.doesNotMatch(r.err, /cd there first/, `${bin} gave the cd advice to a command that takes an argument`);
+  }
+});
+
+// Found 2026-10-18 (review of #290): at run time nothing named an unreadable value, and the
+// refusal told the operator to set it to 1 - which they believed they had.
+test('research and decompose name an unreadable RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS when they start', () => {
+  for (const bin of ['research.mjs', 'decompose.mjs']) {
+    const said = run(bin, ['--dry-run'], { root: planned('posture'), env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: 'true' } });
+    assert.match(said.err, /warning: RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS="true" is not a value the kit reads \(1 or 0\) - resolved to 0 \(refuse\)/, `${bin}:\n${said.all.slice(0, 400)}`);
+    const quiet = run(bin, ['--dry-run'], { root: planned('posture'), env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: '1' } });
+    assert.doesNotMatch(quiet.err, /RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS/, `${bin} warned about a value it reads`);
+  }
+});
+
+test('a topic blank after trimming, or on two lines, is refused, and a padded one is stored trimmed', () => {
+  const parent = tempDir('rk-topic-');
+  for (const [topic, says] of [['   ', /--topic needs a value/], ['a\nb', /--topic must be one line/]]) {
+    const dir = path.join(parent, 'd');
+    const r = run('new-project.mjs', [dir, '--topic', topic], { root: parent });
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.err, says, r.all);
+    assert.ok(!fs.existsSync(dir), `new-project scaffolded a project from the topic ${JSON.stringify(topic)}`);
+  }
+  const untitled = project('Untitled topic');
+  const before = listing(untitled);
+  const decompose = run('decompose.mjs', ['--dry-run', '--topic', 'a\nb'], { root: untitled });
+  assert.equal(decompose.status, 2, decompose.all);
+  assert.match(decompose.err, /--topic must be one line/, decompose.all);
+  assert.deepEqual(listing(untitled), before, 'decompose wrote a map for a two-line topic');
+
+  const remote = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', '   '], { root: project() });
+  assert.equal(remote.status, 3, remote.all);
+  assert.equal(remote.err.split('\n')[0], '--topic needs a value', remote.all);
+  assert.doesNotMatch(remote.all, /token/i);
+
+  const padded = path.join(parent, 'padded');
+  assert.equal(run('new-project.mjs', [padded, '--topic', ' real '], { root: parent }).status, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(padded, 'research', 'plan.json'), 'utf8')).topic, 'real');
+  assert.match(fs.readFileSync(path.join(padded, 'research', 'DISCOVERY.md'), 'utf8'), /^# Discovery Contract - real\r?$/m);
+});
+
 test('decompose accepts a search limit of one while max-scrapes still accepts zero', () => {
   const r = run('decompose.mjs', ['--dry-run', '--limit', '1', '--max-scrapes', '0', '--transport', 'http-keyless'], {
     root: planned('budget-floor'),
@@ -1087,6 +1386,72 @@ test('new-project over an existing project says it kept it, and that --topic was
   assert.match(again.all, /--force/, 'the way to replace it is not named');
   const same = run('new-project.mjs', [dir, '--topic', 'First topic'], { root: tempDir() });
   assert.doesNotMatch(same.all, /was not applied/, 'the same topic again is not a conflict');
+});
+
+// #301 (2026-10-17): `new-project --force` replaced every file with its template and kept
+// none, while `brief --force` keeps the brief it replaces; on a collected corpus it left 27
+// captures no row cited. A file with content is now kept as <file>.bak-<date>, and a project
+// whose ledger holds entries is refused: a different topic is a different project.
+test('new-project --force keeps an edited file as <file>.bak-<date>', () => {
+  const dir = path.join(tempDir('rk-np-force-'), 'p');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'First topic'], { root: tempDir() }).status, 0);
+  const discovery = path.join(dir, 'research', 'DISCOVERY.md');
+  const edited = `${fs.readFileSync(discovery, 'utf8')}\nAn operator wrote this.\n`;
+  fs.writeFileSync(discovery, edited);
+  const forced = run('new-project.mjs', [dir, '--topic', 'Second topic', '--force'], { root: tempDir() });
+  assert.equal(forced.status, 0, forced.all);
+  const backups = fs.readdirSync(path.dirname(discovery)).filter((f) => /^DISCOVERY\.md\.bak-\d{4}-\d{2}-\d{2}$/.test(f));
+  assert.equal(backups.length, 1, `no DISCOVERY.md backup: ${fs.readdirSync(path.dirname(discovery)).join(', ')}`);
+  assert.equal(fs.readFileSync(path.join(path.dirname(discovery), backups[0]), 'utf8'), edited, 'the backup does not hold the edit');
+  assert.match(fs.readFileSync(discovery, 'utf8'), /Second topic/, '--force did not apply the new topic');
+  assert.match(forced.all, /DISCOVERY\.md\.bak-/, 'the backup is not named in the output');
+});
+
+// Review of #301 (2026-10-18): the backups of AGENTS.md and .gitignore were written beside
+// them, outside research/, where the phase-1 commit rule allows only the scaffolding's own
+// names - so `git add -A` after a forced scaffold was a blocked commit. Scaffolding is now kept
+// under research/backups/, and a file still exactly as scaffolded is not kept at all.
+test('new-project --force keeps edited scaffolding under research/, and the result commits', async () => {
+  const { evaluate } = await import('../lib/gate.mjs');
+  const dir = path.join(tempDir('rk-np-force-scaffold-'), 'p');
+  assert.equal(run('new-project.mjs', [dir, '--topic', 'First topic'], { root: tempDir() }).status, 0);
+  fs.appendFileSync(path.join(dir, 'AGENTS.md'), '\nOperator note.\n');
+  fs.appendFileSync(path.join(dir, '.gitignore'), '\ndist/\n');
+  const forced = run('new-project.mjs', [dir, '--topic', 'Second topic', '--force'], { root: tempDir() });
+  assert.equal(forced.status, 0, forced.all);
+  const files = listTree(dir);
+  const backups = files.filter((f) => f.includes('.bak-')).sort();
+  assert.deepEqual(backups.map((f) => f.replace(/\d{4}-\d{2}-\d{2}$/, 'D')),
+    ['research/backups/.gitignore.bak-D', 'research/backups/AGENTS.md.bak-D'],
+    `only the two edited files are kept, under research/backups/: ${backups.join(', ')}`);
+  assert.match(fs.readFileSync(path.join(dir, backups[1]), 'utf8'), /Operator note\./);
+  const verdict = evaluate(dir, { gate: 'commit', stagedPaths: files, record: false, stagedText: (rel) => fs.readFileSync(path.join(dir, rel), 'utf8') });
+  assert.equal(verdict.allow, true, `staging everything after --force is refused: ${JSON.stringify(verdict.staged ?? verdict.findings ?? verdict)}`);
+});
+
+/** Every file under dir, as forward-slash relative paths. */
+function listTree(dir, rel = '') {
+  return fs.readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap((entry) => {
+    const name = rel ? `${rel}/${entry.name}` : entry.name;
+    return entry.isDirectory() ? listTree(dir, name) : [name];
+  });
+}
+
+test('new-project --force on a project whose ledger holds entries exits 2 and changes nothing', () => {
+  const dir = makePassingProject();
+  // Without --force, the hint no longer offers the flag that is refused here.
+  const hinted = run('new-project.mjs', [dir, '--topic', 'other topic'], { root: tempDir() });
+  assert.equal(hinted.status, 0, hinted.all);
+  assert.match(hinted.out, /--topic "other topic" was not applied/, hinted.all);
+  assert.doesNotMatch(hinted.out, /--force/, `the hint offers --force over a collected corpus:\n${hinted.out}`);
+  const before = new Map(listTree(dir).map((rel) => [rel, fs.readFileSync(path.join(dir, rel), 'utf8')]));
+  const r = run('new-project.mjs', [dir, '--topic', 'other topic', '--force'], { root: tempDir() });
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /collected corpus \(1 ledger entry, \d+ evidence rows?\)/, r.all);
+  assert.match(r.err, /a different topic is a different project/i, r.all);
+  const after = listTree(dir);
+  assert.deepEqual(after.sort(), [...before.keys()].sort(), 'files were added or removed');
+  for (const rel of after) assert.equal(fs.readFileSync(path.join(dir, rel), 'utf8'), before.get(rel), `${rel} changed`);
 });
 
 // Found 2026-09-27: `audit --version v9` without --show rendered (or declined to render) a new
@@ -1151,6 +1516,53 @@ test('a plan with values it cannot use is refused, naming each one', () => {
   const str = run('research.mjs', ['--dry-run', '--transport', 'http-keyless'], { root });
   assert.equal(str.status, 2, str.all);
   assert.match(str.err, /queries must be a list/, str.err);
+});
+
+// #291: a url typed Z, for an unknown the contract does not declare, passed the dry run and was
+// collected; the gate refused the row only after the spend.
+test('a plan url with an unknown source type or an undeclared unknown is refused by the dry run', () => {
+  const root = project('probe');
+  fs.writeFileSync(path.join(root, 'research', 'DISCOVERY.md'), [
+    '# Discovery Contract - probe', '', '## Build intent', '', 'A fixture.', '', '## Unknowns', '',
+    '| ID | Unknown | Why it blocks the build | Status | Evidence |', '|---|---|---|---|---|',
+    '| U-1 | One? | Sets one | OPEN | |', '| U-2 | Two? | Sets two | OPEN | |', '| U-3 | Three? | Sets three | OPEN | |', '',
+  ].join('\n'));
+  const write = (plan) => fs.writeFileSync(path.join(root, 'research', 'plan.json'), JSON.stringify(plan));
+  write({ topic: 'probe', queries: [{ q: '', why: 'U-1' }, { q: 'ok' }], urls: [{ url: 'https://x.invalid/a', why: 'U-99', type: 'Z' }] });
+  const r = run('research.mjs', ['--dry-run', '--transport', 'http-keyless'], { root });
+  assert.equal(r.status, 2, r.all);
+  assert.match(r.err, /urls\[0\] has source type "Z" - expected P, S, or L/, r.err);
+  assert.match(r.err, /urls\[0\] is for "U-99", which research\/DISCOVERY\.md does not declare/, r.err);
+
+  write({ topic: 'probe', queries: [{ q: 'ok' }], urls: [{ url: 'https://x.invalid/a', why: 'U-2', type: 'P' }] });
+  const sound = run('research.mjs', ['--dry-run', '--transport', 'http-keyless'], { root });
+  assert.equal(sound.status, 0, sound.all);
+  assert.match(sound.out, /queries\[0\] names no unknown - the row will not support any closure/, 'a query with no why is said, not refused');
+  assert.doesNotMatch(sound.out, /urls\[0\] names no unknown/, sound.out);
+});
+
+// #308: a plan url carrying a password passed planProblems, and a real run would have written it
+// into the ledger - which is never edited - and handed it to the fetch transport.
+test('a plan url carrying credentials is refused before anything runs, and the ledger is untouched', () => {
+  const root = project('probe');
+  const ledger = path.join(root, 'research', 'raw', '.fetches.jsonl');
+  const before = fs.existsSync(ledger) ? fs.readFileSync(ledger, 'utf8') : null;
+  fs.writeFileSync(path.join(root, 'research', 'plan.json'), JSON.stringify({
+    topic: 'probe', urls: [{ url: 'https://x.invalid/fine', why: 'U-1' }, { url: 'https://user:pass@x.invalid/secret', why: 'U-1' }],
+  }));
+  // The real run too, on a declared collector: the refusal comes before any transport is
+  // chosen, so it spends nothing (and a regression would reach only x.invalid, keyless).
+  const home = tempDir('rk-cred-home-');
+  const config = path.join(home, 'c.json');
+  fs.writeFileSync(config, JSON.stringify({ role: 'collector' }));
+  const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: config };
+  for (const args of [['--dry-run'], []]) {
+    const r = run('research.mjs', [...args, '--transport', 'http-keyless'], { root, env });
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.err, /urls\[1\] carries credentials \(…@x\.invalid\) - the ledger records every URL and command verbatim and is never edited/, r.err);
+    assert.doesNotMatch(r.all, /user:pass/, 'the refusal repeated the credential');
+    assert.equal(fs.existsSync(ledger) ? fs.readFileSync(ledger, 'utf8') : null, before, 'the ledger changed');
+  }
 });
 
 // Found 2026-09-27, running the kit as a new user: new-project was given --topic and then

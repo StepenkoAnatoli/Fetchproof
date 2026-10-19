@@ -37,20 +37,28 @@ const NETLOG_CONSTANTS = {
   logEventTypes: { REQUEST_ALIVE: 901, URL_REQUEST_START_JOB: 902, HTTP_TRANSACTION_READ_RESPONSE_HEADERS: 903, URL_REQUEST_REDIRECTED: 904 },
   logSourceType: { NONE: 0, SOCKET: 31, URL_REQUEST: 32 },
 };
-function netLog(hops, { id = 76, before = [] } = {}) {
+function netLog(hops, { id = 76, before = [], constants = NETLOG_CONSTANTS } = {}) {
   const T = NETLOG_CONSTANTS.logEventTypes;
   const at = (type, phase, params, source = { id, type: 32 }) => ({ time: '1', type, source, phase, ...(params ? { params } : {}) });
   const events = [...before];
-  hops.forEach(([url, status], i) => {
+  // A hop's third member, when given, is its response headers after the status line and the
+  // net_error its request ended in (#315); the default is an HTML page that ended cleanly.
+  hops.forEach(([url, status, { headers = ['content-type: text/html'], netError = null } = {}], i) => {
     events.push(at(T.URL_REQUEST_START_JOB, 1, { method: 'GET', request_type: 'main frame', url }));
     // The same event type on a socket source, with another status: only URL_REQUEST sources count.
     events.push(at(T.HTTP_TRANSACTION_READ_RESPONSE_HEADERS, 0, { headers: ['HTTP/1.1 418 I am a socket'] }, { id: 999, type: 31 }));
-    events.push(at(T.HTTP_TRANSACTION_READ_RESPONSE_HEADERS, 0, { headers: [`HTTP/1.1 ${status} Whatever`, 'content-type: text/html'] }));
+    events.push(at(T.HTTP_TRANSACTION_READ_RESPONSE_HEADERS, 0, { headers: [`HTTP/1.1 ${status} Whatever`, ...headers] }));
     if (i < hops.length - 1) events.push(at(T.URL_REQUEST_REDIRECTED, 0, { location: hops[i + 1][0] }));
     events.push(at(T.URL_REQUEST_START_JOB, 2));
+    if (netError !== null) events.push(at(T.REQUEST_ALIVE, 2, { net_error: netError }));
   });
-  return JSON.stringify({ constants: NETLOG_CONSTANTS, events });
+  return JSON.stringify({ constants, events });
 }
+/** The status and final URL alone, as ADR-0137's tests read them. */
+const statusOf = (log, asked) => {
+  const r = documentStatusFromNetLog(log, asked);
+  return r && { statusCode: r.statusCode, finalUrl: r.finalUrl };
+};
 /** Another request's job on its own source - a favicon, the browser's own traffic. */
 const otherRequest = (id, url, status) => [
   { time: '0', type: 902, source: { id, type: 32 }, phase: 1, params: { method: 'GET', request_type: 'other', url } },
@@ -67,19 +75,19 @@ ${'<p>You do not have permission to access this resource on this server, and thi
 // reads it from there, and where the log gives none, it says so instead of guessing.
 test('the net log names the document request\'s status and its final URL, through redirects', () => {
   const asked = 'https://x.example/page';
-  assert.deepEqual(documentStatusFromNetLog(netLog([[asked, 403]]), asked), { statusCode: 403, finalUrl: asked });
+  assert.deepEqual(statusOf(netLog([[asked, 403]]), asked), { statusCode: 403, finalUrl: asked });
   // Parsed JSON is accepted as well as text.
-  assert.deepEqual(documentStatusFromNetLog(JSON.parse(netLog([[asked, 200]])), asked), { statusCode: 200, finalUrl: asked });
+  assert.deepEqual(statusOf(JSON.parse(netLog([[asked, 200]])), asked), { statusCode: 200, finalUrl: asked });
   // A redirect is a new job on the same source; the last job's URL is final, and its status is the page's.
   const hopped = netLog([[asked, 302], ['https://x.example/moved', 301], ['https://y.example/final', 200]]);
-  assert.deepEqual(documentStatusFromNetLog(hopped, asked), { statusCode: 200, finalUrl: 'https://y.example/final' });
-  assert.deepEqual(documentStatusFromNetLog(netLog([[asked, 302], ['https://x.example/denied', 403]]), asked), { statusCode: 403, finalUrl: 'https://x.example/denied' });
+  assert.deepEqual(statusOf(hopped, asked), { statusCode: 200, finalUrl: 'https://y.example/final' });
+  assert.deepEqual(statusOf(netLog([[asked, 302], ['https://x.example/denied', 403]]), asked), { statusCode: 403, finalUrl: 'https://x.example/denied' });
   // Other requests - the browser's own, a favicon - are not the document, before it or after it.
   const crowded = netLog([[asked, 404]], { before: [...otherRequest(8, 'https://clients2.google.com/time/1/current', 200), ...otherRequest(83, 'https://x.example/favicon.ico', 200)] });
-  assert.deepEqual(documentStatusFromNetLog(crowded, asked), { statusCode: 404, finalUrl: asked });
+  assert.deepEqual(statusOf(crowded, asked), { statusCode: 404, finalUrl: asked });
   // Chromium canonicalises the URL it logs: a bare host gains its slash, a fragment is never sent.
-  assert.deepEqual(documentStatusFromNetLog(netLog([['https://x.example/', 403]]), 'https://X.example'), { statusCode: 403, finalUrl: 'https://x.example/' });
-  assert.deepEqual(documentStatusFromNetLog(netLog([[asked, 410]]), `${asked}#section`), { statusCode: 410, finalUrl: asked });
+  assert.deepEqual(statusOf(netLog([['https://x.example/', 403]]), 'https://X.example'), { statusCode: 403, finalUrl: 'https://x.example/' });
+  assert.deepEqual(statusOf(netLog([[asked, 410]]), `${asked}#section`), { statusCode: 410, finalUrl: asked });
 });
 
 test('a net log with no document request, no response, or cut short gives no status at all', () => {
@@ -136,6 +144,100 @@ test('a page the origin answered 200 carries the status as a number, and the URL
   // Canonicalisation alone is not a redirect: the URL asked for is kept as it was spelled.
   const bare = browser.scrape('https://x.example', { render: renderWith({ stdout: PAGE, netLog: netLog([['https://x.example/', 200]]) }).render, browserPath: '/bin/true', env: {}, uid: 0 });
   assert.equal(bare.url, 'https://x.example');
+});
+
+// #315 (2026-10-11): the same plan on both routes. A PDF, an octet-stream, a body Chromium
+// could not decode and a cut-off body were refused or failed on the keyless route, and kept
+// here as empty or truncated partial captures - EVIDENCE rows a Finding would be written
+// against. The net log carries the response's Content-Type beside its status, and the read's
+// net_error at its end; both are read, and the keyless transport's rule (ADR-0105) applied.
+const RENDERED_TEXT = (text) => `<html><head><meta name="color-scheme" content="light dark"></head><body><pre style="word-wrap: break-word; white-space: pre-wrap;">${text}</pre></body></html>`;
+const scrapeWith = (asked, stdout, log) => browser.scrape(asked, { render: renderWith({ stdout, netLog: log }).render, browserPath: '/bin/true', env: {}, uid: 0 });
+
+test('the net log names the document response\'s Content-Type, and the net error its read ended in', () => {
+  const asked = 'https://x.example/report';
+  const pdf = documentStatusFromNetLog(netLog([[asked, 200, { headers: ['Content-Type: application/pdf', 'content-length: 9'] }]]), asked);
+  assert.equal(pdf.contentType, 'application/pdf');
+  assert.equal(pdf.netError, '');
+  // Named through the log's own constants, and by number when the log names none.
+  const named = { ...NETLOG_CONSTANTS, netError: { ERR_ABORTED: -3, ERR_CONTENT_DECODING_FAILED: -330 } };
+  assert.equal(documentStatusFromNetLog(netLog([[asked, 200, { netError: -330 }]], { constants: named }), asked).netError, 'ERR_CONTENT_DECODING_FAILED');
+  assert.equal(documentStatusFromNetLog(netLog([[asked, 200, { netError: -354 }]]), asked).netError, 'net error -354');
+  // A load the browser itself stopped is the deadline's to grade, not a body that did not arrive.
+  assert.equal(documentStatusFromNetLog(netLog([[asked, 200, { netError: -3 }]], { constants: named }), asked).netError, '');
+  // A redirect's job is not the page's: only the last job's headers and error count.
+  const hopped = documentStatusFromNetLog(netLog([[asked, 302, { headers: ['content-type: application/pdf'] }], ['https://x.example/final', 200]]), asked);
+  assert.deepEqual([hopped.contentType, hopped.netError], ['text/html', '']);
+});
+
+test('a PDF or an octet-stream the browser rendered is refused by name, as the keyless route refuses it', () => {
+  const asked = 'https://x.example/report.pdf';
+  for (const type of ['application/pdf', 'application/octet-stream']) {
+    // What Chromium dumps for these is a viewer's shell or an empty document, never the file.
+    const r = scrapeWith(asked, '<html><head></head><body><embed type="application/pdf"></body></html>', netLog([[asked, 200, { headers: [`content-type: ${type}`] }]]));
+    assert.equal(r.ok, false, JSON.stringify(r).slice(0, 300));
+    assert.match(r.error, new RegExp(`^the response is ${type.replace('/', '\\/')}, which is not text - the browser transport cannot keep a faithful copy of it\\. Fetch it with --transport firecrawl-cli`), r.error);
+    assert.equal(r.markdown, undefined, 'nothing is kept');
+  }
+});
+
+test('a JSON or text response is kept as its text, not run through the page extractor', () => {
+  const asked = 'https://api.example/v1/limits';
+  const json = scrapeWith(asked, RENDERED_TEXT('{&quot;limit&quot;: 10, &quot;per&quot;: &quot;minute&quot;}'), netLog([[asked, 200, { headers: ['content-type: application/json; charset=utf-8'] }]]));
+  assert.equal(json.ok, true, json.error);
+  assert.equal(json.markdown, '{"limit": 10, "per": "minute"}');
+  assert.equal(json.completeness, 'full', json.omitted);
+  assert.equal(json.statusCode, 200);
+  // Chrome 154's JSON viewer, as it dumped a local JSON answer on 2026-10-17: the <pre>, then an
+  // empty formatter <div>.
+  const viewer = '<html><head><meta name="color-scheme" content="light dark"><meta charset="utf-8"></head><body><pre>{"limit": 10, "per": "minute &amp; &lt;more&gt;"}</pre><div class="json-formatter-container"></div></body></html>';
+  const chrome = scrapeWith(asked, viewer, netLog([[asked, 200, { headers: ['content-type: application/json'] }]]));
+  assert.equal(chrome.markdown, '{"limit": 10, "per": "minute & <more>"}');
+  assert.equal(chrome.completeness, 'full', chrome.omitted);
+  // Nothing rendered is not a capture: a type Chromium saves as a download leaves an empty document.
+  for (const type of ['text/plain', 'text/csv']) {
+    const empty = scrapeWith(asked, '<html><head></head><body></body></html>', netLog([[asked, 200, { headers: [`content-type: ${type}`] }]]));
+    assert.equal(empty.ok, false, `${type}: ${JSON.stringify(empty).slice(0, 200)}`);
+    assert.match(empty.error, /rendered no text for the text\/(plain|csv) response/);
+    assert.equal(empty.markdown, undefined);
+  }
+  assert.equal(scrapeWith(asked, RENDERED_TEXT(''), netLog([[asked, 200, { headers: ['content-type: text/plain'] }]])).ok, false);
+  // Only the text viewer's own shape is the response's text: a document with several <pre> is
+  // read as a document, not as its first <pre>.
+  const several = scrapeWith(asked, '<html><body><p>a</p><pre>x</pre><pre>y</pre></body></html>', netLog([[asked, 200, { headers: ['content-type: application/xml'] }]]));
+  assert.equal(several.ok, true);
+  assert.equal(several.completeness, 'partial');
+  assert.match(several.omitted, /not kept verbatim/);
+  assert.match(several.markdown, /a.*x.*y/s);
+  // XML gets a tree viewer, not a <pre>: its text is read from the document, and says so.
+  const xml = scrapeWith(asked, '<html><body><div class="header">This XML file does not appear to have any style information.</div><div>&lt;a&gt;1&lt;/a&gt;</div></body></html>', netLog([[asked, 200, { headers: ['content-type: application/xml'] }]]));
+  assert.equal(xml.ok, true);
+  assert.equal(xml.completeness, 'partial');
+  assert.match(xml.omitted, /not kept verbatim/);
+});
+
+test('a body the browser could not decode, or one cut off, is a failure naming the error - not a capture of what arrived', () => {
+  const asked = 'https://x.example/page';
+  const named = { ...NETLOG_CONSTANTS, netError: { ERR_ABORTED: -3, ERR_CONTENT_DECODING_FAILED: -330, ERR_CONTENT_LENGTH_MISMATCH: -354 } };
+  const blank = scrapeWith(asked, '<html><head></head><body></body></html>', netLog([[asked, 200, { netError: -330 }]], { constants: named }));
+  assert.equal(blank.ok, false, JSON.stringify(blank).slice(0, 300));
+  assert.match(blank.error, /ended in ERR_CONTENT_DECODING_FAILED - the body did not arrive whole/, blank.error);
+  const cut = scrapeWith(asked, PAGE.slice(0, 600), netLog([[asked, 200, { netError: -354 }]], { constants: named }));
+  assert.equal(cut.ok, false);
+  assert.match(cut.error, /ERR_CONTENT_LENGTH_MISMATCH/);
+  // A page that ended cleanly is the page.
+  assert.equal(scrapeWith(asked, PAGE, netLog([[asked, 200, { netError: -3 }]], { constants: named })).ok, true);
+});
+
+// #313: the browser route's 429 hands the server's Retry-After over as the keyless route's does.
+test('a 429 the browser rendered carries the server\'s Retry-After as retryAfterMs', () => {
+  const asked = 'https://x.example/page';
+  const limited = scrapeWith(asked, FORBIDDEN, netLog([[asked, 429, { headers: ['content-type: text/html', 'Retry-After: 3'] }]]));
+  assert.equal(limited.ok, false);
+  assert.equal(limited.retryAfterMs, 3000);
+  assert.match(limited.error, /^HTTP 429 - rate limited, the server asks for a retry after 3s/, limited.error);
+  const plain = scrapeWith(asked, FORBIDDEN, netLog([[asked, 503]]));
+  assert.equal(plain.retryAfterMs, undefined);
 });
 
 test('with no net log the status is not guessed: the capture is partial and says the status was not observed', () => {
@@ -623,6 +725,11 @@ test('by default the browser renders through the guard child, which is handed th
   const plain = renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: {}, spawn, nodePath: '/opt/node' });
   assert.equal(jobs[1].job.allowInternalRedirects, undefined, 'with nothing decided, the child decides from the URL');
   assert.equal(plain.stdout, PAGE);
+  // #290: a value the kit cannot read is a refusal handed to the child, never the default.
+  for (const value of ['yes', 'false', ' 0', 'TRUE']) {
+    renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: { RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: value }, spawn, nodePath: '/opt/node' });
+    assert.equal(jobs.at(-1).job.allowInternalRedirects, false, `${JSON.stringify(value)} reached the guard as the default`);
+  }
 });
 
 // ADR-0140: the rendered DOM is the text the browser capture was converted from.

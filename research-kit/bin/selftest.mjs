@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlags, listFiles, refuseUnknownFlags, exists, kitCommand, tolerateClosedStdout, tempBase, tempFreeSpace, exitAfterFlush } from '../lib/core.mjs';
+import { parseFlags, listFiles, refuseUnknownFlags, checkFlagValues, exists, kitCommand, tolerateClosedStdout, tempBase, tempFreeSpace, exitAfterFlush } from '../lib/core.mjs';
 import { runPending, TEST_TIMEOUT, importTestFiles, describe, test, dominantFailureCause, tempDir, createTempFolder } from '../test/harness.mjs';
 import { KIT_ROOT } from '../lib/scaffold.mjs';
 import { checkNode, REQUIRED_NODE_MAJOR } from '../lib/runtime.mjs';
@@ -18,7 +18,9 @@ import { checkNode, REQUIRED_NODE_MAJOR } from '../lib/runtime.mjs';
 tolerateClosedStdout();
 
 const { flags, positional } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['help']);
+refuseUnknownFlags(flags, ['help'], { takes: Infinity });
+// No flag here takes a value, so a word after one is an argument (#289).
+checkFlagValues(flags, {});
 const dir = path.join(KIT_ROOT, 'test');
 
 if (flags.help) {

@@ -34,6 +34,8 @@ import { tempDir, makePassingProject } from './harness.mjs';
  *   `unixMode`     stamp a mode, so a symlink entry can exist
  *   `declareSize`  lie about the uncompressed size in both headers
  *   `deflate`      compress, so a ratio can be made suspicious
+ *   `deflated`     raw deflate bytes stored as they are, so a bomb need not be inflated
+ *                  in the test to be built (pair it with `declareSize`)
  */
 export function rawZip(entries) {
   const locals = [];
@@ -44,8 +46,8 @@ export function rawZip(entries) {
     const name = Buffer.from(entry.name, 'utf8');
     const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(String(entry.data ?? ''), 'utf8');
     const deflate = entry.deflate === true;
-    const stored = deflate ? zlib.deflateRawSync(data, { level: 9 }) : data;
-    const method = deflate ? 8 : 0;
+    const stored = entry.deflated ?? (deflate ? zlib.deflateRawSync(data, { level: 9 }) : data);
+    const method = deflate || entry.deflated ? 8 : 0;
     const uncompressed = entry.declareSize ?? data.length;
     const crc = crc32(data);
 

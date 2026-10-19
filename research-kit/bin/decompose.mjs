@@ -9,6 +9,7 @@ import { collectionPolicy, collectionRefusal } from '../lib/machine.mjs';
 import { selectTransport, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
 import { decompose, searchSummary, resolveTopic, RECIPE_DIR } from '../lib/decompose.mjs';
 import { UNIVERSAL_DIMENSIONS } from '../lib/dimensions.mjs';
+import { internalRedirectsSetting } from '../lib/runtime.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-scrapes', 'recipe', 'recipes', 'transport', 'search-transport']);
@@ -17,10 +18,15 @@ refuseUnknownFlags(flags, ['help', 'topic', 'dry-run', 'force', 'limit', 'max-sc
 // bare flag is refused too (#269, 2026-10-11): parseFlags reads it as `true`, which Number()
 // made 1, so `--max-scrapes` with no value quietly paid for one page.
 checkFlagValues(flags, {
-  topic: 'value', recipe: 'value', transport: 'value', 'search-transport': 'value',
+  topic: { line: true }, recipe: 'value', transport: 'value', 'search-transport': 'value',
   limit: { int: true, min: 1 }, 'max-scrapes': { int: true, min: 0 },
 });
 const root = process.cwd();
+// A posture value the transports could not read is said once, at the start (#290): read as
+// the refusal, it is otherwise named only by doctor, and a refusal that says "set it to 1"
+// reads as wrong to an operator who believes they did.
+const internalPosture = internalRedirectsSetting();
+if (internalPosture.problem) process.stderr.write(`warning: ${internalPosture.problem}\n`);
 
 // The topic is the project's (plan.json) unless --topic names it; a different one is refused.
 const resolved = flags.help || flags.recipes ? null : resolveTopic(root, flags.topic);
@@ -40,8 +46,10 @@ if (flags.help || resolved?.error) {
   --max-scrapes <n>  gather up to n pages while mapping (default 0 - search only);
                      the map shows the section headings of every captured page
   --limit <n>        search results per query (default 8)
-  --dry-run          write the seeded map with no gathering; spend nothing
-  --force            redraft over a map that already holds judged rows
+  --dry-run          write the seeded map with no gathering; spend nothing.
+                     A map already drafted is kept, never written over
+  --force            redraft over a map that already holds judged rows (the judged
+                     map is kept as MAP.md.bak-<date>)
   --transport <name> ${TRANSPORT_NAMES.join(' | ')}
   --search-transport <name>
                      ${SEARCH_PROVIDER_NAMES.join(' | ')} - the SEARCH side only.
@@ -69,18 +77,34 @@ if (spends && !policy.mayCollect) {
 let adapter = null;
 let searchAdapter = null;
 let searchAdapters = null;
+let searchExplicit = false;
 if (!spends) {
   // A dry run names the provider its searches would spend on, when this machine can say;
   // selecting one probes and spends nothing, and a machine that cannot select one still
   // gets its dry run.
+  let chosen = null;
   try {
-    const chosen = selectTransport({
+    chosen = selectTransport({
       explicit: typeof flags.transport === 'string' ? flags.transport : '',
       explicitSearch: typeof flags['search-transport'] === 'string' ? flags['search-transport'] : '',
     });
     searchAdapter = chosen.search.adapter ?? chosen.adapter;
     searchAdapters = chosen.search.adapters ?? null;
-  } catch { /* named generically below */ }
+  } catch (err) {
+    // A name that is not a provider is refused, as the real run and research's dry run refuse
+    // it (#311): swallowed, `--search-transport bing` previewed searches and exited 0. Anything
+    // else is named generically below, so a machine that cannot select still gets its dry run.
+    if (err?.code === 'UNKNOWN_SEARCH_PROVIDER' || err?.code === 'UNKNOWN_TRANSPORT') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+  }
+  // An explicit search provider that cannot run is refused here too, as the real run refuses
+  // it (#311): the preview named searches on it that would never happen, and exited 0.
+  if (chosen?.search.notReady) {
+    process.stderr.write(`${chosen.search.notReady}\n`);
+    process.exit(2);
+  }
 }
 if (spends) {
   try {
@@ -93,6 +117,7 @@ if (spends) {
     // A merged selection names every provider it searches; passing only `adapter` searched
     // SerpAPI alone under a banner that said both (found 2026-09-28).
     searchAdapters = chosen.search.adapters ?? null;
+    searchExplicit = Boolean(chosen.search.explicit);
     // An explicit search provider that cannot run is refused before anything is searched:
     // without this, each search failed and fell back to the fetch provider's own search,
     // which on Firecrawl spends credits (found 2026-09-30).
@@ -118,6 +143,7 @@ try {
     adapter,
     searchAdapter,
     searchAdapters,
+    searchExplicit,
     recipe: typeof flags.recipe === 'string' ? flags.recipe : '',
     limit: Number(flags.limit ?? 8),
     maxScrapes: Number(flags['max-scrapes'] ?? 0),
@@ -138,6 +164,11 @@ try {
   throw err;
 }
 
+// A dry run that kept a drafted map has previewed what it came to preview: nothing is wrong (#305).
+if (!result.written && result.preview) {
+  process.stdout.write(`\n${result.reason}\n`);
+  process.exit(0);
+}
 if (!result.written) {
   process.stderr.write(`${result.reason}\n`);
   process.exit(1);
@@ -147,6 +178,7 @@ if (!result.written) {
 // same after an outage as after a good run - which is the defect this line exists for.
 const searched = searchSummary(result);
 if (searched) process.stderr.write(`${searched}\n`);
+if (result.backup) process.stdout.write(`the judged map it replaced is kept as ${result.backup}\n`);
 
 process.stdout.write(`
 wrote ${result.file}: ${result.rows} rows (${result.universal} universal${result.added ? ` + ${result.added} from recipe ${result.recipe}` : ''}), ${result.material} candidate pages${result.outlines ? `, ${result.outlines} page outline${result.outlines === 1 ? '' : 's'} shown` : ''}.

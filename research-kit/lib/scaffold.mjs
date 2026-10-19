@@ -7,7 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PATHS, resolve, exists, isDirectory, readText, writeText, ensureDir, listFiles, today } from './core.mjs';
+import { PATHS, resolve, exists, isDirectory, readText, writeText, ensureDir, listFiles, today, keepBackup } from './core.mjs';
+import { readCorpus } from './corpus.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const KIT_ROOT = path.resolve(here, '..');
@@ -52,6 +53,20 @@ export function renderTemplate(text, tokens) {
   return String(text).replace(/\{\{([A-Z_]+)\}\}/g, (all, name) => (
     Object.prototype.hasOwnProperty.call(tokens, name) ? String(tokens[name]) : all
   ));
+}
+
+/** Where `new-project --force` keeps the scaffolding it replaces outside research/ (#301). */
+const BACKUP_DIR = 'research/backups';
+
+/**
+ * Whether `text` is this template with SOME token values - a scaffold nobody edited, whatever
+ * topic, date or kit spelling it was written with. Forcing a new topic over one has nothing
+ * to keep (#301), as `brief --force` keeps nothing of an unedited draft.
+ */
+function isUneditedTemplate(source, text) {
+  const fold = (value) => String(value).replace(/\r\n/g, '\n');
+  const literal = fold(source).split(/\{\{[A-Z_]+\}\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`^${literal.join('[^\\n]*')}$`).test(fold(text));
 }
 
 /**
@@ -117,10 +132,24 @@ const AGENTS_MARK = '# Research-first project bootstrap';
 export const UNTITLED_TOPIC = 'Untitled topic';
 
 export function scaffoldProject(dir, { topic = UNTITLED_TOPIC, kit = '$HOME/.agents/research-kit', force = false, templateDir = TEMPLATE_DIR, date = today() } = {}) {
+  // `force` re-scaffolds around whatever is here, and a ledger with entries is evidence that
+  // is never edited: templates written around it left captures no row cites, the state
+  // handoff exists to catch (#301). Refused before anything is written.
+  if (force) {
+    const entries = (readText(resolve(dir, PATHS.ledger), '') ?? '').split(/\r?\n/).filter((line) => line.trim()).length;
+    if (entries) {
+      const rows = readCorpus(dir).evidence.length;
+      const err = new Error(`${dir} holds a collected corpus (${entries} ledger ${entries === 1 ? 'entry' : 'entries'}, ${rows} evidence ${rows === 1 ? 'row' : 'rows'}) - `
+        + '--force would write templates around it. A different topic is a different project; scaffold it in a new folder.');
+      err.code = 'COLLECTED_CORPUS';
+      throw err;
+    }
+  }
   const written = [];
   const skipped = [];
   const merged = [];
   const repaired = [];
+  const backups = [];
   // A folder created in a brand-new project is part of scaffolding it, not a repair:
   // "repaired 1" on a fresh project read as if something had been broken. "Existed" means
   // it was already a kit project - its research/ folder - not that the operator had a
@@ -170,11 +199,20 @@ export function scaffoldProject(dir, { topic = UNTITLED_TOPIC, kit = '$HOME/.age
     if (exists(target) && !force) { skipped.push(rel); continue; }
     const source = readText(path.join(templateDir, ...rel.split('/')), '');
     const body = renderTemplate(source, rel.endsWith('.json') ? jsonTokens : tokens);
+    // What `force` replaces is kept, as `brief --force` keeps a brief (#301) - unless it is
+    // the template as scaffolded, with nobody's edit in it. A file under research/ is kept
+    // beside itself; scaffolding outside it (AGENTS.md, .gitignore, docs/ARCHITECTURE.md) is
+    // kept under research/backups/, because phase 1 may commit research/ and the root
+    // scaffolding names only, so `<file>.bak-<date>` beside AGENTS.md blocked the next commit.
+    const before = exists(target) ? readText(target, '') : '';
+    if (before.trim() && before !== body && !isUneditedTemplate(source, before)) {
+      backups.push(keepBackup(dir, rel.startsWith('research/') ? rel : `${BACKUP_DIR}/${rel}`, before, date));
+    }
     writeText(target, body);
     written.push(rel);
   }
 
-  return { dir, written, skipped, merged, repaired };
+  return { dir, written, skipped, merged, repaired, backups };
 }
 
 /** Shape with no content - the test fixture and the scaffolder are the same call. */

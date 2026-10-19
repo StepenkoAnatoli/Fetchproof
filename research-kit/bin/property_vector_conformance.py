@@ -27,13 +27,17 @@ from conformance_common import (
     parse_json_no_duplicates,
     read_packet,
     report_json,
+    write_report,
     require_unique_vector_ids,
 )
 
 
 PROFILE = "researcher-property-vector-v1"
 VERSION = "1.0.0"
-PACKAGE_RANK = {f"R{number}": number for number in range(28, 34)}
+# computeDescendantInvalidation's package order (lib/release-validator.mjs): R26 to R33, and
+# anything else after all of them, as Number.MAX_SAFE_INTEGER. This said R28 to R33 and 999.
+PACKAGE_RANK = {f"R{number}": number for number in range(26, 34)}
+UNRANKED = 2**53 - 1
 
 
 class PacketError(ConformanceError):
@@ -127,61 +131,113 @@ def graph_pointers(packet: dict[str, Any], vector: dict[str, Any]) -> list[dict[
     return pointers
 
 
-def graph_outcome(pointers: list[dict[str, Any]], roots: list[str]) -> dict[str, Any]:
-    identities: set[tuple[Any, Any, Any]] = set()
-    targets: dict[str, dict[str, Any]] = {}
-    known: set[str] = set()
+def graph_failure(reason: str) -> dict[str, Any]:
+    return {"status": "FAIL", "primaryReason": reason, "affectedPointers": [], "revocationRecordIds": []}
+
+
+def js_integer(value: Any) -> bool:
+    """`Number.isInteger`: JavaScript has one number type, so `1.0` IS `1` there."""
+    return not isinstance(value, bool) and (isinstance(value, int) or (isinstance(value, float) and value.is_integer()))
+
+
+def js_string(value: Any) -> str:
+    """`String(value)`, which is what Node does to each invalidation root."""
+    if isinstance(value, str):
+        return value
+    if value is None or isinstance(value, bool):
+        return {None: "null", True: "true", False: "false"}[value]
+    if isinstance(value, (int, float)):
+        return js_number(value)
+    if isinstance(value, list):
+        return ",".join("" if item is None else js_string(item) for item in value)
+    return "[object Object]"
+
+
+def graph_outcome(pointers: list[dict[str, Any]], roots: Any) -> dict[str, Any]:
+    """`computeDescendantInvalidation` (lib/release-validator.mjs), rule for rule.
+
+    This runner exists to reproduce that primitive independently, and until 2026-10-17 it
+    reproduced a different one (#339). It walked reverse predecessor edges from each root,
+    so a root naming a pointer's OWN target revoked only its descendants, where Node revokes
+    the pointer too; it refused two pointers sharing a targetHash as a duplicate record,
+    where Node's identity is (package, generation, recordId) and a target may have several
+    owners; it said "descendants.invalidated" for an empty set; and it ranked R26/R27 last.
+    The shipped vectors used predecessor-only roots and a full-identity duplicate - the one
+    region where both rules agree - so the packet looked like agreement.
+
+    The rule, in Node's order: a malformed pointer is graph.input, a repeated identity
+    graph.duplicate-record, a root no target or predecessor names graph.missing-root, and
+    a cycle graph.cycle. A pointer's closure is its own targetHash plus the transitive
+    predecessor closure through every owner of each hash, and a pointer is revoked when any
+    root is in its closure. Node finds a cycle by walking each closure depth-first; that
+    finds one exactly when the graph reachable from the targets has one, which is what the
+    iterative walk below asks - without Python's recursion limit on a long chain.
+    """
+    if not isinstance(pointers, list) or not isinstance(roots, list):
+        return graph_failure("graph.input")
+    identities: set[str] = set()
+    owners: dict[str, list[dict[str, Any]]] = {}
+    rank: dict[str, int] = {}
     for pointer in pointers:
-        identity = (pointer.get("package"), pointer.get("generation"), pointer.get("recordId"))
+        if (
+            not isinstance(pointer, dict) or not isinstance(pointer.get("recordId"), str)
+            or not isinstance(pointer.get("package"), str) or not js_integer(pointer.get("generation"))
+            or not isinstance(pointer.get("targetHash"), str) or not isinstance(pointer.get("predecessorHashes"), list)
+        ):
+            return graph_failure("graph.input")
+        identity = f"{pointer['package']}\0{js_number(pointer['generation'])}\0{pointer['recordId']}"
         if identity in identities:
-            return {"status": "FAIL", "primaryReason": "graph.duplicate-record", "affectedPointers": [], "revocationRecordIds": []}
+            return graph_failure("graph.duplicate-record")
         identities.add(identity)
-        target = pointer.get("targetHash")
-        if not isinstance(target, str) or target in targets:
-            return {"status": "FAIL", "primaryReason": "graph.duplicate-record", "affectedPointers": [], "revocationRecordIds": []}
-        targets[target] = pointer
-        known.add(target)
-        predecessors = pointer.get("predecessorHashes")
-        if not isinstance(predecessors, list):
-            raise PacketError("graph predecessorHashes must be an array")
-        known.update(predecessors)
+        rank[pointer["recordId"]] = PACKAGE_RANK.get(pointer["package"], UNRANKED)
+        owners.setdefault(pointer["targetHash"], []).append(pointer)
 
-    visiting: set[str] = set()
-    visited: set[str] = set()
-    def visit(target: str) -> bool:
-        if target in visiting:
-            return True
-        if target in visited:
-            return False
-        visiting.add(target)
-        pointer = targets[target]
-        for predecessor in pointer["predecessorHashes"]:
-            if predecessor in targets and visit(predecessor):
-                return True
-        visiting.remove(target)
-        visited.add(target)
-        return False
-    if any(visit(target) for target in targets):
-        return {"status": "FAIL", "primaryReason": "graph.cycle", "affectedPointers": [], "revocationRecordIds": []}
-    if any(root not in known for root in roots):
-        return {"status": "FAIL", "primaryReason": "graph.missing-root", "affectedPointers": [], "revocationRecordIds": []}
+    # Only a string can equal a root (each is String()-ed) or own a target, so a
+    # predecessor of any other type is inert in Node and skipped here.
+    def predecessors(value: str) -> list[str]:
+        return [hash_ for owner in owners.get(value, []) for hash_ in owner["predecessorHashes"] if isinstance(hash_, str)]
 
-    reverse: dict[str, list[dict[str, Any]]] = {}
+    unique_roots = list(dict.fromkeys(js_string(root) for root in roots))
+    known = set(owners).union(*(predecessors(target) for target in owners))
+    if any(root not in known for root in unique_roots):
+        return graph_failure("graph.missing-root")
+
+    state: dict[str, bool] = {}                      # True while on the walk's path
+    for start in owners:
+        if start in state:
+            continue
+        state[start] = True
+        stack = [(start, iter(predecessors(start)))]
+        while stack:
+            value, pending = stack[-1]
+            following = next(pending, None)
+            if following is None:
+                state[value] = False
+                stack.pop()
+            elif state.get(following):
+                return graph_failure("graph.cycle")
+            elif following not in state:
+                state[following] = True
+                stack.append((following, iter(predecessors(following))))
+
+    # Keyed by recordId, as Node's `closures` and `rank` are: the last pointer of a recordId wins.
+    closures: dict[str, set[str]] = {}
     for pointer in pointers:
-        for predecessor in pointer["predecessorHashes"]:
-            reverse.setdefault(predecessor, []).append(pointer)
-    affected: dict[str, dict[str, Any]] = {}
-    queue = list(dict.fromkeys(roots))
-    while queue:
-        current = queue.pop(0)
-        for pointer in reverse.get(current, []):
-            if pointer["recordId"] in affected:
-                continue
-            affected[pointer["recordId"]] = pointer
-            queue.append(pointer["targetHash"])
-    ordered = sorted(affected.values(), key=lambda pointer: (PACKAGE_RANK.get(pointer["package"], 999), pointer["generation"], pointer["recordId"]))
-    record_ids = [pointer["recordId"] for pointer in ordered]
-    return {"status": "PASS", "primaryReason": "descendants.invalidated", "affectedPointers": record_ids, "revocationRecordIds": record_ids}
+        closure = {pointer["targetHash"]}
+        frontier = [pointer["targetHash"]] + [hash_ for hash_ in pointer["predecessorHashes"] if isinstance(hash_, str)]
+        while frontier:
+            value = frontier.pop()
+            closure.add(value)
+            frontier.extend(hash_ for hash_ in predecessors(value) if hash_ not in closure)
+        closures[pointer["recordId"]] = closure
+    affected = [pointer for pointer in pointers if any(root in closures[pointer["recordId"]] for root in unique_roots)]
+    # float(): a generation is a double in Node, so 2**53 + 1 sorts as equal to 2**53 there.
+    affected.sort(key=lambda pointer: (
+        rank[pointer["recordId"]], float(pointer["generation"]), pointer["recordId"].encode("utf-16-be", "surrogatepass"),
+    ))
+    record_ids = [pointer["recordId"] for pointer in affected]
+    reason = "descendants.invalidated" if record_ids else "descendants.none"
+    return {"status": "PASS", "primaryReason": reason, "affectedPointers": record_ids, "revocationRecordIds": record_ids}
 
 
 def graph_vector(packet: dict[str, Any], vector: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run_conformance(load_vectors(parsed.vectors))
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"{report['status']} ({report['vectorCount']} vector(s))")
             for vector in report["vectors"]:
@@ -242,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, PacketError, ConformanceError, RecursionError) as error:
         report = {"validatorVersion": VERSION, "profile": PROFILE, "vectorCount": 0, "status": "FAIL", "vectors": [], "errors": [{"code": "PROPERTY-VECTOR-PACKET", "message": str(error)}]}
         if parsed.json:
-            sys.stdout.write(report_json(report))
+            write_report(report)
         else:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1

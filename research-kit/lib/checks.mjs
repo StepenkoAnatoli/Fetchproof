@@ -12,7 +12,7 @@ import { captureOf, traceOf, citedIds, parseCapture, ledgerRank } from './corpus
 import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
-import { readPrior, PRIOR_PATH } from './prior.mjs';
+import { readPrior, onDiskOf, unrecordedDetail, PRIOR_PATH } from './prior.mjs';
 import { quoteAnchors, anchorFound, quoteWords, quoteChars, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
 
@@ -238,7 +238,7 @@ function provenance(corpus) {
  * through the same machinery a capture does.
  */
 function priorOrder(corpus, chain) {
-  const prior = readPrior(corpus.root, { entries: chain.entries });
+  const prior = readPrior(corpus.root, { entries: chain.entries, onDisk: onDiskOf(corpus) });
   if (!prior.present) return [];
 
   const out = [];
@@ -252,6 +252,16 @@ function priorOrder(corpus, chain) {
       `${PRIOR_PATH} is registered at seq ${prior.entry.seq}, after ${prior.scrapesBefore} page(s) were already `
       + 'collected - a prediction made with the evidence in hand is not one. Say what you now believe in the '
       + 'brief, where it is labelled honestly', { file: PRIOR_PATH, line: prior.entry.line }));
+    return out;
+  }
+  // Collection a ledger recording no scrape cannot place, so nothing shows the prior came
+  // before it (#353): a lost or emptied ledger, where a prior lands at seq 1 and this passed it
+  // as made "before anything was collected" beside every capture the corpus held. A stray
+  // capture beside scrapes on record is not this - `hygiene/uncited-capture` reports it.
+  if (prior.unrecorded) {
+    out.push(finding('fail', 'provenance', 'prior-precedes-collection',
+      `${PRIOR_PATH} is registered at seq ${prior.entry.seq}, but nothing shows it came before the evidence: `
+      + unrecordedDetail(prior.unrecorded), { file: PRIOR_PATH, line: prior.entry.line }));
     return out;
   }
   if (!out.length) {

@@ -13,7 +13,7 @@ import { isGated } from '../lib/gate.mjs';
 import { renderFindings, heading } from '../lib/render.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
-refuseUnknownFlags(flags, ['check', 'checks', 'help', 'json', 'quiet', 'show-pass', 'strict']);
+refuseUnknownFlags(flags, ['check', 'checks', 'help', 'json', 'quiet', 'show-pass', 'strict'], { repeatable: ['check'] });
 checkFlagValues(flags, { check: 'value' });
 
 if (flags.help) {

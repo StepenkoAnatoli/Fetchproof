@@ -67,6 +67,8 @@ perhaps GitHub Actions.
      --max-scrapes 0`, which searches but scrapes nothing). It goes in a dated folder under
      the one the operator approved in the panel (a path inside the repository), never over
      an existing project (ADR-0056). With no folder approved, topic requests are refused.
+     *(Amended by ADR-0173: with no folder approved, a topic request waits, with the reason,
+     and runs once the operator sets one.)*
 5. **The modes are `off` and `auto`.** The owner chose automatic; "approve each request" was
    offered and declined. `off` is the default, so installing the kit starts nothing.
 

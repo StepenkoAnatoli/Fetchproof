@@ -550,6 +550,16 @@ test('hygiene: a table-split problem fails by name, once, and corpus-shape does 
   assert.match(findings[0].detail, /DISCOVERY\.md:\d+/);
 });
 
+// #331: a row that lost its leading pipe ended the evidence table, and every row below it was
+// then a table-split and every unknown citing one a dangling citation - for rows that are there.
+test('hygiene: a row without its leading pipe is a row, so no split and no dangling citation is reported', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/^(\| E-01 \| .*)$/m, (row) => `${row.replace(/^\| E-01 \| /, 'E-02 | ')}\n${row}`));
+  const findings = runChecks(snapshot(dir), { localHooksPath: null })
+    .filter((f) => f.rule === 'table-split' || f.rule === 'dangling-citation');
+  assert.deepEqual(findings, []);
+});
+
 // ---------------------------------------------------------------- corroboration
 
 /** Rewrite the fixture's evidence table and the unknown that cites it. */

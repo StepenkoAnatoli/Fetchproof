@@ -88,6 +88,37 @@ test('FI Node and Python runners agree on patches past the first array index', a
   }
 });
 
+// Review of #336 (2026-10-18): the patch walk tested `part in parent` and assigned with
+// `parent[key] =`, so "/__proto__/polluted" walked into Object.prototype and the set
+// polluted it for the whole process - ({}).polluted was 'yes' afterwards - while Python
+// refused the path as absent. A path segment is an own member, as in Python.
+test('FI patch paths walk own members only and cannot reach Object.prototype', async () => {
+  const { loadFiSchemaVectors, runFiSchemaConformance } = await import('../lib/fi-sidecar-conformance.mjs');
+  const packet = JSON.parse(fs.readFileSync(VECTOR_FILE, 'utf8'));
+  const base = Object.keys(packet.documents).find((name) => packet.documents[name] && typeof packet.documents[name] === 'object' && !Array.isArray(packet.documents[name]));
+  const target = packet.vectors.find((vector) => vector.base === base)?.target ?? 'sidecar';
+  packet.vectors = [
+    ['X-PROTO-SET', [{ op: 'set', path: '/__proto__/polluted', value: 'yes' }]],
+    ['X-CTOR-SET', [{ op: 'set', path: '/constructor/prototype/polluted', value: 'yes' }]],
+    ['X-PROTO-REMOVE', [{ op: 'remove', path: '/toString' }]],
+  ].map(([vectorId, patches]) => ({ vectorId, target, base, patches, expectedCode: 'VECTOR-PACKET' }));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fi-sidecar-proto-'));
+  try {
+    const file = path.join(dir, 'packet.json');
+    fs.writeFileSync(file, JSON.stringify(packet));
+    // Node only: the Python twin refuses these paths as absent too, but names any absent
+    // path JSON-PARSE today (its PacketError is a ValueError, caught first), which is the
+    // Python runner's own fix to make.
+    const nodeRows = runFiSchemaConformance(loadFiSchemaVectors(file)).vectors;
+    assertEqual(({}).polluted, undefined, 'a vector patch polluted Object.prototype');
+    assertEqual(Object.prototype.hasOwnProperty.call(Object.prototype, 'polluted'), false);
+    for (const row of nodeRows) assertEqual(row.observedCode, 'VECTOR-PACKET', `Node ${row.vectorId}: ${JSON.stringify(row)}`);
+  } finally {
+    delete Object.prototype.polluted;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('FI vector packet remains synthetic and does not carry completed evidence', () => {
   const packet = JSON.parse(fs.readFileSync(VECTOR_FILE, 'utf8'));
   const source = JSON.stringify(packet).toLowerCase();

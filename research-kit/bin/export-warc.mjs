@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // bin/export-warc.mjs - the corpus as one .warc.gz, a copy for archive tools (ADR-0090).
 
-import { parseFlags, refuseUnknownFlags, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, kitCommand, operatorPath, writeBytes, writeFailure } from '../lib/core.mjs';
 import { exportWarc, readWarc } from '../lib/warc.mjs';
+import { evidenceAt } from '../lib/corpus.mjs';
 import { isGated } from '../lib/gate.mjs';
 import { GATE_MARKERS } from '../lib/scaffold.mjs';
 
 const { flags } = parseFlags(process.argv.slice(2));
 refuseUnknownFlags(flags, ['help', 'out']);
+checkFlagValues(flags, { out: 'value' });
 
 if (flags.help) {
   process.stdout.write(`export-warc - this project's captures as one WARC 1.1 file, for archive tools.
@@ -36,6 +38,9 @@ if (flags.out === true || flags.out === '') {
 }
 
 const out = operatorPath(root, typeof flags.out === 'string' ? flags.out : 'research-corpus.warc.gz');
+// Over the ledger, a cited capture or anything in research/raw/ is refused before a byte is read (#330).
+const refusal = evidenceAt(root, out);
+if (refusal) { process.stderr.write(`export-warc: refused - ${refusal}\n`); process.exit(2); }
 const { bytes, records, captures, skipped } = exportWarc(root);
 readWarc(bytes); // a self-check: an export this reader cannot split is never written
 try {

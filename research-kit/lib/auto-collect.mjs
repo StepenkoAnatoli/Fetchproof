@@ -13,7 +13,7 @@
 //   - commit over somebody's unfinished work: research/ must be clean before a run, because
 //     the commit takes everything under it;
 //   - write a new topic over an existing project (ADR-0056): a topic request gets a new
-//     folder under the one the operator approved, or is refused.
+//     folder under the one the operator approved, and waits while none is (ADR-0173).
 // Every command it runs is a fixed argument list; nothing from a request reaches one except
 // through the files it writes.
 
@@ -22,8 +22,9 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readJson, today, writeJson } from './core.mjs';
+import { readJson, today, urlKey, writeJson } from './core.mjs';
 import { collectionPolicy } from './machine.mjs';
+import { readLedger } from './corpus.mjs';
 import {
   REQUESTS_DIR, REQUEST_LIMITS, listRequests, requestProblemsResolved, requestPages, contractUnknownStatus, applyRequest, writeResult,
   readAutoCollect, reserveCollection, settleCollection, setPaused, recordTrustedResult, isTrustedResult,
@@ -31,6 +32,9 @@ import {
 
 export const RUN_OUTPUT_BYTES = 64 * 1024;
 const LEDGER = 'research/raw/.fetches.jsonl';
+const USAGE = 'research/raw/.usage.jsonl';
+const NO_TOPICS_FOLDER = 'this collector has no folder approved for new topics; the operator sets one in the panel';
+const DIRTY = 'research/ has uncommitted changes; auto-collect waits until they are committed, because its commit takes everything under research/';
 
 // The fixed research child sends this private packet, not a line a query/URL can print.
 // Keep the packet's type, sizes and admitted page allowance checked at the parent boundary.
@@ -120,6 +124,15 @@ const gitReason = (output) => {
   return cause === undefined ? lastLine(output) : tail(cause, 1000);
 };
 const posix = (p) => p.split(path.sep).join('/');
+const byteSize = (file) => { try { return fs.statSync(file).size; } catch { return 0; } };
+/** The JSON lines appended to `file` after it was `before` bytes long; an unreadable line is skipped. */
+function appendedLines(file, before) {
+  let text = '';
+  try { text = fs.readFileSync(file).subarray(before).toString('utf8'); } catch { return []; }
+  return text.split(/\r?\n/).filter((line) => line.trim()).flatMap((line) => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
 
 /** Legacy diagnostic parser. Collection accounting never trusts human-readable logs. */
 export function spentPages(output) {
@@ -179,10 +192,15 @@ export function createAutoCollect({
     try { return fs.realpathSync.native(dir); } catch { return path.resolve(dir); }
   }
 
-  /** Stage only this run's paths in a private index, leaving every existing staged file alone. */
-  async function commitAndPush(top, paths, report) {
+  /**
+   * Stage only this run's paths in a private index, leaving every existing staged file alone.
+   * `pushOnly` pushes a delivery commit already made and never stages: a retry for a result
+   * that is committed must not fall through to staging when the commit is not where it looked.
+   */
+  async function commitAndPush(top, paths, report, { pushOnly = false } = {}) {
     const upstreamBefore = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], top);
     if (upstreamBefore.truncated) return 'could not inspect upstream: Git output was truncated; deliver manually';
+    if (pushOnly && upstreamBefore.code !== 0) return 'no upstream to push to';
     if (upstreamBefore.code === 0) {
       const ahead = await git(['rev-list', '--count', '@{u}..HEAD'], top);
       if (ahead.truncated) return 'could not inspect local commits: Git output was truncated; deliver manually';
@@ -208,6 +226,7 @@ export function createAutoCollect({
         const pushed = await git(['push'], top);
         return pushed.code === 0 ? 'pushed' : `push failed: ${gitReason(pushed.output)}`;
       }
+      if (pushOnly) return 'delivery blocked: no delivery commit is ahead of the upstream; inspect it manually';
     }
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'research-kit-autocollect-index-'));
     const indexEnv = { ...env, GIT_INDEX_FILE: path.join(scratch, 'index') };
@@ -356,6 +375,46 @@ export function createAutoCollect({
     return hash.digest('hex');
   }
 
+  /**
+   * Where a trusted result stands against git: `uncommitted` (it never reached a commit),
+   * `unpushed` (committed, not on the upstream yet), `delivered` (on the upstream, or committed
+   * with no upstream to push to), or `{ problem }` when git's answer cannot be trusted.
+   */
+  async function pendingDelivery(top, resultRelative) {
+    const status = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', resultRelative], top);
+    if (status.truncated) return { problem: 'delivery blocked: Git output was truncated while inspecting the result; deliver manually' };
+    if (status.code !== 0) return { problem: `could not inspect pending delivery: ${gitReason(status.output)}` };
+    if (status.output) return { state: 'uncommitted' };
+    const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], top);
+    if (upstream.truncated) return { problem: 'could not inspect upstream: Git output was truncated; deliver manually' };
+    if (upstream.code !== 0) return { state: 'delivered' };
+    const diff = await git(['diff', '--quiet', '@{u}', 'HEAD', '--', resultRelative], top);
+    if (diff.code === 0) return { state: 'delivered' };
+    if (diff.code !== 1) return { problem: `could not compare the result with the upstream: ${gitReason(diff.output)}` };
+    // A difference is a delivery to push only while HEAD is ahead of the upstream. A fetch
+    // since the pull (an editor's autofetch) can move the upstream past HEAD with the
+    // builder's own change to the result, and that is not this collector's to push over.
+    const behind = await upstreamNotBehind(top);
+    if (behind.notPulled) return { problem: `the upstream changed ${resultRelative} since the last pull; delivery waits for the next pull` };
+    if (behind.problem) return behind;
+    return behind.ahead > 0 ? { state: 'unpushed' } : { problem: `could not tell whether ${resultRelative} still has to be pushed; deliver manually` };
+  }
+
+  /** `{ ahead }` when the upstream is an ancestor of HEAD, else `{ problem }`. */
+  async function upstreamNotBehind(top) {
+    const ancestor = await git(['merge-base', '--is-ancestor', '@{u}', 'HEAD'], top);
+    if (ancestor.code === 1) return { problem: 'the upstream has commits this checkout has not pulled; delivery waits for the next pull', notPulled: true };
+    if (ancestor.code !== 0) return { problem: `could not compare HEAD with the upstream: ${gitReason(ancestor.output)}` };
+    const count = await git(['rev-list', '--count', '@{u}..HEAD'], top);
+    if (count.truncated) return { problem: 'could not inspect local commits: Git output was truncated; deliver manually' };
+    const ahead = Number(count.output.trim());
+    if (count.code !== 0) return { problem: `could not inspect local commits: ${gitReason(count.output)}` };
+    if (!/^\d+$/.test(count.output.trim()) || !Number.isSafeInteger(ahead)) {
+      return { problem: 'could not inspect local commits: invalid Git ahead count; deliver manually' };
+    }
+    return { ahead };
+  }
+
   function relTo(top, abs) {
     const rel = posix(path.relative(top, abs));
     return rel === '' ? '.' : rel;
@@ -409,7 +468,8 @@ export function createAutoCollect({
     const request = item.request;
     let target = resume?.target ?? dir;
     if (!resume && request.topic) {
-      if (!settings.topicsFolder) return refuse(top, dir, item, ['this collector has no folder approved for new topics; the operator sets one in the panel']);
+      // The cycle holds such a request back; never scaffold at the repository's top instead.
+      if (!settings.topicsFolder) { runs.set(cacheKey(dir, item.id), { status: 'waiting', detail: NO_TOPICS_FOLDER }); return; }
       const candidate = path.join(top, ...settings.topicsFolder.split('/'), `${today()}-${item.id}`);
       const safe = await safeTopicTarget(top, candidate, settings.topicsFolder);
       if (safe.problem) return refuse(top, dir, item, [safe.problem]);
@@ -442,6 +502,9 @@ export function createAutoCollect({
     runs.set(cacheKey(dir, item.id), { status: 'collecting', detail: `${pages} page(s) for ${applied.unknown}` });
     note(`collecting ${item.id}: up to ${pages} page(s) for ${applied.unknown}`);
 
+    // Where this run's ledger entries start: what its fetches came to is read from them (#321).
+    const ledgerBefore = readLedger(target).entries.length;
+    const usageBefore = byteSize(path.join(target, USAGE));
     const requestEnv = { ...env, RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS: '0' };
     const reservation = reserveCollection(pages,
       redact(`collection is in flight for request ${item.id}; ${pages} page(s) reserved for the daily cap. Inspect the run before pressing Resume.`), env);
@@ -509,28 +572,128 @@ export function createAutoCollect({
       `research.mjs ${run.timedOut || run.signal ? 'was interrupted' : `exited ${run.code}`}: ${lastLine(run.output)}`,
       run.output, paths, (resume?.pagesSpent ?? 0) + spent, 'measured');
 
+    const outcome = runOutcome(target, { ledgerBefore, usageBefore }, request, spent);
+    const prior = resume?.pagesSpent ?? 0;
+    // Nothing to read is a failed request, not a collection - unless an earlier attempt of a
+    // resumed request already delivered pages (its partial result said so when it stopped).
+    if (outcome.nothing && !prior) {
+      return fail(top, dir, item, target, `no page was collected: ${outcome.named.join('; ')}`,
+        run.output, paths, spent, 'measured', {
+          pages: 0,
+          failed: outcome.failed,
+          next: 'the page could not be fetched (detail names why). Change the request - another owner page in "urls", or a search in "queries" - and push it; a changed request is processed again',
+        });
+    }
+
     const gate = await kit('preflight.mjs', [], target);
     const preflight = { code: gate.code, verdict: redact(lastLine(gate.output)) };
-    writeResult(dir, item.id, {
-      status: 'collected', unknown: applied.unknown, project: relTo(top, target), pages: (resume?.pagesSpent ?? 0) + spent, preflight,
-      next: 'pull and read the captures; report review-only gaps to the collector in prose. The collector records Findings, unknown closures, classified MAP and the current authored BRIEF. Run handoff, preflight and brief --state; build only after complete/current review. Request another fetch only for a missing external fact (ADR-0150)',
-    });
-    recordTrustedResult(dir, item.id, env);
+    // `pages` counts collected pages and `failed` the attempts that failed; together they are
+    // the pages used, which is what the panel shows.
+    const held = outcome.cached && !outcome.collected
+      ? `nothing new was fetched: ${outcome.cached} page(s) this request asked for or its searches found were already captured (${outcome.heldUrls.slice(0, 5).join(', ')}${outcome.cached > 5 ? ', ...' : ''}) - read them in research/EVIDENCE.md and research/raw/. `
+      : '';
+    await recordResult(top, dir, item, {
+      status: 'collected', unknown: applied.unknown, project: relTo(top, target), pages: prior + outcome.collected,
+      ...(outcome.failed ? { failed: outcome.failed } : {}), ...(outcome.cached ? { cached: outcome.cached } : {}), preflight,
+      next: `${held}pull and read the captures; report review-only gaps to the collector in prose. The collector records Findings, unknown closures, classified MAP and the current authored BRIEF. Run handoff, preflight and brief --state; build only after complete/current review. Request another fetch only for a missing external fact (ADR-0150)`,
+    }, paths);
     const committed = await commitAndPush(top, paths, report(
       `research: collect request ${item.id}`,
-      `collected ${item.id} for ${applied.unknown} (${spent} page(s))`,
+      `collected ${item.id} for ${applied.unknown} (${outcome.collected} page(s)${outcome.failed ? `, ${outcome.failed} failed` : ''})`,
       'the builder requested a verified fact and the collector gathered its evidence',
       `research.mjs exited 0 and preflight exited ${gate.code}`,
     ));
     if (committed === 'committed and pushed' || committed === 'pushed') delivered.add(cacheKey(dir, item.id));
-    runs.set(cacheKey(dir, item.id), { status: 'collected', detail: `${applied.unknown}; preflight exit ${gate.code}`, pages: (resume?.pagesSpent ?? 0) + spent, output, git: committed });
-    note(`collected ${item.id}: ${spent} page(s); ${committed}`);
+    runs.set(cacheKey(dir, item.id), { status: 'collected', detail: `${applied.unknown}; preflight exit ${gate.code}`, pages: prior + spent, output, git: committed });
+    note(`collected ${item.id}: ${outcome.collected} page(s)${outcome.failed ? `, ${outcome.failed} failed` : ''}; ${committed}`);
   }
 
-  async function fail(top, dir, item, target, detail, output, paths = null, spent = 0, measurement = 'none') {
-    detail = redact(String(detail));
-    writeResult(dir, item.id, { status: 'failed', detail, project: relTo(top, target), pages: spent });
+  /**
+   * What a successful run's fetches came to (#321). Exit 0 and `spent` said "collected, 1 page"
+   * for a request whose one URL did not resolve, and the builder was told to read captures that
+   * were never written. Two records the run writes say more, and neither is accounting
+   * (ADR-0149): the ledger (a failed fetch is an `op: 'fail'` entry with the transport's error -
+   * a page attempt, not a page; the attempts stay charged as measured), and its usage line
+   * (`.usage.jsonl`), whose `searchOutcomes` say what each search returned: the results it made
+   * targets, the matching results already captured (`held`), none at all, or a failed ask. The
+   * usage line is read only when this run appended exactly one, so another run's is never
+   * taken for it.
+   *
+   * Only failures on this request's own targets count - its named pages and the pages its
+   * searches returned - since an operator's run in a terminal can append to the same ledger.
+   * A page already captured is there to read: a named page whose ledger's last word is a fetch,
+   * or a held search result. `failed` needs positive evidence for every part of the request -
+   * each named page failed or is gone by the ledger, each search failed, returned nothing, or
+   * every page it made a target failed - never just "nothing new was fetched"; `named` then
+   * says why, part by part.
+   */
+  function runOutcome(target, { ledgerBefore, usageBefore }, request, spent) {
+    const entries = readLedger(target).entries;
+    const asked = (request.urls ?? []).filter((url) => typeof url === 'string');
+    const askedKeys = new Set(asked.map((url) => urlKey(url)));
+    const usage = appendedLines(path.join(target, USAGE), usageBefore);
+    const searches = usage.length === 1 && Array.isArray(usage[0]?.searchOutcomes) ? usage[0].searchOutcomes : null;
+    const urlsOf = (list) => (Array.isArray(list) ? list.filter((url) => typeof url === 'string') : []);
+    const searchTargets = new Set((searches ?? []).flatMap((o) => urlsOf(o?.targets)).map((url) => urlKey(url)));
+    const searched = (request.queries ?? []).length > 0;
+    const ours = (entry) => askedKeys.has(urlKey(entry.url))
+      || (searches ? searchTargets.has(urlKey(entry.url)) : searched && Boolean(entry.discoveredBy));
+    const failures = entries.slice(ledgerBefore).filter((entry) => entry.op === 'fail' && typeof entry.url === 'string' && ours(entry));
+    const failed = Math.min(failures.length, spent);
+    const collected = spent - failed;
+    const lastWord = (url) => entries.filter((entry) => (entry.op === 'fail' || entry.op === 'scrape')
+      && typeof entry.url === 'string' && urlKey(entry.url) === urlKey(url)).pop();
+    const heldNamed = collected ? [] : asked.filter((url) => lastWord(url)?.op === 'scrape');
+    const heldKeys = new Set(heldNamed.map((url) => urlKey(url)));
+    const heldSearched = [...new Set((searches ?? []).flatMap((o) => urlsOf(o?.held)))].filter((url) => !heldKeys.has(urlKey(url)));
+    const heldUrls = [...heldNamed, ...heldSearched];
+    const cached = heldUrls.length;
+    const said = (entry) => `${String(entry.url).slice(0, 200)} - ${String(entry.error ?? 'unknown failure').slice(0, 300)}`;
+    const named = failures.slice(0, 5).map(said);
+    if (failures.length > named.length) named.push(`and ${failures.length - named.length} more`);
+    const kept = { collected, failed, cached, heldUrls, named, nothing: false };
+    if (collected || cached) return kept;
+
+    // Nothing landed and nothing is held: failed only where each part has its evidence.
+    const failedHere = new Set(failures.map((entry) => urlKey(entry.url)));
+    for (const url of asked) {
+      if (failedHere.has(urlKey(url))) continue;
+      const last = lastWord(url);
+      if (last?.op !== 'fail') return kept;
+      named.push(`${String(url).slice(0, 200)} - not fetched again; its last fetch failed: ${String(last.error ?? 'unknown failure').slice(0, 300)}`);
+    }
+    for (const query of (request.queries ?? []).map((q) => String(q).trim())) {
+      const outcome = (searches ?? []).find((o) => o?.query === query.slice(0, 200));
+      if (!outcome) return kept;
+      const targets = urlsOf(outcome.targets);
+      if (outcome.failed) named.push(`the search "${query.slice(0, 200)}" failed`);
+      else if (outcome.results === 0) named.push(`the search "${query.slice(0, 200)}" returned no results`);
+      else if (!(targets.length && targets.every((url) => failedHere.has(urlKey(url))))) return kept;
+    }
+    return { ...kept, nothing: true };
+  }
+
+  /**
+   * Write a terminal result with the state of its collection paths beside it, as a partial
+   * result is written (#325): a retry after a failed commit can then tell this run's own corpus
+   * from anything written since. Without a fingerprint, a pending retry waits for the operator.
+   */
+  async function recordResult(top, dir, item, result, paths) {
+    writeResult(dir, item.id, result);
     recordTrustedResult(dir, item.id, env);
+    try {
+      const fingerprint = await deliveryFingerprint(top, paths, path.posix.join(relTo(top, dir), REQUESTS_DIR, `${item.id}.result.json`));
+      writeResult(dir, item.id, { ...result, deliveryFingerprint: fingerprint });
+      recordTrustedResult(dir, item.id, env);
+    } catch (err) {
+      note(`${item.id}: no delivery fingerprint (${err.message}); a failed delivery will wait for the operator`);
+    }
+  }
+
+  async function fail(top, dir, item, target, detail, output, paths = null, spent = 0, measurement = 'none', fields = {}) {
+    detail = redact(String(detail));
+    await recordResult(top, dir, item, { status: 'failed', detail, project: relTo(top, target), pages: spent, ...fields },
+      collectionPaths(top, dir, target));
     const committed = await commitAndPush(top, paths ?? [path.posix.join(relTo(top, dir), REQUESTS_DIR)], report(
       `research: request ${item.id} failed`,
       `recorded request ${item.id} as failed with ${spent} page(s) ${measurement === 'reserved' ? 'used or reserved' : 'accounted'}`,
@@ -580,7 +743,19 @@ export function createAutoCollect({
         if (item.result && ['collected', 'failed', 'refused'].includes(item.result.status)) {
           const key = cacheKey(dir, item.id);
           if (!delivered.has(key)) {
-            let pendingPaths = [path.posix.join(relTo(top, dir), REQUESTS_DIR, `${item.id}.result.json`)];
+            const resultRelative = path.posix.join(relTo(top, dir), REQUESTS_DIR, `${item.id}.result.json`);
+            // `delivered` is a cache that a restart empties; git says whether the result
+            // still has to travel (#325). One already upstream - or committed, with no
+            // upstream to push to - has nothing to deliver, and staging for it would only
+            // find the operator's work in progress.
+            const pending = await pendingDelivery(top, resultRelative);
+            if (pending.problem) {
+              runs.set(key, { git: pending.problem });
+              note(`delivery for ${item.id} was not retried: ${pending.problem}`);
+              continue;
+            }
+            if (pending.state === 'delivered') { delivered.add(key); continue; }
+            let pendingPaths = [resultRelative];
             if (typeof item.result.project === 'string' && ['collected', 'failed', 'refused'].includes(item.result.status)) {
               const target = path.resolve(top, item.result.project);
               const settings = readAutoCollect(env).settings;
@@ -593,6 +768,36 @@ export function createAutoCollect({
                 pendingPaths = collectionPaths(top, dir, target);
               }
             }
+            if (pending.state === 'uncommitted') {
+              // The result never reached a commit. If it stands alone, it is staged alone. If its
+              // run's corpus is beside it, the fingerprint written with the result says whether
+              // that is still exactly what the run left: then it is staged; if anything was written
+              // since - the operator's work - nothing is staged and the operator commits it.
+              const others = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--',
+                ...pendingPaths, `:(exclude)${resultRelative}`], top);
+              let blocked = others.truncated ? 'delivery blocked: Git output was truncated while inspecting research/; deliver manually'
+                : others.code !== 0 ? `could not inspect pending delivery: ${gitReason(others.output)}` : '';
+              if (!blocked && others.output) {
+                let now = '';
+                try { now = await deliveryFingerprint(top, pendingPaths, resultRelative); } catch (err) { blocked = `delivery blocked: ${err.message}`; }
+                if (!blocked && (typeof item.result.deliveryFingerprint !== 'string' || now !== item.result.deliveryFingerprint)) {
+                  blocked = `delivery waiting: ${resultRelative} and the corpus its run wrote are uncommitted, and something else under research/ changed after that run (another request's pending result, or an edit); nothing was staged. Once the other change is committed or delivered this delivery is retried, or commit it with git`;
+                }
+              } else if (!blocked) {
+                pendingPaths = [resultRelative];
+              }
+              if (!blocked) {
+                // Never commit on top of an upstream this checkout has not pulled.
+                const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], top);
+                if (upstream.truncated) blocked = 'could not inspect upstream: Git output was truncated; deliver manually';
+                else if (upstream.code === 0) blocked = (await upstreamNotBehind(top)).problem ?? '';
+              }
+              if (blocked) {
+                runs.set(key, { git: blocked });
+                note(`delivery for ${item.id} was not staged: ${blocked}`);
+                continue;
+              }
+            }
             const resultSubject = {
               collected: `research: collect request ${item.id}`,
               refused: `research: refuse request ${item.id}`,
@@ -603,7 +808,7 @@ export function createAutoCollect({
               `delivered the result and any pending corpus changes for ${item.id}`,
               'a previous collection, failure, or refusal recorded a result that still needs to reach the builder',
               'the result and associated corpus paths were staged in an isolated index and pushed when an upstream was available',
-            ));
+            ), { pushOnly: pending.state === 'unpushed' });
             if (delivery === 'committed and pushed' || delivery === 'pushed') delivered.add(key);
             runs.set(key, { git: delivery });
           }
@@ -613,6 +818,14 @@ export function createAutoCollect({
         if (item.parseError) { await refuse(top, dir, item, [item.parseError]); continue; }
         const problems = await requestProblemsResolved(item.request, current.settings);
         if (problems.length) { await refuse(top, dir, item, problems); continue; }
+        // A missing topics folder is this collector's configuration, not the request's content:
+        // the request waits for the operator, as it does while paused or over today's cap, and
+        // nothing is written beside it (#323, ADR-0173). A refusal here was final, and the only
+        // way back was for the builder to edit a request that was fine.
+        if (item.request.topic && !current.settings.topicsFolder) {
+          runs.set(cacheKey(dir, item.id), { status: 'waiting', detail: NO_TOPICS_FOLDER });
+          continue;
+        }
         let resume;
         try { resume = await resumeInfo(top, dir, item, current.settings); } catch (err) {
           await refuse(top, dir, item, [err.message]);
@@ -677,7 +890,7 @@ export function createAutoCollect({
           continue;
         }
         if (dirty.code !== 0 || dirty.output.trim()) {
-          runs.set(key, { status: 'waiting', detail: 'research/ has uncommitted changes; commit or discard them - auto-collect commits everything under research/' });
+          runs.set(key, { status: 'waiting', detail: DIRTY });
           continue;
         }
         await collect(top, dir, item, current.settings, pages, resume);
@@ -697,7 +910,9 @@ export function createAutoCollect({
       const fact = item.request && typeof item.request.fact === 'string' ? item.request.fact.slice(0, 300) : '';
       if (item.ignored) return { id: item.id, status: 'ignored', detail: item.ignored };
       const result = item.result && isTrustedResult(dir, item.id, env) ? item.result : null;
-      if (result) return { id: item.id, fact, status: result.status, pages: result.pages ?? 0,
+      // Pages used: collected pages and failed attempts (#321).
+      if (result) return { id: item.id, fact, status: result.status,
+        pages: (Number.isInteger(result.pages) ? result.pages : 0) + (Number.isInteger(result.failed) ? result.failed : 0),
         detail: redact(result.status === 'refused' ? (result.problems ?? []).join('; ') : String(result.detail ?? result.unknown ?? '')),
         output: redact(run.output ?? ''), git: redact(run.git ?? '') };
       return { id: item.id, fact, status: run.status ?? 'queued', detail: redact(run.detail ?? ''), pages: run.pages ?? 0,
@@ -733,15 +948,4 @@ export function createAutoCollect({
   }
 
   return { cycle, status, schedule, resume, stop() { if (timer) clearInterval(timer); timer = null; } };
-}
-
-/** The request file a builder writes, as text - for the panel's builder instructions. */
-export function requestExample() {
-  return `${JSON.stringify({
-    fact: 'What is the burst limit of endpoint X on the free tier?',
-    blocks: 'the retry and queue design',
-    urls: ['https://docs.example.com/limits'],
-    queries: ['example api free tier burst limit'],
-    prefer: ['docs.example.com'],
-  }, null, 2)}\n`;
 }

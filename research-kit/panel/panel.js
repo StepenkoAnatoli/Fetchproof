@@ -46,7 +46,7 @@ function render(s) {
   $('builder-text').textContent = s.builderInstructions;
   $('update-note').textContent = s.update.sameCopy
     ? `This panel runs from the installed copy (${s.update.to}). To update, get the new kit (git pull or a download), start the panel from it, and press Update.`
-    : `Installs ${s.update.from} over ${s.update.to}. Preview first.`;
+    : `Installs ${s.update.from} over ${s.update.to}, and refreshes every project bound with --into. Preview first.`;
   $('update').disabled = s.update.sameCopy;
   document.querySelector('[data-run="update-preview"]').disabled = s.update.sameCopy;
 }

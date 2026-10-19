@@ -6,7 +6,9 @@
 // call "safe" something it did not check, and that it reports a refusal as a refusal
 // rather than as an absence of evidence.
 
-import { test, describe, assert } from './harness.mjs';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { test, describe, assert, tempDir, fs, path, KIT_ROOT } from './harness.mjs';
 import { probeRun, summarise, render, exitCode, PROBES } from '../lib/disclosure.mjs';
 
 describe('disclosure');
@@ -193,4 +195,75 @@ test('the listings a probe already read give the ids: a failed second request ca
   const logs = report.findings.find((f) => f.id === 'logs');
   assert.equal(logs?.status, 403, `the log probe was not tried: ${JSON.stringify(logs)}`);
   assert.equal(jobsRequests, 1, 'the job listing was fetched twice');
+});
+
+// #303 (2026-10-17): a mistyped run id or repository reached GitHub as `/actions/runs/NaN` or
+// as `/repos/Research-Kit/...`, every probe was refused, and the report closed with "Only the
+// SHAPE of the run is public", exit 0 - a clean bill for a run nobody looked at, and a line
+// that contradicted `names and metadata exposed : false` just above it. A real private
+// repository answers 404 to a stranger too, so the probe cannot tell the two apart; it now
+// says what it measured instead of claiming a shape it never saw.
+test('every probe refused: the verdict claims no shape, and names the two causes', async () => {
+  const report = await probeRun({ repository: 'o/r', runId: 1, needle: 'x', fetch: stub({}) });
+  assert.equal(report.exposedNames, false);
+  assert.equal(report.conclusive, true, 'a 404 is still an answer');
+  const text = render(report);
+  assert.doesNotMatch(text, /SHAPE of the run is public/, `it claimed a shape it did not see:\n${text}`);
+  assert.match(text, /not even its shape/, text);
+  assert.match(text, /private to a stranger/, text);
+  assert.match(text, /no run with this id exists/, text);
+});
+
+test('a mistyped --run or --repository exits 3 by flag name, before any request', () => {
+  const dir = tempDir('rk-disclosure-args-');
+  const marker = path.join(dir, 'fetched');
+  // The preload replaces fetch: a request the CLI makes leaves a file behind and fails.
+  const preload = path.join(dir, 'no-fetch.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';\nglobalThis.fetch = async (url) => { fs.appendFileSync(${JSON.stringify(marker)}, String(url) + ' '); throw new TypeError('fetch failed'); };\n`);
+  const cases = [
+    [['--repository', 'o/r', '--run', 'abc'], /--run must be a whole number of at least 1, not "abc"/],
+    [['--repository', 'o/r', '--run', '0'], /--run must be a whole number of at least 1, not "0"/],
+    [['--repository', 'o/r', '--run', '1.5'], /--run must be a whole number/],
+    [['--repository', 'Research-Kit', '--run', '12345'], /--repository must be OWNER\/REPO, not "Research-Kit"/],
+    [['--repository', 'o/r/x', '--run', '12345'], /--repository must be OWNER\/REPO/],
+    // Review of #303: a repeated flag is an array, and Number([1, 2]) is NaN again. The shared
+    // refusal names it before any value is read (#286).
+    [['--repository', 'o/r', '--run', '1', '--run', '2'], /--run was given twice/],
+    [['--repository', 'o/r', '--repository', 'p/q', '--run', '1'], /--repository was given twice/],
+  ];
+  for (const [args, message] of cases) {
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, path.join(KIT_ROOT, 'bin', 'disclosure.mjs'), ...args], {
+      encoding: 'utf8', timeout: 30_000, windowsHide: true, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+    });
+    assert.equal(r.status, 3, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, message, `${args.join(' ')}: ${r.stderr}`);
+    assert.doesNotMatch(r.stdout, /SHAPE/, `${args.join(' ')}: a verdict was printed`);
+    assert.equal(fs.existsSync(marker), false, `${args.join(' ')}: a request was made: ${fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : ''}`);
+  }
+});
+
+// Review of #303 (2026-10-18): GitHub's anonymous rate limit (60 requests an hour, five a
+// probe) answers 403 or 429, and the new "nothing readable" text blamed a private repository
+// or a missing run for it, exit 0. A rate-limited run probe is not a measurement.
+test('a run probe refused with 403 or 429 is NOT MEASURED, exit 3, and blames no 404', async () => {
+  for (const status of [403, 429]) {
+    const limited = async () => ({ status, text: async () => '{"message":"API rate limit exceeded"}' });
+    const report = await probeRun({ repository: 'o/r', runId: 1, fetch: limited });
+    assert.equal(report.conclusive, false, `${status} was taken as an answer`);
+    assert.deepEqual(report.rateLimited, ['run']);
+    assert.equal(exitCode(report), 3);
+    const text = render(report);
+    assert.match(text, new RegExp(`NOT MEASURED: the run metadata was refused with ${status}`), text);
+    assert.match(text, /rate limit/, text);
+    assert.doesNotMatch(text, /private to a stranger|not even its shape|SHAPE of the run is public/, text);
+  }
+});
+
+test('a run probe refused with another status names it, and blames no 404', async () => {
+  const report = await probeRun({ repository: 'o/r', runId: 1, fetch: stub({ '/actions/runs/1': { status: 401, body: '{}' } }) });
+  assert.equal(report.conclusive, true);
+  const text = render(report);
+  assert.match(text, /not even its shape/, text);
+  assert.match(text, /refused with 401/, text);
+  assert.doesNotMatch(text, /private to a stranger/, text);
 });

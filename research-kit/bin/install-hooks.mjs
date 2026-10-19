@@ -53,13 +53,16 @@ try {
 
   if (flags.uninstall) {
     const result = uninstall({ dryRun });
-    if (result.commit.restored === undefined) {
+    // A refusal is said, and the exit is 1: the gate is still installed (#363).
+    if (!result.commit.ok) {
+      process.stderr.write(`commit gate: ${result.commit.reason}\n`);
+    } else if (result.commit.restored === undefined) {
       process.stdout.write(`commit gate: ${would}leave core.hooksPath as ${result.commit.left ?? '(unset)'} - the kit did not set it, or it was changed since\n`);
     } else {
       process.stdout.write(`commit gate: ${would}restore${dryRun ? '' : 'd'} core.hooksPath to ${result.commit.restored ?? '(unset)'}\n`);
     }
     process.stdout.write(`edit gate: ${would}remove${dryRun ? '' : 'd'} ${result.edit.removed ?? 0} registration(s)${result.edit.ok ? '' : ` - ${result.edit.reason}`}\n`);
-    process.exit(result.edit.ok ? 0 : 1);
+    process.exit(result.commit.ok && result.edit.ok ? 0 : 1);
   }
 
   const wantCommit = !flags['edit-only'];

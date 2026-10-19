@@ -24,7 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseFlags, flagList, canonicalJson, checkFlagValues } from '../lib/core.mjs';
+import { parseFlags, flagList, canonicalJson, checkFlagValues, refuseUnknownFlags } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
 import { checkClientRef } from '../lib/artifact.mjs';
 import {
@@ -82,25 +82,6 @@ const { flags } = parseFlags(process.argv.slice(2));
 if (flags.help) { process.stdout.write(HELP); process.exit(0); }
 requireRuntime({ node: true });
 
-const KNOWN = new Set([
-  'repository', 'topic', 'max-pages', 'depth', 'client-ref', 'runner', 'workflow', 'ref',
-  'search-transport', 'prior', 'prefer', 'query', 'url',
-  'out', 'timeout', 'no-wait', 'json', 'help', 'run-id',
-]);
-const unknown = Object.keys(flags).filter((f) => !KNOWN.has(f));
-if (unknown.length) {
-  for (const f of unknown) {
-    process.stderr.write(`unknown option --${f}\n`);
-    // The one misspelling worth naming, because the answer is not "spell it correctly".
-    if (/token|auth|key|secret|pat/i.test(f)) {
-      process.stderr.write(`There is no token flag. Set ${TOKEN_VARS[0]} in the environment instead:\n`
-        + 'a credential on a command line reaches the shell history, ps, and any log that echoes its command.\n');
-    }
-  }
-  process.stdout.write(HELP);
-  process.exit(3);
-}
-
 const EXIT = Object.freeze({ VALID: 0, INVALID: 1, RUN_FAILED: 2, CANNOT_START: 3, STILL_RUNNING: 4 });
 const json = Boolean(flags.json);
 
@@ -114,23 +95,49 @@ function die(code, payload) {
   process.exit(code);
 }
 
+// The caller's own arguments, refused before anything else is asked of them. With --json the
+// refusal is the payload every later failure is (#294, 2026-10-11): it had been stderr prose
+// with an empty stdout, so a caller parsing stdout got nothing to parse and no remedy.
+// The text is redacted on the way out like every other line here: a stray argument is echoed
+// by name, and a pasted token is the likeliest stray argument this command will be given.
+const BAD_FLAG = 'run with --help for the flags and the values each one takes';
+function report(problems, remedy) {
+  if (json) die(EXIT.CANNOT_START, { error: redact(problems.join('; ')), code: 'BAD_FLAG', remedy: remedy ?? BAD_FLAG });
+  for (const problem of problems) process.stderr.write(`${redact(problem)}\n`);
+  if (remedy) { process.stderr.write(`${remedy}\n`); process.stdout.write(HELP); }
+}
+function refuse(line) {
+  report([line], null);
+  process.exit(EXIT.CANNOT_START);
+}
+
+refuseUnknownFlags(flags, [
+  'repository', 'topic', 'max-pages', 'depth', 'client-ref', 'runner', 'workflow', 'ref',
+  'search-transport', 'prior', 'prefer', 'query', 'url',
+  'out', 'timeout', 'no-wait', 'json', 'help', 'run-id',
+], {
+  exit: EXIT.CANNOT_START, repeatable: ['query', 'url'], report,
+  // The one misspelling worth naming, because the answer is not "spell it correctly".
+  note: (f) => (/token|auth|key|secret|pat/i.test(f)
+    ? `There is no token flag. Set ${TOKEN_VARS[0]} in the environment instead:\n`
+      + 'a credential on a command line reaches the shell history, ps, and any log that echoes its command.'
+    : ''),
+});
+
 // --run-id picks up a run already dispatched (found 2026-10-01: the remedies and exit 4 pointed at
 // this flag, and it did not exist, so the only way back to a run was to pay for another). A topic
 // beside it would dispatch a second run, so the two are refused together.
 const pickUp = flags['run-id'] !== undefined;
 if (pickUp) {
   const id = String(flags['run-id']);
-  if (!/^[1-9]\d*$/.test(id)) {
-    process.stderr.write(`--run-id takes the run's number, as printed by a dispatch: got "${flags['run-id'] === true ? '' : id}"\n`);
-    process.exit(EXIT.CANNOT_START);
-  }
+  if (!/^[1-9]\d*$/.test(id)) refuse(`--run-id takes the run's number, as printed by a dispatch: got "${flags['run-id'] === true ? '' : id}"`);
   if (flags.topic !== undefined || flags['no-wait']) {
-    process.stderr.write(`--run-id picks up a run already dispatched; ${flags.topic !== undefined ? '--topic would dispatch another' : '--no-wait would leave nothing to do'}. Give one or the other.\n`);
-    process.exit(EXIT.CANNOT_START);
+    refuse(`--run-id picks up a run already dispatched; ${flags.topic !== undefined ? '--topic would dispatch another' : '--no-wait would leave nothing to do'}. Give one or the other.`);
   }
 }
 const missing = (pickUp ? ['repository'] : ['repository', 'topic']).filter((n) => flags[n] === undefined || flags[n] === true);
 if (missing.length) {
+  if (json) report([`collect-remote needs ${missing.map((m) => `--${m}`).join(' and ')}`], null);
   process.stderr.write(`collect-remote needs ${missing.map((m) => `--${m}`).join(' and ')}\n\n`);
   process.stdout.write(HELP);
   process.exit(EXIT.CANNOT_START);
@@ -150,28 +157,30 @@ checkFlagValues(flags, {
   'search-transport': { choices: ['auto', 'serpapi', 'firecrawl-cli'] },
   timeout: { int: true, min: 1 },
   out: {}, workflow: {}, ref: {},
-  repository: {}, topic: {}, 'client-ref': {}, prior: {}, prefer: {},
-}, { exit: EXIT.CANNOT_START });
+  // A topic blank after trimming, or on two lines, is refused (#293); it travels trimmed.
+  repository: {}, topic: { line: true }, 'client-ref': {}, prior: {}, prefer: {},
+  // Named so a word after --no-wait or --json is an argument, not their value (#289).
+  'run-id': {}, query: {}, url: {},
+}, { exit: EXIT.CANNOT_START, report });
 
 const clientReference = checkClientRef(flags['client-ref']);
-if (!clientReference.ok) {
-  process.stderr.write(`${redact(clientReference.detail)}\n`);
-  process.exit(EXIT.CANNOT_START);
-}
+if (!clientReference.ok) refuse(clientReference.detail);
 
 // The caller's own typo is refused before anything else is asked of them - a missing
 // token would otherwise hide it, and a dispatched bad URL would be searched as text.
 const queriesValue = queriesInput({ queries: flagList(flags.query), urls: flagList(flags.url) });
 if (queriesValue.error) {
+  if (json) die(EXIT.CANNOT_START, { error: redact(queriesValue.error), code: 'BAD_FLAG', remedy: '--url takes a page address starting with https://' });
   process.stderr.write(`${redact(queriesValue.error)}\n  fix: --url takes a page address starting with https://\n`);
   process.exit(EXIT.CANNOT_START);
 }
 
 // So is an --out this process cannot write: found after the wait, it cost a paid run.
-// `--no-wait` downloads nothing, so it has no folder to check.
+// `--no-wait` downloads nothing, so it has no folder to check. Checked, not created: the
+// download creates it, so a run refused from here on leaves no empty folder behind (#295).
 const outDir = path.resolve(String(flags.out ?? '.'));
 if (!flags['no-wait']) {
-  try { usableOutDir(outDir); } catch (e) {
+  try { usableOutDir(outDir, { create: false }); } catch (e) {
     die(EXIT.CANNOT_START, { error: `${e.code}: ${e.message}`, code: e.code, remedy: e.remedy });
   }
 }
@@ -188,7 +197,7 @@ const ref = String(flags.ref ?? 'main');
 const timeoutMs = Number(flags.timeout ?? 1800) * 1000;
 
 const inputs = {
-  topic: String(flags.topic),
+  topic: String(flags.topic).trim(),
   max_pages: String(flags['max-pages'] ?? 8),
   depth: String(flags.depth ?? 'quick'),
   runner: String(flags.runner ?? 'ubuntu-latest'),
