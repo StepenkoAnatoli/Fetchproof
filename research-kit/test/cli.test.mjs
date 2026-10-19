@@ -836,7 +836,8 @@ test('collect-remote refuses a --url that is not http(s), before it asks for a t
   const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--url', 'ftp://x.example/a'], { root: project() });
   assert.equal(r.status, 3, r.all);
   assert.match(r.all, /not an http\(s\) URL/);
-  assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the URL refusal must come first');
+  // Asserted by what the first line is, not by the absence of "token": a path may hold that word.
+  assert.match(r.err.split('\n')[0] ?? '', /^not an http\(s\) URL/, 'the URL refusal must come first');
 });
 
 test('collect-remote refuses an --out it cannot write, before it asks for a token or dispatches', () => {
@@ -847,7 +848,9 @@ test('collect-remote refuses an --out it cannot write, before it asks for a toke
   assert.equal(r.status, 3, r.all);
   assert.match(r.all, /OUT_DIR/);
   assert.match(r.all, /writable folder/);
-  assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the folder refusal must come first');
+  // The refusal names the folder, and a temp folder can hold "token" (C:\...\gittoken\...):
+  // assert that the first line is the folder refusal, not that it lacks the word.
+  assert.match(r.err.split('\n')[0] ?? '', /^OUT_DIR: /, 'the folder refusal must come first');
 });
 
 // Found 2026-09-29 (Arena break test): `--max-pages 8o` was sent as it was, and the paid run it

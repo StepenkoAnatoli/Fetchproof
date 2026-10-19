@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Two `collect-remote` tests no longer fail for a contributor whose temp folder holds the word
+  "token" (`C:\...\gittoken\...`). They proved that a refusal came before the token check by
+  the first line's lack of "token", and the `--out` refusal names the folder; they now assert
+  that the first line is the refusal itself. README's long-path row names `git clone` and
+  `checkout` too, where a deep folder first meets `MAX_PATH`, and the one-clone
+  `git clone -c core.longpaths=true` (break-test pass 9, Windows).
 - A browser render no longer leaves its profile or its net log in the temp folder. Chromium
   ran without `--user-data-dir`, so each render left a `HeadlessChrome*` profile there - killed
   or not, on the operator's PC - and a guard child the transport killed at its allowance never
