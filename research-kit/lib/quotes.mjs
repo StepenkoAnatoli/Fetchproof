@@ -8,6 +8,8 @@
 // Research: docs/decisions/2026-09-28-quote-anchors. A real deep-research report carried six
 // quotations attached to real citations, and none of the six occurred in the corpus (E-01).
 
+import { UNSPACED_CHARACTER, CHARS_PER_WORD } from './similarity.mjs';
+
 /** A quote shorter than this proves almost nothing: "free plan" occurs on every pricing page. */
 export const MIN_QUOTE_WORDS = 3;
 
@@ -183,10 +185,24 @@ export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
  * "words" between them and cleared a floor none of the fragments reaches alone (rank 4,
  * 2026-10-03 gap audit). A single long or multi-word fragment is enough for the quote to be
  * specific; only when EVERY fragment is under both floors is the whole quote too short.
+ *
+ * A word is counted as similarity.mjs counts it (ADR-0176): in a script that puts no space
+ * between its words (Japanese, Chinese, Thai...) one character, with its marks, weighs
+ * 1/CHARS_PER_WORD of a word. Counted on spaces alone, a Japanese sentence was ONE word, so two
+ * full sentences joined by an ellipsis - each under MIN_QUOTE_CHARS - warned quote-too-short
+ * and were never compared with the capture, and an invented figure in them passed (review of
+ * the 2026-10-19 sweep). A fragment in no such script weighs exactly what it did before.
  */
 export function quoteTooShort(anchor) {
-  return anchor.fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+  return anchor.fragments.every((f) => fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
     && f.length < MIN_QUOTE_CHARS);
+}
+
+/** A fragment's length in characters of an unspaced script: CHARS_PER_WORD per spaced word. */
+function fragmentWeight(fragment) {
+  const unspaced = fragment.match(UNSPACED_CHARACTER)?.length ?? 0;
+  const words = fragment.replace(UNSPACED_CHARACTER, ' ').split(/\s+/).filter(Boolean).length;
+  return words * CHARS_PER_WORD + unspaced;
 }
 
 /** Characters in a quote, across its fragments: what MIN_QUOTE_CHARS was measured against. */

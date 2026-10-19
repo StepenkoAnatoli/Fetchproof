@@ -1,7 +1,9 @@
 # ADR-0162 - A quote is one passage, read at any bracket depth, its floor measured per fragment
 
 - **Date:** 2026-10-17
-- **Status:** accepted
+- **Status:** accepted; amended 2026-10-19 (review of the 2026-10-19 sweep): in the
+  per-fragment floor a character of a script without word spaces weighs a third of a word, as
+  in ADR-0176
 - **Area:** `research-kit/lib/quotes.mjs`, `research-kit/lib/checks.mjs` (ADR-0087). A fix to
   the quote check's own reading, not a new capability: it adds no command, flag, transport,
   provider, configuration key or check.
@@ -74,3 +76,31 @@ last caller was the check, is removed: an export nothing references fails `repo-
 
 A quote whose fragments genuinely lie in one passage is unaffected: the repository's own
 decision corpora hold four ellipsis quotes, and all three projects still pass their gates.
+
+## Amendment, 2026-10-19 — a word is counted in every script, as ADR-0176 counts it
+
+The review of the 2026-10-19 sweep (gaps and docs slice, F1) found that the per-fragment floor
+stopped checking an elided quote in Japanese or Chinese. Those scripts put no space between
+their words, so a fragment counted on spaces was ONE word, and a sentence of about 25
+characters is under `MIN_QUOTE_CHARS` (40). Two full sentences joined by an ellipsis were
+therefore "every fragment under both floors": the quote warned `quote-too-short`, the check
+moved on without comparing it with the capture, and a quote with one figure changed passed
+with a warning instead of failing `quote-not-found`. Measured over the joined text, before
+this ADR, the same quote was 50 characters and was checked.
+
+`quoteTooShort` now weighs each fragment the way `similarity.mjs` does (ADR-0176): one
+character of a script without word spaces, with its marks, weighs `1/CHARS_PER_WORD` of a
+word, and every other whitespace-separated run is a word. A fragment is short when it weighs
+under `MIN_QUOTE_WORDS` words (nine such characters) AND is under `MIN_QUOTE_CHARS`
+characters. The character class (`UNSPACED_CHARACTER`) and the weight (`CHARS_PER_WORD`)
+are imported from `similarity.mjs`, not copied, so the two measurements cannot drift apart.
+A fragment with no character of such a script weighs exactly what it did, so no quote in any
+other script changes verdict.
+
+Rejected: **measure the joined text again when a fragment is in such a script.** It would
+check this quote, but it reopens what this ADR closed - three fragments none of which is
+specific alone clearing the floor together - and it would make the rule depend on the script,
+where the weight asks the same amount of text of every fragment in every script. **Split on
+punctuation, as the shingles do.** ADR-0126 kept punctuation inside a word (a dependency map,
+an identifier); here an ideographic comma or full stop counts as one character, so at most
+seven ideographs and two stops clear the floor, which is still a clause.

@@ -24,7 +24,9 @@
  * words, and its word shingles were already judged.
  */
 const UNSPACED_SCRIPT = String.raw`[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Bopomofo}\p{scx=Thai}\p{scx=Lao}\p{scx=Khmer}\p{scx=Myanmar}]`;
-const UNSPACED_CHARACTER = new RegExp(String.raw`${UNSPACED_SCRIPT}\p{M}*`, 'gu');
+// Exported for quotes.mjs, whose short-quote floor weighs a fragment the same way (ADR-0162,
+// amended). A global regex: use it with match and replace, which reset lastIndex, not test.
+export const UNSPACED_CHARACTER = new RegExp(String.raw`${UNSPACED_SCRIPT}\p{M}*`, 'gu');
 const STARTS_UNSPACED = new RegExp(`^${UNSPACED_SCRIPT}`, 'u');
 
 /** What one token weighs in a shingle, in characters of an unspaced script. */

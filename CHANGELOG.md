@@ -5,6 +5,15 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- An elided quote in Japanese, Chinese or another script without word spaces is checked
+  against its capture again (review of the 2026-10-19 sweep). The short-quote floor, measured
+  per fragment since ADR-0162, counted words on spaces, so a Japanese sentence was one word
+  and under 40 characters: two full sentences joined by an ellipsis warned `quote-too-short`
+  and were never compared with the capture, and one with an invented figure passed with that
+  warning instead of failing `quote-not-found`. A fragment is now weighed as `similarity.mjs`
+  weighs text (ADR-0176), a character of such a script with its marks counting a third of a
+  word, so nine characters reach the three-word floor. A quote in any other script is judged
+  as before (ADR-0162 amended).
 - `researcher-release validate` names a ledger record, an envelope or a pointer that canonical
   JSON refuses (an unpaired surrogate, the escape `\ud800`) instead of crashing. The #340 fix
   guarded the ledger's payload hash but not the record hash on the next line or the record
