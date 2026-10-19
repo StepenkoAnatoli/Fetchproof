@@ -38,6 +38,18 @@ test('quotes are counted found or not, and an edited capture stops the link from
   assert.equal(m.ledgerVerifies, false);
 });
 
+// #319: a marker the parser could not read was counted as a row with no quote at all.
+test('a quote marker the gate cannot read counts as a quote not found, not as an unanchored row', () => {
+  const passage = 'The free plan allows 10 requests per minute';
+  for (const marker of [`[quote: ${passage}`, `[Quote : ${passage}]`, `[quote ${passage}]`]) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.evidence, (t) => t.replace('includes 1,000 credits. |', `includes 1,000 credits. ${marker} |`));
+    const m = measureCorpus(dir);
+    assert.deepEqual(m.anchoredRows, { count: 1, percent: 100 }, marker);
+    assert.deepEqual([m.quotesFound.count, m.quotesFound.of], [0, 1], marker);
+  }
+});
+
 test('the CLI prints the report, --json prints it for machines, and a non-project is refused', () => {
   const bin = fileURLToPath(new URL('../bin/measure.mjs', import.meta.url));
   const dir = makePassingProject();

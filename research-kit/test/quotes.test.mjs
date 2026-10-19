@@ -5,7 +5,7 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
-import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
+import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
 
@@ -57,6 +57,37 @@ test('a quote found in its capture passes; a fabricated one blocks; a short one 
 
   const short = quoted('Free tier limits. [quote: free plan]');
   assert.equal(short.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', JSON.stringify(short));
+});
+
+// #319: a `[quote` the parser could not read was not a marker at all - no closing bracket, a
+// space before the colon, no colon - so the cell read as one with no quote and nothing checked it.
+test('the attempts at a marker the parser cannot read are found, and a readable one is still read', () => {
+  const at = (s) => unreadableQuoteMarkers(s).map((a) => a.text);
+  assert.deepEqual(at('[quote: no closing bracket'), ['[quote: no closing bracket']);
+  assert.deepEqual(at('Claim [Quote : a space before the colon]'), ['[Quote : a space before the colon]']);
+  assert.deepEqual(at('Claim [quote no colon at all]'), ['[quote no colon at all]']);
+  assert.deepEqual(at('[quote: read] and [QUOTE: read too] and [quote: a [b [c]] d]'), []);
+  assert.deepEqual(at('Write it as [quote: ...] or [quote: …] in the cell'), []);
+  assert.deepEqual(at('Not attempts: `[quote x`, https://x.invalid/?q=[quote and [Quote of the day](https://x.invalid/q), [quotes] and [quoted]'), []);
+  const cell = 'Two. [quote: the free plan allows ten] then [quote the paid plan allows more]';
+  assert.deepEqual(quoteAnchors(cell).map((x) => x.quote), ['the free plan allows ten']);
+  assert.deepEqual(at(cell), ['[quote the paid plan allows more]']);
+});
+
+test('a quote marker the gate cannot read blocks, naming the row; a readable one does not', () => {
+  const invented = 'The free plan allows 100 requests per minute';
+  for (const marker of [`[quote: ${invented}`, `[Quote : ${invented}]`, `[quote ${invented}]`]) {
+    const judged = quoted(`Free tier limits. ${marker}`);
+    const blocked = judged.find((f) => f.rule === 'quote-unreadable');
+    assert.equal(blocked?.severity, 'fail', `${marker}: ${JSON.stringify(judged)}`);
+    assert.match(blocked.detail, /^E-01 holds a quote marker the gate cannot read/);
+  }
+  const real = quoted('Free tier limits. [quote: The free plan allows 10 requests per minute]');
+  assert.equal(real.find((f) => f.rule === 'quote-unreadable'), undefined, JSON.stringify(real));
+  // Two levels of brackets are read since ADR-0162, so this one is checked, and not found.
+  const nested = quoted('Free tier limits. [quote: calls[a[0]].id is read on billing]');
+  assert.equal(nested.find((f) => f.rule === 'quote-unreadable'), undefined, JSON.stringify(nested));
+  assert.equal(nested.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(nested));
 });
 
 // Found 2026-10-02 (C1, the firecrawl-cli-1-25 decision project): a quote of a package

@@ -32,6 +32,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   unchecked), holds every fragment within one passage instead of anchoring words scattered
   over a page, and measures the short-quote floor over each fragment rather than the joined
   text (rank 4, `docs/review-2026-10-03-gap-audit.md`).
+- A `[quote` the gate cannot read - no closing bracket, a space before the colon, no colon - is
+  `citations/quote-unreadable`, blocking: it was not a marker at all, so an invented sentence
+  in that shape passed where the same sentence written `[quote: ...]` failed, and `measure`
+  counted its row as unanchored. `measure` now counts it as a quote not found. A `[quote` in a
+  code span, a URL or Markdown link text is not an attempt (#319, ADR-0175).
 - `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
   values by name before creating an output directory or reading a token (#287).
 - Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers

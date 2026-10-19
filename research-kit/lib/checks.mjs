@@ -13,7 +13,7 @@ import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { readPrior, onDiskOf, unrecordedDetail, PRIOR_PATH } from './prior.mjs';
-import { quoteAnchors, anchorFound, quoteTooShort, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
+import { quoteAnchors, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
 
 const VALID_STATUSES = ['CLOSED', 'KNOWN-UNKNOWN'];
@@ -102,6 +102,13 @@ function citations(corpus) {
     }
     if (!row.finding.trim()) {
       out.push(finding('fail', 'citations', 'row-finding', `${row.id} has an empty Finding cell`, { row: row.id, line: row.line }));
+    }
+    // A quote marker the parser cannot read is a quotation nothing checks, so it blocks like a
+    // quote the capture refutes (#319, ADR-0175).
+    for (const attempt of unreadableQuoteMarkers(row.finding)) {
+      out.push(finding('fail', 'citations', 'quote-unreadable',
+        `${row.id} holds a quote marker the gate cannot read, "${attempt.text}${attempt.text.length < 40 ? '' : '...'}" - write it as [quote: the passage], the colon right after "quote" and the marker closed with "]", or drop the marker and paraphrase`,
+        { row: row.id, line: row.line }));
     }
     if (!['P', 'S', 'L'].includes(row.type)) {
       out.push(finding('warn', 'citations', 'row-type', `${row.id} has source type "${row.type || '(blank)'}" - expected P, S, or L`, { row: row.id, line: row.line }));

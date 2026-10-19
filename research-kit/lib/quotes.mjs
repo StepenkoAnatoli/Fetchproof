@@ -34,14 +34,44 @@ function markersOf(s) {
   const out = [];
   for (const start of starts) {
     if (out.length && start < out[out.length - 1].end) continue; // inside a marker already taken
-    let depth = 0;
-    let end = -1;
-    for (let j = start; j < s.length; j += 1) {
-      const ch = s[j];
-      if (ch === '[') depth += 1;
-      else if (ch === ']') { depth -= 1; if (depth === 0) { end = j; break; } }
-    }
+    const end = closeOf(s, start);
     if (end >= 0) out.push({ start, end, content: s.slice(start + '[quote:'.length, end) });
+  }
+  return out;
+}
+
+/** The index of the `]` that brings the bracket depth opened at `start` back to zero, or -1. */
+function closeOf(s, start) {
+  let depth = 0;
+  for (let j = start; j < s.length; j += 1) {
+    const ch = s[j];
+    if (ch === '[') depth += 1;
+    else if (ch === ']') { depth -= 1; if (depth === 0) return j; }
+  }
+  return -1;
+}
+
+/**
+ * The attempts at a quote marker that `quoteAnchors` cannot read, each `{ start, text }` with the
+ * attempt's first 40 characters: a `[quote` (any case) that opens no marker - no closing bracket,
+ * a space before the colon (`[Quote :`), no colon at all (`[quote the sentence]`). Each read as a
+ * Finding with no quote, so an invented sentence in one of these shapes passed where the same
+ * sentence written `[quote: ...]` failed - ADR-0087's six unchecked quotations again (#319).
+ * Not attempts: a `[quote` inside a marker already read, inside a code span or a URL, and a
+ * Markdown link whose text starts with the word (`[Quote of the day](https://...)`).
+ */
+export function unreadableQuoteMarkers(text) {
+  const s = String(text ?? '');
+  const spans = [
+    ...markersOf(s).map((m) => [m.start, m.end + 1]),
+    ...[...s.matchAll(/(`+)[\s\S]*?\1/g), ...s.matchAll(/https?:\/\/\S+/gi)].map((m) => [m.index, m.index + m[0].length]),
+  ];
+  const out = [];
+  for (const m of s.matchAll(/\[\s*quote\b/gi)) {
+    if (spans.some(([from, to]) => m.index >= from && m.index < to)) continue;
+    const end = closeOf(s, m.index);
+    if (end >= 0 && s[end + 1] === '(') continue;
+    out.push({ start: m.index, text: s.slice(m.index, m.index + 40) });
   }
   return out;
 }
