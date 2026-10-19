@@ -690,6 +690,46 @@ test('a sparse checkout of a partial clone builds the scratch without the blobs 
   assert.deepEqual(fs.readdirSync(tmp), [], 'the scratch was left behind');
 });
 
+// Found 2026-10-19 (check (c) of the review fixes, F3): the skip-worktree bit has a second writer,
+// the user - `git update-index --skip-worktree <file>` keeps local edits out of `git status` in a
+// full clone. The scratch marked those entries too, so `checkout-index --all` left out files the
+// commit holds and the disk shows, and a test that read one failed the suite: a false block. Only
+// an entry absent from the working tree - a sparse checkout's - stays skipped; a name git lists as
+// UTF-8 bytes (the Cyrillic one) is looked up on disk as those bytes, not as latin1.
+test('a file hidden with update-index --skip-worktree and present on disk is in the scratch, as committed', () => {
+  const { dir, git } = makeKitRepo();
+  const hidden = ['research-kit/README.md', 'docs/заметка.md'];
+  for (const rel of hidden) writeText(resolve(dir, rel), 'committed\n');
+  git(['add', ...hidden]);
+  git(fixtureCommitArgs('two files to hide'));
+  git(['update-index', '--skip-worktree', ...hidden]);
+  for (const rel of hidden) writeText(resolve(dir, rel), 'a local edit git status does not show\n');
+  writeText(resolve(dir, 'research-kit/lib/core.mjs'), '// stand-in, edited\n');
+  git(['add', 'research-kit/lib/core.mjs']);
+  // The fixture is what it claims: both entries are tagged S, and both files are on disk.
+  const tags = git(['-c', 'core.quotePath=false', 'ls-files', '-t', '--', ...hidden]).split('\n').filter(Boolean).sort();
+  assert.deepEqual(tags, hidden.map((rel) => `S ${rel}`).sort(), 'the files are not skip-worktree in the index');
+  assert.equal(git(['status', '--porcelain']), 'M  research-kit/lib/core.mjs\n', 'the local edits are not hidden from git status');
+  const tmp = tempDir();
+  let seen = null;
+  const result = gateLib.runSuiteOnCommit(dir, { tmp, runHere: (d) => {
+    const inScratch = (args) => spawnSync('git', args, { cwd: d, encoding: 'utf8' }).stdout.trim();
+    seen = {
+      files: hidden.map((rel) => (fs.existsSync(path.join(d, rel)) ? fs.readFileSync(path.join(d, rel), 'utf8') : null)),
+      staged: inScratch(['diff', '--cached', '--name-only']),
+      unstaged: inScratch(['diff', '--name-only']),
+    };
+    return { failures: 0, passed: 1 };
+  } });
+  assert.equal(result?.unbuilt, undefined, `the scratch was not built: ${JSON.stringify(result)}`);
+  assert.equal(result?.failures, 0, JSON.stringify(result));
+  assert.deepEqual(seen.files.map((text) => text?.replace(/\r\n/g, '\n') ?? null), ['committed\n', 'committed\n'],
+    'a file the commit holds and the disk shows was left out of the scratch, or its hidden local edit was put in');
+  assert.equal(seen.staged, 'research-kit/lib/core.mjs', 'the scratch does not stage what the commit stages');
+  assert.equal(seen.unstaged, '', 'the scratch\'s files differ from the index it was built from');
+  assert.deepEqual(fs.readdirSync(tmp), [], 'the scratch was left behind');
+});
+
 // Found 2026-10-19 (the review of PR #430): checkout-index in the scratch runs the smudge filters the
 // machine's config defines (git-lfs: filter.lfs.required=true in Git for Windows' system config),
 // and git-lfs, for an object the clone does not hold, made a network request from the commit hook,

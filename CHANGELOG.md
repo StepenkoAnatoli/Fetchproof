@@ -5,6 +5,13 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A file hidden with `git update-index --skip-worktree` and present on disk is in the commit's
+  scratch again, as the commit holds it. The sparse-checkout fix below marked every entry
+  `ls-files -t` tags `S` as skipped in the scratch, but the bit has a second writer: the user,
+  keeping local edits out of `git status` in a full clone. Such a file was left out of the tree
+  the suite ran on, so a test that read it failed and the commit blocked on a file it holds.
+  Only the entries absent from the working tree, a sparse checkout's, stay skipped (check (c)
+  of the 2026-10-19 review fixes, ADR-0183 amended).
 - A spaced quote in Chinese or Japanese - `[quote: 每月 20 美元]`, `月額 1,980 円`,
   `API 料金 limits` - is checked against its capture again. The weight that let an elided quote
   of full sentences be checked replaced the count on spaces, and such a fragment weighs one

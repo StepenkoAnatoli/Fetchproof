@@ -474,10 +474,22 @@ export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tem
   // A sparse checkout's skip-worktree entries (`ls-files -t` tags them S) stay skipped in the scratch:
   // `--index-info` drops the bit, and `checkout-index --all` then asked for every blob outside the
   // cone, which a partial clone never fetched - every kit commit there blocked (review of PR #430).
+  // Only those absent from the working tree: the user sets the bit too (`update-index --skip-worktree`
+  // keeps local edits out of `git status`), and skipping such a file left one the commit holds out of
+  // the suite's tree - a test that read it blocked the commit (check (c), F3). git lists the name as
+  // UTF-8 bytes, carried here as latin1, so it is decoded before the disk is asked; a path the disk
+  // will not answer for (not ENOENT or ENOTDIR) is checked out, as every entry was before.
+  const absent = (name) => {
+    try {
+      return fs.lstatSync(path.join(cwd, Buffer.from(name, 'latin1').toString('utf8')), { throwIfNoEntry: false }) === undefined;
+    } catch {
+      return false;
+    }
+  };
   const tagged = git(['ls-files', '-t', '-z'], { cwd, encoding: 'buffer', errors });
   if (tagged === null) return unbuilt('git ls-files failed');
   const skipped = Buffer.from(asBytes(tagged).toString('latin1').split('\0')
-    .filter((entry) => entry.startsWith('S ') && inCommit.has(entry.slice(2)))
+    .filter((entry) => entry.startsWith('S ') && inCommit.has(entry.slice(2)) && absent(entry.slice(2)))
     .map((entry) => `${entry.slice(2)}\0`).join(''), 'latin1');
   // Empty as well when HEAD is unborn - a first commit - and the scratch's HEAD stays unborn too.
   const head = String(git(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { cwd }) ?? '').trim();
