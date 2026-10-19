@@ -41,7 +41,17 @@ refuseUnknownFlags(flags, ['repository', 'run', 'topic', 'json', 'help'], {
   note: (f) => (/token|auth|key|secret/i.test(f)
     ? 'This probe is unauthenticated by design. Authenticating it would answer a different question.' : ''),
 });
-checkFlagValues(flags, { repository: {}, run: {}, topic: {} }, { exit: 3 });
+// The arguments are checked before any request (#303): `--run abc` asked GitHub for
+// /actions/runs/NaN and `--repository Research-Kit` for a repository with no owner; every
+// probe was refused, and a run nobody looked at read as "only the shape is public", exit 0.
+// A repeated flag arrived as an array, which each value passing on its own does not make one
+// run: `--run 1 --run 2` became Number([...]), NaN, and probed /actions/runs/NaN. The shared
+// refusal above now refuses it by name (#286), before any value here is read.
+// One call names every flag that takes a value (review of the 2026-10-19 sweep, F1): merging
+// #303 with #286/#289 left a second call that named only --run and --repository, and a flag a
+// call does not name takes no value, so every `--topic "<text>"` was refused and `--topic no`
+// dropped the subject in silence.
+checkFlagValues(flags, { repository: 'value', run: { int: true, min: 1 }, topic: {} }, { exit: 3 });
 
 const missing = ['repository', 'run'].filter((n) => flags[n] === undefined || flags[n] === true);
 if (missing.length) {
@@ -50,13 +60,6 @@ if (missing.length) {
   process.exit(3);
 }
 
-// The arguments are checked before any request (#303): `--run abc` asked GitHub for
-// /actions/runs/NaN and `--repository Research-Kit` for a repository with no owner; every
-// probe was refused, and a run nobody looked at read as "only the shape is public", exit 0.
-// A repeated flag arrived as an array, which each value passing on its own does not make one
-// run: `--run 1 --run 2` became Number([...]), NaN, and probed /actions/runs/NaN. The shared
-// refusal above now refuses it by name (#286), before any value here is read.
-checkFlagValues(flags, { run: { int: true, min: 1 }, repository: 'value' }, { exit: 3 });
 if (!/^[^/\s]+\/[^/\s]+$/.test(String(flags.repository))) {
   process.stderr.write(`--repository must be OWNER/REPO, not "${flags.repository}"\n`);
   process.exit(3);

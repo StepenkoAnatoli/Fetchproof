@@ -1227,6 +1227,32 @@ test('a flag given twice is refused by name, and nothing is made from the pair',
   }
 });
 
+// Review of the 2026-10-19 sweep (F1): merging #303 with #286/#289 left disclosure a second
+// checkFlagValues call that did not name --topic, so every `--topic "<text>"` - the spelling
+// README and collect.yml use - was refused as a flag that takes no value, and `--topic no`
+// dropped the subject in silence. The probe runs here, offline: a preload points every request
+// at a closed loopback port, so each probe fails at once and the run is not measured (exit 3).
+test('disclosure takes --topic as the subject to look for, in either spelling', () => {
+  const dir = tempDir('rk-disclosure-topic-');
+  const asked = path.join(dir, 'asked');
+  const preload = path.join(dir, 'loopback-fetch.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';\nconst real = globalThis.fetch;\n`
+    + `globalThis.fetch = (url, init) => { fs.appendFileSync(${JSON.stringify(asked)}, String(url) + ' '); return real('http://127.0.0.1:9/', init); };\n`);
+  for (const topic of [['--topic', 'x y'], ['--topic=x y'], ['--topic', 'no']]) {
+    fs.rmSync(asked, { force: true });
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, path.join(KIT_ROOT, 'bin', 'disclosure.mjs'),
+      '--repository', 'o/r', '--run', '1', ...topic], {
+      cwd: dir, encoding: 'utf8', timeout: 60_000, windowsHide: true, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+    });
+    const said = `${topic.join(' ')}: ${r.stdout}${r.stderr}`.slice(0, 600);
+    assert.doesNotMatch(r.stderr, /takes no value/, said);
+    assert.equal(r.status, 3, said);
+    assert.ok(fs.existsSync(asked), `${said}\nthe probe made no request`);
+    assert.match(r.stdout, /NOT MEASURED/, said);
+    assert.match(r.stdout, /the subject itself exposed : not measured/, `${said}\nthe topic did not reach the probe`);
+  }
+});
+
 test('a gate or corpus command refuses an argument it does not take, and writes nothing', () => {
   const home = tempDir('rk-stray-home-');
   const env = { HOME: home, USERPROFILE: home, RESEARCH_KIT_CONFIG: path.join(home, 'c.json') };

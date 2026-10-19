@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `disclosure --topic "<text>"` looks for the subject again. Merging #303 with #286/#289 left
+  a second `checkFlagValues` call that did not name `--topic`, and a flag a call does not name
+  takes no value, so every topic - `--topic x` or `--topic=x`, as README and `collect.yml` spell
+  it - was refused with exit 3, and `--topic no` (`false`, `0`, `off`) or `--topic yes` probed
+  without the subject, "not checked". One call now names `--repository`, `--run` and `--topic`
+  (review of the 2026-10-19 sweep, F1).
 - The commit gate's suite rule runs the suite on the commit, not the working tree. It had run
   the checkout's `bin/selftest.mjs` in place, so an unstaged red edit blocked a green commit (a
   25-40 minute run on the operator's PC), and a red file staged and then fixed only on disk was
