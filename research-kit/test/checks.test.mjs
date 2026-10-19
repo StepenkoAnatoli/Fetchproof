@@ -679,6 +679,22 @@ test('corroboration: a stale mirror on a second host is one document, not two wi
   assert.match(findings[0].detail, /across 2 hosts but they are the same document/);
 });
 
+test('corroboration: a Japanese page on two hosts is one document, not two witnesses (#333)', () => {
+  // Thirty sentences ended by 。 alone: the word rule read thirty tokens, too few to judge, so
+  // the pair graded `independent` - the inversion, for a script without word spaces (ADR-0176).
+  const WHO = ['無料プラン', '有料プラン', '管理者', '利用者', '開発者', '請求担当'];
+  const WHAT = ['一分あたりの要求数', '月間の上限', '保存期間', '同時接続数', '応答の形式'];
+  const DO = ['確認できます', '変更できません', '設定画面に表示されます', '翌月に戻ります', '通知されます'];
+  const page = Array.from({ length: 30 }, (_, i) => `${WHO[i % 6]}では${WHAT[i % 5]}を${DO[(i * 2) % 5]}`).join('。');
+  const dir = withRealPages([
+    { url: 'https://vendor.example.jp/docs/limits', markdown: page },
+    { url: 'https://mirror.example.net/vendor/limits', markdown: page },
+  ]);
+  const findings = runCheck('corroboration', snapshot(dir));
+  assert.equal(findings[0].rule, 'mirror', findings[0].detail);
+  assert.match(findings[0].detail, /across 2 hosts but they are the same document/);
+});
+
 test('corroboration: a mirror does not outrank two genuinely different pages', () => {
   // The inversion stated as an ordering. A mirror must never grade better than the
   // honest `one-voice` that two real pages from one vendor earn.

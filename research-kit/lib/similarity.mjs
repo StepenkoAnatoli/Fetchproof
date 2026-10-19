@@ -16,20 +16,82 @@
 // does not try. A `mirror` finding says "these are one document" - what that is worth is
 // still the reviewer's call.
 
-/** Word shingles. Punctuation, case and URLs are noise for this question. */
+/**
+ * The scripts that put no space between their words: Chinese, Japanese, Thai, Lao, Khmer,
+ * Burmese (#333, ADR-0176). In them one CHARACTER, with the combining marks written on it, is
+ * a token. Script_Extensions, not Script, so the signs these scripts share (the long-vowel
+ * mark, the iteration mark) count with them. Hangul is NOT here: Korean puts spaces between its
+ * words, and its word shingles were already judged.
+ */
+const UNSPACED_SCRIPT = String.raw`[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Bopomofo}\p{scx=Thai}\p{scx=Lao}\p{scx=Khmer}\p{scx=Myanmar}]`;
+const UNSPACED_CHARACTER = new RegExp(String.raw`${UNSPACED_SCRIPT}\p{M}*`, 'gu');
+const STARTS_UNSPACED = new RegExp(`^${UNSPACED_SCRIPT}`, 'u');
+
+/** What one token weighs in a shingle, in characters of an unspaced script. */
+function weightOf(token) {
+  return STARTS_UNSPACED.test(token) ? 1 : CHARS_PER_WORD;
+}
+
+/**
+ * Shingles: from each token, the shortest run that weighs SHINGLE_WORDS words. A token is a
+ * word, or one character of a script without word spaces, which weighs 1/CHARS_PER_WORD of a
+ * word - so a shingle is five words, fifteen such characters, or a mix. Punctuation, case and
+ * URLs are noise for this question.
+ */
 export function shingles(text, n = SHINGLE_WORDS) {
-  const words = String(text ?? '')
+  const tokens = String(text ?? '')
     .toLowerCase()
+    // Canonically equivalent text is the SAME text: `é` and `e` + U+0301 are one word spelled
+    // once or twice, and composing first is what keeps the combining marks below from making
+    // one word into two different ones. NFC only - NFKC is deliberately NOT used, because it
+    // folds characters a page did not equate (`①` into `1`), and this measurement must not
+    // invent an equivalence the text does not have.
+    .normalize('NFC')
     .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[^a-z0-9\s]+/g, ' ')
+    // A WORD, in any script (rank 17, 2026-10-04 gap audit). This class was `[^a-z0-9]`, so a
+    // page in Russian, Arabic, Hebrew, Greek or Devanagari lost every letter to a space: the
+    // page shingled to nothing, `sketch` returned null for it, and `documentGroups` read a
+    // republished copy of it as an independent witness - the one finding this module exists to
+    // make. `\p{L}` letters, `\p{N}` numbers, `\p{M}` the combining marks that carry the vowels
+    // of Devanagari and Arabic. ASCII input is untouched, and that is not luck: after
+    // `toLowerCase` the old class kept exactly a-z, 0-9 and whitespace, which is what these
+    // keep, so no ASCII page's sketch moves (test/similarity.test.mjs pins that).
+    .replace(/[^\p{L}\p{N}\p{M}\s]+/gu, ' ')
+    // A CHARACTER, where the script puts no space between words (#333, ADR-0176). Without this
+    // a Japanese or Chinese page was one "word" per clause, or one per page with no
+    // punctuation, so it shingled to too little, `sketch` returned null, and a republished copy
+    // of it was an independent witness again. Text in no listed script has no match, so every
+    // other page tokenises exactly as before.
+    .replace(UNSPACED_CHARACTER, ' $& ')
     .split(/\s+/)
     .filter(Boolean);
+  const weights = tokens.map(weightOf);
+  const need = n * CHARS_PER_WORD;
   const out = new Set();
-  for (let i = 0; i + n <= words.length; i += 1) out.add(words.slice(i, i + n).join(' '));
+  for (let i = 0; i < tokens.length; i += 1) {
+    let j = i;
+    let weight = 0;
+    while (j < tokens.length && weight < need) weight += weights[j++];
+    // Every later start has less text after it, so none of them reaches a full shingle either.
+    if (weight < need) break;
+    out.add(tokens.slice(i, j).join(' '));
+  }
   return out;
 }
 
 export const SHINGLE_WORDS = 5;
+
+/**
+ * How many characters of a script without word spaces weigh one word: a shingle is five
+ * words or FIFTEEN such characters. Measured, not borrowed (ADR-0176). With one character per
+ * word - the plain character 5-gram - two different halves of one Thai UI catalog scored
+ * 0.177 and of a Japanese one 0.109, against 0.015 for the same split of the English catalog
+ * on words: common short sequences, not shared text, put a Thai pair within reach of
+ * MIRROR_THRESHOLD. At three, the Thai, Japanese and Chinese splits score 0.021, 0.010 and
+ * 0.003, and two versions of one catalog (Chrome 154 against an older Electron's Chromium)
+ * score 0.68, 0.65 and 0.57 against 0.65 in English - the scale the threshold was measured on.
+ */
+export const CHARS_PER_WORD = 3;
 
 /** How many hashes the sketch keeps. 128 bounds memory and costs ~9% standard error. */
 export const SKETCH_SIZE = 128;
@@ -38,8 +100,20 @@ export const SKETCH_SIZE = 128;
  * A document too short to fingerprint honestly. Below this, shingle overlap is dominated
  * by whatever boilerplate the two pages happen to share, and a `mirror` finding would be
  * an artefact of the sample size rather than a fact about the documents.
+ *
+ * Counted in WORDS of text, in every script (ADR-0176): a shingle starts at each token, and
+ * a page without word spaces has a token per character, so it reached forty shingles on a
+ * third of the text an English page needs. A shingle that starts on such a character counts
+ * 1/CHARS_PER_WORD, and the floor asks the same amount of text of every page.
  */
 export const MIN_SHINGLES = 40;
+
+/** Whether a page's shingles hold MIN_SHINGLES words' worth of text. */
+function enoughText(set) {
+  let weight = 0;
+  for (const s of set) weight += weightOf(s);
+  return weight >= MIN_SHINGLES * CHARS_PER_WORD;
+}
 
 function hash32(str, seed) {
   // FNV-1a, seeded. Deterministic across runs and platforms, which matters because a
@@ -59,7 +133,7 @@ function hash32(str, seed) {
  */
 export function sketch(text) {
   const set = shingles(text);
-  if (set.size < MIN_SHINGLES) return null;
+  if (!enoughText(set)) return null;
   const mins = new Uint32Array(SKETCH_SIZE).fill(0xffffffff);
   for (const s of set) {
     for (let k = 0; k < SKETCH_SIZE; k += 1) {
@@ -93,6 +167,12 @@ export function similarity(a, b) {
  * and the hard case is the STALE mirror, because a current mirror scores ~0.99. Same-host
  * re-collections of one URL reach 1.0000, which is why this check only speaks about pairs
  * that `corroboration` was about to call independent.
+ *
+ * Re-run 2026-10-19 for the character basis (ADR-0176), over 417 captures and 86,736 pairs:
+ * 391 shingle exactly as before, the 26 that hold a few characters of a script without word
+ * spaces move, and no pair changes its verdict. In real Chinese, Japanese and Thai text the
+ * threshold keeps its scale: two versions of one UI catalog score 0.57 to 0.68 (English 0.65),
+ * and two different texts at most 0.07.
  */
 export const MIRROR_THRESHOLD = 0.25;
 

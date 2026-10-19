@@ -262,3 +262,48 @@ test('an export carries the bytes it verified, not a second read of the file', (
   const text = zlib.gunzipSync(out.bytes).toString('utf8');
   assert.doesNotMatch(text, /REPLACED_AFTER_VERIFY/, 'the export carried text the ledger hash never covered');
 });
+
+// Rank 7 of the 2026-10-03 gap audit (docs/review-2026-10-03-gap-audit.md, VERIFIED): the
+// resource block is the capture after its front matter, so `capture-sha256` (the whole
+// file, the value the ledger holds) cannot verify a block. `body-sha256` names the block.
+test('the metadata names the block\'s own hash beside the capture file\'s', () => {
+  const dir = makePassingProject();
+  const read = readWarc(exportWarc(dir).bytes);
+  const [, resource, meta] = read;
+  const scrape = readLedger(dir).entries.find((e) => e.op === 'scrape');
+  const fields = meta.block.toString('utf8');
+  assert.match(fields, new RegExp(`body-sha256: ${sha256(resource.block)}\\r\\n`));
+  assert.match(fields, new RegExp(`capture-sha256: ${scrape.bodySha256}\\r\\n`));
+  assert.equal(resource.headers['WARC-Block-Digest'], `sha256:${sha256(resource.block)}`);
+  assert.notEqual(sha256(resource.block), scrape.bodySha256,
+    'the fixture needs the block and the file to differ, or this proves nothing');
+});
+
+// WARC 1.1 makes WARC-Date mandatory (C:E-08). An entry the export cannot date must be left
+// out and named, never written as a record with an empty WARC-Date.
+test('a ledger entry with no date is left out, so no record carries an empty WARC-Date', () => {
+  const dir = makePassingProject();
+  const entry = readLedger(dir).entries.find((e) => e.op === 'scrape' && e.raw);
+  fs.appendFileSync(path.join(dir, PATHS.ledger),
+    `${JSON.stringify({ seq: 99, op: 'scrape', url: 'https://x.invalid/undated', raw: entry.raw })}\n`);
+  const out = exportWarc(dir);
+  const named = out.skipped.filter((s) => s.file === entry.raw);
+  assert.equal(named.length, 1, JSON.stringify(out.skipped));
+  assert.match(named[0].reason, /date/);
+  for (const r of readWarc(out.bytes)) assert.ok(r.headers['WARC-Date'], `${r.headers['WARC-Type']} carries an empty WARC-Date`);
+});
+
+// Rank 7 of the 2026-10-03 gap audit, restated as rank 15 of the 2026-10-04 gap audit: a
+// capture left out used to exit 0, so a caller could not tell a partial export from a whole
+// one. A partial export is INCOMPLETE, which README.md maps to 2 (FAIL/REOPEN is 1); the
+// file it could write is still written.
+test('the CLI exits 2 (INCOMPLETE) when a capture is left out, naming it, and writes what it could', () => {
+  const bin = fileURLToPath(new URL('../bin/export-warc.mjs', import.meta.url));
+  const dir = makePassingProject();
+  const scrape = readLedger(dir).entries.find((e) => e.op === 'scrape');
+  fs.appendFileSync(path.join(dir, scrape.raw), '\nchanged after fetch\n');
+  const r = spawnSync(process.execPath, [bin], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /left out .*changed since it was fetched/);
+  assert.equal(readWarc(fs.readFileSync(path.join(dir, 'research-corpus.warc.gz'))).length, 1);
+});

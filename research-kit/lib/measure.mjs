@@ -9,7 +9,7 @@
 import { readCorpus, captureOf, parseCapture } from './corpus.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { resolve, readText, siteOf, exists } from './core.mjs';
-import { quoteAnchors, anchorFound } from './quotes.mjs';
+import { quoteAnchors, anchorFound, unreadableQuoteMarkers } from './quotes.mjs';
 
 const share = (part, whole) => (whole ? Math.round((part / whole) * 1000) / 10 : null);
 
@@ -33,8 +33,12 @@ export function measureCorpus(root, { corpus = null } = {}) {
     if (works) linkWorks += 1;
     if (capture) cited.set(capture.file, capture);
     const anchors = quoteAnchors(row.finding);
-    if (!anchors.length) continue;
+    // A marker the gate cannot read was still a quote written down: it counts as a quote not
+    // found, never as a row without one (#319).
+    const unreadable = unreadableQuoteMarkers(row.finding).length;
+    if (!anchors.length && !unreadable) continue;
     anchoredRows += 1;
+    quotes += unreadable;
     const body = capture ? parseCapture(readText(resolve(root, capture.file)) ?? '').body : '';
     for (const anchor of anchors) {
       quotes += 1;

@@ -5,7 +5,7 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
-import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
+import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
 
@@ -57,6 +57,37 @@ test('a quote found in its capture passes; a fabricated one blocks; a short one 
 
   const short = quoted('Free tier limits. [quote: free plan]');
   assert.equal(short.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', JSON.stringify(short));
+});
+
+// #319: a `[quote` the parser could not read was not a marker at all - no closing bracket, a
+// space before the colon, no colon - so the cell read as one with no quote and nothing checked it.
+test('the attempts at a marker the parser cannot read are found, and a readable one is still read', () => {
+  const at = (s) => unreadableQuoteMarkers(s).map((a) => a.text);
+  assert.deepEqual(at('[quote: no closing bracket'), ['[quote: no closing bracket']);
+  assert.deepEqual(at('Claim [Quote : a space before the colon]'), ['[Quote : a space before the colon]']);
+  assert.deepEqual(at('Claim [quote no colon at all]'), ['[quote no colon at all]']);
+  assert.deepEqual(at('[quote: read] and [QUOTE: read too] and [quote: a [b [c]] d]'), []);
+  assert.deepEqual(at('Write it as [quote: ...] or [quote: …] in the cell'), []);
+  assert.deepEqual(at('Not attempts: `[quote x`, https://x.invalid/?q=[quote and [Quote of the day](https://x.invalid/q), [quotes] and [quoted]'), []);
+  const cell = 'Two. [quote: the free plan allows ten] then [quote the paid plan allows more]';
+  assert.deepEqual(quoteAnchors(cell).map((x) => x.quote), ['the free plan allows ten']);
+  assert.deepEqual(at(cell), ['[quote the paid plan allows more]']);
+});
+
+test('a quote marker the gate cannot read blocks, naming the row; a readable one does not', () => {
+  const invented = 'The free plan allows 100 requests per minute';
+  for (const marker of [`[quote: ${invented}`, `[Quote : ${invented}]`, `[quote ${invented}]`]) {
+    const judged = quoted(`Free tier limits. ${marker}`);
+    const blocked = judged.find((f) => f.rule === 'quote-unreadable');
+    assert.equal(blocked?.severity, 'fail', `${marker}: ${JSON.stringify(judged)}`);
+    assert.match(blocked.detail, /^E-01 holds a quote marker the gate cannot read/);
+  }
+  const real = quoted('Free tier limits. [quote: The free plan allows 10 requests per minute]');
+  assert.equal(real.find((f) => f.rule === 'quote-unreadable'), undefined, JSON.stringify(real));
+  // Two levels of brackets are read since ADR-0162, so this one is checked, and not found.
+  const nested = quoted('Free tier limits. [quote: calls[a[0]].id is read on billing]');
+  assert.equal(nested.find((f) => f.rule === 'quote-unreadable'), undefined, JSON.stringify(nested));
+  assert.equal(nested.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(nested));
 });
 
 // Found 2026-10-02 (C1, the firecrawl-cli-1-25 decision project): a quote of a package
@@ -214,4 +245,42 @@ test('citations refuse a formatting-only quote that clears a raw length or word 
   assert.deepEqual(quotedToken(token, `Real token at the raw floor. [quote: ${token}]`)
     .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [],
     'a found forty-character token keeps its existing exemption');
+});
+
+// Rank 4 of the 2026-10-03 gap audit (restated as rank 4 of the 2026-10-04 gap audit): the
+// marker regex read ONE level of brackets, so a passage holding a Markdown link whose own text
+// held brackets was not read as a marker at all - and a quote the gate cannot read is a quote it
+// does not check. A scanner that counts brackets has no depth limit.
+test('a quote may hold brackets more than one level deep, and is actually checked', () => {
+  const deep = 'see [the docs](https://x.invalid/a) and [the list [1]] here';
+  assert.deepEqual(quoteAnchors(`[quote: ${deep}]`).map((q) => q.quote), [deep]);
+  assert.equal(anchorFound(quoteAnchors(`[quote: ${deep}]`)[0].fragments, `We ${deep} today.`), true);
+  assert.deepEqual(quoteAnchors('[quote: a [b [c] d] e] and [quote: x]').map((q) => q.quote), ['a [b [c] d] e', 'x']);
+});
+
+// Rank 4: a quote's "fragments may be arbitrarily far apart", so `[quote: free ... requests ...
+// credits]` anchored three scattered words and passed as verified. An ellipsis stands for text
+// left out of ONE passage, not for a jump across the page.
+test('an ellipsis does not bridge a page: the fragments must lie in one passage', () => {
+  const page = `The free plan allows 10 requests. ${'x'.repeat(4000)} A note about credits.`;
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan ... A note about credits]')[0].fragments, page), false,
+    'an ellipsis bridged 4000 characters');
+  const passage = 'The free plan allows 10 requests per minute, and the paid plan grants credits.';
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan allows ... grants credits]')[0].fragments, passage), true,
+    'fragments within one passage still anchor');
+  // A word earlier in the page, out of context, must not hide the passage the quote meant.
+  const twice = `The free plan starts at $0. ${'y'.repeat(1000)} The free plan grants credits.`;
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan ... grants credits]')[0].fragments, twice), true,
+    'the placement is searched, not the first occurrence only');
+});
+
+// Rank 4: the length floor was measured over the JOINED fragments, so three one-word fragments
+// read as three "words" and cleared a floor none of them reaches alone. Measured per fragment,
+// only a quote whose every fragment is weak is short.
+test('the short-quote floor is measured over each fragment, not the joined text', () => {
+  const scattered = quoted('Pricing tiers. [quote: free ... requests ... credits]');
+  assert.equal(scattered.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', JSON.stringify(scattered));
+  const mixed = quoted('Pricing tiers. [quote: free ... includes 1,000 credits]');
+  assert.equal(mixed.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(mixed));
+  assert.equal(mixed.find((f) => f.rule === 'quote-not-found'), undefined, JSON.stringify(mixed));
 });

@@ -9,6 +9,7 @@
 
 import { PassThrough } from 'node:stream';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test, describe, assert, tempDir, cleanup, fs, path, KIT_ROOT, Unsupported } from './harness.mjs';
 import {
   handle, versionProblem, validateArgs, resourceLink, createStdioLoop, exitWhenSettled,
@@ -428,10 +429,27 @@ test('the corpus comes back as a LINK, never as embedded bytes', async () => {
   assert.equal(link.mimeType, 'application/zip');
 });
 
-test('a Windows path becomes a usable file URI', () => {
+test('a path becomes a usable file URI: escaped, resolved, and round-trippable', () => {
   const link = resourceLink('C:\\tmp\\a b\\corpus.zip', { name: 'corpus.zip', description: 'd' });
-  assert.equal(link.uri, 'file:///C:/tmp/a b/corpus.zip',
+  assert.ok(!link.uri.includes('\\'),
     'backslashes are not path separators in a URI, and a client given one cannot open the file');
+  assert.ok(!link.uri.includes(' '), 'a space is not legal unencoded in a URI, so it must be percent-encoded');
+  // Compared through the platform's own decoder instead of against a string, on purpose:
+  // `C:\tmp\...` is a path on Windows and a file NAME on POSIX, and only this platform knows
+  // which. The property that matters is that the URI addresses the file the tool wrote, and a
+  // hand-built URI fails it.
+  assert.equal(fileURLToPath(link.uri), path.resolve('C:\\tmp\\a b\\corpus.zip'));
+});
+
+test('a file name holding # or ? is a file name, not a fragment or a query', () => {
+  // The link is the only handle a client gets for the package. A raw `#` ends the path and
+  // starts a fragment, so the client opens (or fails to open) a file that does not exist - and
+  // the tool reported success.
+  const file = 'C:\\tmp\\q#1\\corpus?x.zip';
+  const link = resourceLink(file, { name: 'corpus?x.zip', description: 'd' });
+  assert.ok(!link.uri.includes('#'), 'a raw # ends the path: everything after it is a fragment');
+  assert.ok(!link.uri.includes('?'), 'a raw ? starts a query: the file name is cut off there');
+  assert.equal(fileURLToPath(link.uri), path.resolve(file), 'the URI must address the file the tool wrote');
 });
 
 test('a relative output folder gives a link to the actual absolute download path', async () => {
