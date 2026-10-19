@@ -440,8 +440,11 @@ export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tem
   if (!isGitRepo(cwd)) return runHere(root);
   const errors = [];
   const unbuilt = (why) => {
-    // git's own first line, when it gave one: the step alone does not say a path was too long or a disk full.
-    const said = String(errors.at(-1) ?? '').split(/\r?\n/).find((line) => line.trim()) ?? '';
+    // git's own line, when it gave one: the step alone does not say a path was too long or a disk full.
+    // Its verdict (`fatal:`, else `error:`) before its first line: a filter's progress line came first
+    // ("Downloading assets.bin (2.0 KB)", git-lfs) and was quoted as git's words (review of PR #430).
+    const lines = String(errors.at(-1) ?? '').split(/\r?\n/).filter((line) => line.trim());
+    const said = lines.find((line) => line.startsWith('fatal:')) ?? lines.find((line) => line.startsWith('error:')) ?? lines[0] ?? '';
     const words = said.slice(0, 200).replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
     return { unbuilt: true, detail: `could not build the commit's tree to run the suite on: ${why}${words ? ` (${words})` : ''}` };
   };
@@ -468,6 +471,14 @@ export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tem
   const commit = Buffer.from(entries.toString('latin1').split('\0')
     .filter((entry) => entry && inCommit.has(entry.slice(entry.indexOf('\t') + 1)))
     .map((entry) => `${entry}\0`).join(''), 'latin1');
+  // A sparse checkout's skip-worktree entries (`ls-files -t` tags them S) stay skipped in the scratch:
+  // `--index-info` drops the bit, and `checkout-index --all` then asked for every blob outside the
+  // cone, which a partial clone never fetched - every kit commit there blocked (review of PR #430).
+  const tagged = git(['ls-files', '-t', '-z'], { cwd, encoding: 'buffer', errors });
+  if (tagged === null) return unbuilt('git ls-files failed');
+  const skipped = Buffer.from(asBytes(tagged).toString('latin1').split('\0')
+    .filter((entry) => entry.startsWith('S ') && inCommit.has(entry.slice(2)))
+    .map((entry) => `${entry.slice(2)}\0`).join(''), 'latin1');
   // Empty as well when HEAD is unborn - a first commit - and the scratch's HEAD stays unborn too.
   const head = String(git(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { cwd }) ?? '').trim();
   sweepAbandonedScratches(tmp);
@@ -484,6 +495,10 @@ export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tem
   // The scratch is its own repository: the hook's GIT_DIR and GIT_INDEX_FILE must not reach it.
   const env = { ...process.env };
   for (const name of REPOSITORY_LOCATION) delete env[name];
+  // checkout-index runs the smudge filters the machine's config defines. git-lfs, for an object the
+  // clone does not hold, went to the network from the commit hook and then blocked; its own switch
+  // leaves the pointer, as a clone made with it does (review of PR #430). The suite's env is its own.
+  env.GIT_LFS_SKIP_SMUDGE = '1';
   const inScratch = (args, options = {}) => git(args, { cwd: scratch, env, errors, ...options });
   // The step that failed, or null once the scratch holds the commit.
   const build = () => {
@@ -494,6 +509,7 @@ export function runSuiteOnCommit(root, { top = null, git = gitCapture, tmp = tem
     fs.mkdirSync(path.join(scratch, '.git', 'objects', 'info'), { recursive: true });
     fs.writeFileSync(path.join(scratch, '.git', 'objects', 'info', 'alternates'), `${store}\n`);
     if (inScratch(['update-index', '-z', '--index-info'], { input: commit }) === null) return 'git update-index failed';
+    if (skipped.length && inScratch(['update-index', '--skip-worktree', '-z', '--stdin'], { input: skipped }) === null) return 'git update-index failed';
     // Windows refuses a path past 260 characters unless core.longpaths is set, and a temp root
     // plus a deep tracked path can pass it (found 2026-10-19 under a 110-character root). A path
     // still too long fails the checkout, and so blocks.

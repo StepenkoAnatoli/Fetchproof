@@ -5,6 +5,15 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The commit's scratch repository, where the suite rule runs the suite, builds in a sparse
+  checkout of a partial clone and in a repository with Git LFS. The build dropped the sparse
+  checkout's skip-worktree bits and asked for every blob outside the cone, which a blobless
+  clone never fetched, so every kit commit there blocked; it now keeps the bits and skips those
+  files, as the working tree does. Its checkout ran git-lfs's smudge filter, which made a
+  network request from the commit hook for an object the clone did not hold and then blocked;
+  the build now leaves LFS pointers in place (`GIT_LFS_SKIP_SMUDGE=1`, for the build only). A
+  scratch that cannot be built quotes git's `fatal:` or `error:` line, not a progress line
+  (review of the 2026-10-19 sweep, ADR-0183 amended).
 - A builder request whose search failed or found nothing on keyless search or SearXNG is
   recorded `failed`, as #321 meant, not `collected` with 0 pages and "pull and read the
   captures". The run wrote its usage row only for a page spent or a search a provider reported,
