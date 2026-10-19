@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The commit hook finds a kit checkout below the top level under `git --literal-pathspecs
+  commit` too. That option hands the hook `GIT_LITERAL_PATHSPECS=1`, the hook's glob for the
+  tracked runners then matched nothing, and the watchdog stayed at 120 s - so the suite the gate
+  still ran was killed and the commit decided by posture, allowed on a fail-open machine. The
+  hook's one `git ls-files` now sets `GIT_LITERAL_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` to 0, as
+  the gate's own lookup already dropped them (review of the 2026-10-19 sweep).
 - A builder request whose id holds `u-<digits>` (`fact-u-9`, `u-3-pricing`) no longer blocks
   its project. The collector tags the plan entries it adds `U-1 request fact-u-9`, and #291's
   check read the id's `u-9` as an unknown the contract does not declare: `research` refused the
