@@ -6,9 +6,10 @@
 // runs the stand-in Node scripts.
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, tempDir, fs, path, makeProject, requireGit, requireSymlink, fixtureInitArgs } from './harness.mjs';
+import { test, describe, assert, assertEqual, tempDir, fs, path, KIT_ROOT, makeProject, requireGit, requireSymlink, fixtureInitArgs } from './harness.mjs';
 import { writeText, readText, readJson, HEADERS } from '../lib/core.mjs';
 import { parseTable, appendRow } from '../lib/corpus.mjs';
+import { planProblems, contractUnknownIds } from '../lib/research-run.mjs';
 import {
   requestProblems, requestProblemsResolved, urlProblem, applyRequest, listRequests, writeResult, settingsProblem, saveAutoCollect, readAutoCollect, requestPages,
 } from '../lib/requests.mjs';
@@ -194,6 +195,36 @@ test('a re-applied request keeps a search the operator had already planned (#322
   applyRequest(project, 'limits', { ...GOOD, unknown: 'U-1', queries: ['vendor burst limit docs'] }, 1);
   assertEqual(JSON.stringify(readJson(planPath).queries.map((q) => [q.q, q.why])),
     JSON.stringify([['vendor rate limits', 'U-1'], ['vendor burst limit docs', 'U-1 request limits']]));
+});
+
+// Review of the 2026-10-19 sweep: a request named after its unknown wrote the tag
+// "U-1 request fact-u-9" into research/plan.json, and #291's check read the id's "u-9" as an
+// unknown the contract does not declare - so research.mjs refused the project's own plan, even
+// in a dry run, and auto-collect's run exited before its accounting: the cap was charged and
+// the collector paused.
+test('a request id holding "u-<n>" is not read as an unknown the plan names', () => {
+  const project = makeProject(undefined, { topic: 'Tagged why', content: true });
+  const { unknown, planFile } = applyRequest(project, 'fact-u-9', { ...GOOD, queries: ['x burst limit'] }, 1);
+  assertEqual(unknown, 'U-1');
+  const unknowns = contractUnknownIds(project);
+  for (const file of ['research/plan.json', planFile]) {
+    const problems = planProblems(readJson(path.join(project, file)), { unknowns });
+    assertEqual(JSON.stringify(problems), '[]', file);
+  }
+  const dryRun = () => spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'research.mjs'), '--dry-run', '--transport', 'http-keyless'], {
+    cwd: project, encoding: 'utf8', timeout: 60_000, windowsHide: true,
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA },
+  });
+  const open = dryRun();
+  assertEqual(open.status, 0, `${open.stdout}${open.stderr}`);
+  assert(/would search "x burst limit"/.test(open.stdout), open.stdout);
+  // The tag's own unknown decides whether its search is still needed, not the id's "u-9".
+  appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-9', 'Another fact', 'the design', 'OPEN', '']);
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  writeText(discovery, readText(discovery).replace(/(\| U-1 \|[^\n]*\| )OPEN( \|)/, '$1CLOSED$2'));
+  const closed = dryRun();
+  assertEqual(closed.status, 0, `${closed.stdout}${closed.stderr}`);
+  assert(/would skip search "x burst limit" - U-1 is closed/.test(closed.stdout), closed.stdout);
 });
 
 test('a request or its collector-owned sibling that is a symbolic link is ignored, and never written through', () => {

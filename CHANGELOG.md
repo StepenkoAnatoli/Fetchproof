@@ -5,6 +5,13 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A builder request whose id holds `u-<digits>` (`fact-u-9`, `u-3-pricing`) no longer blocks
+  its project. The collector tags the plan entries it adds `U-1 request fact-u-9`, and #291's
+  check read the id's `u-9` as an unknown the contract does not declare: `research` refused the
+  project's own plan, dry run included, until the `why` was edited by hand, and auto-collect's
+  run exited before its accounting, so the request was recorded failed, its pages were charged
+  to the daily cap and the collector paused. A tagged `why` is now read by its tag, for the
+  plan check and for the closed-unknown search skip alike (review of the 2026-10-19 sweep).
 - `disclosure --topic "<text>"` looks for the subject again. Merging #303 with #286/#289 left
   a second `checkFlagValues` call that did not name `--topic`, and a flag a call does not name
   takes no value, so every topic - `--topic x` or `--topic=x`, as README and `collect.yml` spell

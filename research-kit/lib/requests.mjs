@@ -18,7 +18,7 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { HEADERS, parseJson, readJson, readText, writeJson, today, nowIso } from './core.mjs';
 import { duplicateKey, parseTable, appendRow } from './corpus.mjs';
-import { DEPTH_SCRAPES, readPlan } from './research-run.mjs';
+import { DEPTH_SCRAPES, readPlan, taggedRequest } from './research-run.mjs';
 import { internalTarget, isInternal } from './http-transport.mjs';
 import { configPath } from './machine.mjs';
 
@@ -206,10 +206,8 @@ export function contractUnknownStatus(project, id) {
  * `U-n request <id>` in `why`. Never the request's own `<id>.plan.json`: it sits in the
  * builder's folder, and a builder's copy must not choose a row or delete an entry. Found
  * 2026-10-11 (#322): every re-run added another OPEN row for the same fact, and the gate failed
- * on the first one for good.
+ * on the first one for good. The tag is read by `taggedRequest`, which the plan check shares.
  */
-const taggedRequest = (why) => (typeof why === 'string' ? /^(U-\d+) request ([a-z0-9-]+)$/.exec(why) : null);
-
 function earlierUnknown(plan, id) {
   for (const entry of [...plan.urls, ...plan.queries]) {
     const m = taggedRequest(entry?.why);

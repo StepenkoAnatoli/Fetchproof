@@ -77,7 +77,18 @@ const SOURCE_TYPES = Object.freeze(['P', 'S', 'L']);
 // A URL that does not parse is still repeated in its problem; whatever stands between its
 // scheme and an `@` is masked first, so a credential in it is not printed either.
 const maskUserinfo = (url) => String(url).replace(/^([a-z][a-z0-9+.-]*:[\\/]*)[^\\/?#]*@/i, '$1…@');
-const unknownIds = (why) => uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+/**
+ * A `why` the collector wrote for a builder request, `U-n request <id>` (`requests.mjs`, #322),
+ * or null. The one reader of that tag: `requests.mjs` finds and replaces its entries with it,
+ * and `unknownIds` reads such a `why` by its tag alone - the id is the builder's name and may
+ * hold `u-9`, which the scan below read as unknown U-9, so the plan check refused the project's
+ * own plan (review of the 2026-10-19 sweep).
+ */
+export const taggedRequest = (why) => (typeof why === 'string' ? /^(U-\d+) request ([a-z0-9-]+)$/.exec(why) : null);
+const unknownIds = (why) => {
+  const tag = taggedRequest(why);
+  return tag ? [tag[1]] : uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+};
 
 export function planProblems(plan, { unknowns = null } = {}) {
   const out = [];
