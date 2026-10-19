@@ -312,8 +312,10 @@ test('a relative RESEARCH_KIT_CONFIG names the same file from every folder of a 
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout);
   });
+  // The native realpath: git names the top level by its long name, and a Windows TEMP can be an
+  // 8.3 short one (C:\Users\RUNNER~1 on CI), which the JavaScript realpath leaves as it is.
   for (const [resolved, role, exitCode] of answers) {
-    assert.equal(fs.realpathSync(resolved), fs.realpathSync(path.join(top, 'rk.json')), `read ${resolved}`);
+    assert.equal(fs.realpathSync.native(resolved), fs.realpathSync.native(path.join(top, 'rk.json')), `read ${resolved}`);
     assert.deepEqual([role, exitCode], ['builder', 1], 'a declared builder must not become the collector default one folder down');
   }
 });
