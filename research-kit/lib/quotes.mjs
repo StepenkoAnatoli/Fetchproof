@@ -19,10 +19,32 @@ export const MIN_QUOTE_WORDS = 3;
  */
 export const MIN_QUOTE_CHARS = 40;
 
-// The marker may hold balanced brackets one level deep - a code subscript (`calls[i].id`) or a
-// Markdown link (`[v0.4.7](url)`). It ended at the first `]` until 2026-09-29, which cut such a
-// quote short and then checked only the stub.
-const QUOTE_RE = /\[quote:\s*((?:[^[\]]|\[[^[\]]*\])*)\]/gi;
+/**
+ * The `[quote: ...]` markers in a cell, each `{ start, end, content }`. A marker opens at
+ * `[quote:` and closes at the `]` that brings the bracket depth back to zero.
+ *
+ * It ended at the first `]` until 2026-09-29, which cut a code subscript (`calls[i].id`) or a
+ * Markdown link (`[v0.4.7](url)`) to a stub and then checked only the stub. A regex bounded to
+ * ONE level of brackets did not even read a passage two levels deep - a link whose own text
+ * held brackets - so such a marker was not a marker at all, and a quote the gate cannot read is
+ * a quote it does not check (rank 4, 2026-10-03 gap audit). Counting brackets has no limit.
+ */
+function markersOf(s) {
+  const starts = [...s.matchAll(/\[quote:/gi)].map((m) => m.index);
+  const out = [];
+  for (const start of starts) {
+    if (out.length && start < out[out.length - 1].end) continue; // inside a marker already taken
+    let depth = 0;
+    let end = -1;
+    for (let j = start; j < s.length; j += 1) {
+      const ch = s[j];
+      if (ch === '[') depth += 1;
+      else if (ch === ']') { depth -= 1; if (depth === 0) { end = j; break; } }
+    }
+    if (end >= 0) out.push({ start, end, content: s.slice(start + '[quote:'.length, end) });
+  }
+  return out;
+}
 
 /**
  * The quote markers in a Finding cell, each split into fragments on an ellipsis (`...` or
@@ -32,8 +54,8 @@ const QUOTE_RE = /\[quote:\s*((?:[^[\]]|\[[^[\]]*\])*)\]/gi;
  */
 export function quoteAnchors(text) {
   const out = [];
-  for (const match of String(text ?? '').matchAll(QUOTE_RE)) {
-    const quote = unwrap(match[1].trim());
+  for (const marker of markersOf(String(text ?? ''))) {
+    const quote = unwrap(marker.content.trim());
     const fragments = quote.split(/\s*(?:\.\.\.|…)\s*/).map((f) => f.trim()).filter(Boolean);
     if (fragments.length) out.push({ quote, fragments });
   }
@@ -91,31 +113,53 @@ export function normalizeForMatch(text) {
 }
 
 /**
- * Whether every fragment occurs in the body, in order. Exact after normalization, with no
- * fuzzy fallback: a 0.92 similarity accepts an invented word inside a real sentence, which
- * is the very failure this exists to catch (the brief's contradiction section).
+ * How far apart an ellipsis may leave two fragments, in the compared (normalized) text, which
+ * has its runs of whitespace collapsed: an ellipsis stands for text left out of ONE passage, not
+ * for a jump across the page. `[quote: free ... requests ... credits]` anchored three words
+ * scattered over a pricing page and passed as a verified quote (rank 4, 2026-10-03 gap audit).
+ * The bound is about a paragraph; a page's length is what made the scatter look plausible.
  */
-export function anchorFound(fragments, body) {
+export const MAX_QUOTE_GAP = 300;
+
+/**
+ * Whether every fragment occurs in the body, in order, each starting no more than `maxGap`
+ * characters after the previous one ends. Exact after normalization, with no fuzzy fallback: a
+ * 0.92 similarity accepts an invented word inside a real sentence, which is the very failure
+ * this exists to catch (the brief's contradiction section). A fragment that normalizes to
+ * nothing is skipped, and an anchor with no fragment left is not found (2026-10-08). A placement
+ * is TRIED at each occurrence, not only at the first: a word that appears earlier out of context
+ * must not hide the passage the quote meant, which a bounded first-occurrence match would.
+ */
+export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
   const haystack = normalizeForMatch(body);
-  let from = 0;
-  let matched = false;
-  for (const fragment of fragments) {
-    const needle = normalizeForMatch(fragment);
-    if (!needle) continue;
-    const at = haystack.indexOf(needle, from);
-    if (at < 0) return false;
-    from = at + needle.length;
-    matched = true;
-  }
-  return matched;
+  const parts = fragments.map((f) => normalizeForMatch(f)).filter(Boolean);
+  if (!parts.length) return false;
+  const place = (i, from, first) => {
+    if (i === parts.length) return true;
+    const needle = parts[i];
+    for (let at = haystack.indexOf(needle, from); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+      // Occurrences are increasing, so once one is past the bound every later one is too.
+      if (!first && at - from > maxGap) return false;
+      if (place(i + 1, at + needle.length, false)) return true;
+    }
+    return false;
+  };
+  return place(0, 0, true);
 }
 
-/** Words in a quote, across its fragments: what MIN_QUOTE_WORDS is measured against. */
-export function quoteWords(anchor) {
-  return anchor.fragments.join(' ').split(/\s+/).filter(Boolean).length;
+/**
+ * Whether a quote anchors almost nothing, measured over EACH fragment rather than the joined
+ * text. An ellipsis joining three one-word fragments (`free ... requests ... credits`) has three
+ * "words" between them and cleared a floor none of the fragments reaches alone (rank 4,
+ * 2026-10-03 gap audit). A single long or multi-word fragment is enough for the quote to be
+ * specific; only when EVERY fragment is under both floors is the whole quote too short.
+ */
+export function quoteTooShort(anchor) {
+  return anchor.fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+    && f.length < MIN_QUOTE_CHARS);
 }
 
-/** Characters in a quote, across its fragments: what MIN_QUOTE_CHARS is measured against. */
+/** Characters in a quote, across its fragments: what MIN_QUOTE_CHARS was measured against. */
 export function quoteChars(anchor) {
   return anchor.fragments.join(' ').length;
 }

@@ -16,7 +16,7 @@ import { test, describe, assert, fs, path } from './harness.mjs';
 import { parseCapture } from '../lib/corpus.mjs';
 import {
   sketch, similarity, shingles, documentGroups, isMirror, closestPair,
-  MIRROR_THRESHOLD, MIN_SHINGLES,
+  MIRROR_THRESHOLD, MIN_SHINGLES, SHINGLE_WORDS,
 } from '../lib/similarity.mjs';
 
 describe('similarity');
@@ -136,4 +136,62 @@ test('closestPair is REPORTED, not acted on - the verdict does not move with it'
   assert.ok(score < MIRROR_THRESHOLD, 'this pair must remain below the mirror line');
   // Two distinct documents stay two distinct documents whatever the number says.
   assert.equal(documentGroups([canonical, other]).length, 2);
+});
+
+// Rank 17 of the 2026-10-04 gap audit. The shingler kept `[a-z0-9]`, so a page in any other
+// script lost every letter to a space, came back with NO shingles, and `sketch` returned null
+// for it - which every caller reads as "cannot tell", so a republished copy of a Russian or
+// Arabic page counted as an independent witness. That is the one finding this module exists
+// to make, inverted for every corpus not written in the Latin alphabet.
+test('a page in a script that is not Latin is fingerprinted, and two copies of it are one document', () => {
+  // No ASCII character anywhere in this page. An earlier version of this test used `слово0`,
+  // `слово1` - and the ASCII DIGITS survived the old `[^a-z0-9]` class, so the page shingled
+  // into `0 1 2 ...` and the test passed against the very code it was written to fail on. A
+  // version after that indexed a 30-letter alphabet modulo 33, so `${undefined}` put the ASCII
+  // word `undefined` into the page. Hence the assertion below, which makes the vacuous case a
+  // failure instead of a pass.
+  const CYR = 'абвгдежзийклмнопрстуфхцчшщыэюя';
+  const words = Array.from({ length: 80 }, (_, i) => `${CYR[i % CYR.length]}${CYR[Math.floor(i / CYR.length)]}${CYR[(i * 5) % CYR.length]}`);
+  const page = words.join(' ');
+  assert.ok(!/[A-Za-z0-9]/.test(page), 'no Latin letter or digit may appear anywhere in this page, or the old [^a-z0-9] class would have had something to hash and the test would prove nothing');
+  assert.equal(new Set(words).size, 80, 'the words must be distinct, or the shingle count below is wrong');
+  assert.equal(shingles(page).size, 80 - SHINGLE_WORDS + 1, 'every window of a page this long must shingle');
+  const copy = words.slice();
+  copy[40] = 'изменение';
+  const a = sketch(page);
+  const b = sketch(copy.join(' '));
+  assert.notEqual(a, null, 'a Cyrillic page must be judgeable at all');
+  assert.equal(isMirror(a, b), true, 'two copies of one page are one document, not two witnesses');
+});
+
+test('an accented word keeps its letters instead of collapsing to its ASCII skeleton', () => {
+  const words = Array.from({ length: 30 }, (_, i) => `café${i} über${i} naïve${i}`);
+  const set = shingles(words.join(' '));
+  assert.ok(set.size > 0, 'accented Latin text must shingle');
+  assert.ok([...set].some((s) => s.includes('café0')), 'the word must survive with its accent');
+  assert.ok(![...set].some((s) => s.includes('caf0')), 'the stripped form must not be what is hashed');
+});
+
+test('canonically equivalent text is one word, composed or decomposed', () => {
+  const composed = Array.from({ length: 60 }, (_, i) => `café${i}`).join(' ');
+  const decomposed = Array.from({ length: 60 }, (_, i) => `cafe\u0301${i}`).join(' ');
+  assert.notEqual(sketch(composed), null);
+  assert.equal(similarity(sketch(composed), sketch(decomposed)), 1, 'é and e + U+0301 are the same word');
+});
+
+// The guard for the two fixes above. Every page that is plain ASCII must shingle EXACTLY as the
+// ASCII-only rule did, because MIRROR_THRESHOLD and the pinned Jaccard in this file were
+// measured on that: after `toLowerCase`, `[^a-z0-9\s]` kept exactly a-z, 0-9 and whitespace,
+// which is what the Unicode class keeps too. If this test ever fails, the threshold no longer
+// rests on the corpus it was measured against.
+test('ASCII text shingles exactly as the ASCII-only rule did', () => {
+  const sample = 'The Free Plan allows 10 requests per minute - see https://x.invalid/limits for the exact wording of the limit.';
+  const oldRule = String(sample).toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const expected = new Set();
+  for (let i = 0; i + SHINGLE_WORDS <= oldRule.length; i += 1) expected.add(oldRule.slice(i, i + SHINGLE_WORDS).join(' '));
+  assert.deepEqual([...shingles(sample)].sort(), [...expected].sort());
 });

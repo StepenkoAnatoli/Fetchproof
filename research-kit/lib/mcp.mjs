@@ -43,6 +43,8 @@
 // discipline as pinning `X-GitHub-Api-Version` on the GitHub side, for the same reason:
 // this protocol has already broken compatibility once.
 
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { dispatchCollection, getRunSummary, fetchCorpus, tokenFromEnv, redact, DispatchError, queriesInput, usableOutDir } from './dispatch.mjs';
 import { KIT_VERSION } from './core.mjs';
 import { checkClientRef } from './artifact.mjs';
@@ -196,12 +198,18 @@ const text = (value) => ({ type: 'text', text: typeof value === 'string' ? value
  * the path it is handed. The spec warns that a link a tool returns "is not guaranteed to
  * appear in the results of a `resources/list` request", so the URI is the handle - there
  * is nothing to rediscover it by.
+ *
+ * The URI is built by the platform's own encoder rather than by concatenation (rank 13,
+ * `docs/review-2026-10-04-gap-audit.md`). Pasting `file:///` onto the path made a `#` end the
+ * path and start a fragment (a package at `q#1/corpus.zip` produced a link to `q`) and a `?`
+ * start a query, left a space unencoded, and anchored a RELATIVE path at the filesystem root
+ * instead of the working directory. `pathToFileURL` escapes exactly what a URI must escape and
+ * resolves against the working directory, so the link addresses the file the tool wrote.
  */
 export function resourceLink(file, { name, description }) {
-  const posix = String(file).split('\\').join('/');
   return {
     type: 'resource_link',
-    uri: `file:///${posix.replace(/^\/+/, '')}`,
+    uri: pathToFileURL(path.resolve(String(file))).href,
     name,
     description,
     mimeType: 'application/zip',

@@ -5,6 +5,33 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- The MCP `fetch_corpus` link is built with the platform's own encoder
+  (`pathToFileURL(path.resolve(file))`) instead of pasting `file:///` onto the path. A `#` in a
+  package name became a fragment and a `?` a query, so the link addressed a file that does not
+  exist; a space was left unencoded; and a relative path was anchored at the filesystem root
+  instead of the working directory (rank 13, `docs/review-2026-10-04-gap-audit.md`).
+- Near-duplicate detection reads a **word in any script**: the Latin-ASCII `[^a-z0-9]` class
+  stripped every non-Latin letter, so a page in Russian, Arabic, Hebrew, Greek or Devanagari
+  shingled to nothing, `sketch` returned null for it, and a republished copy of it was reported
+  as an independent witness - the one finding this module exists to make, inverted. Accented
+  Latin no longer collapses to its ASCII skeleton, and canonically equivalent text is one word
+  (rank 17, `docs/review-2026-10-04-gap-audit.md`; rank 14 of `docs/review-2026-10-03-gap-audit.md`).
+  ASCII input is unchanged, so `MIRROR_THRESHOLD` still rests on the corpus it was measured
+  against (ADR-0163).
+- The collector stamps a fetch's ledger `at` with the moment it happened instead of midnight
+  of its day; a failed fetch already did, so the two sorted against each other wrongly, and the
+  day the capture was retrieved is unchanged in `retrieved` (rank 9,
+  `docs/review-2026-10-04-gap-audit.md`).
+- The WARC export's metadata record names the resource block's own hash (`body-sha256`)
+  beside the capture file's, a ledger `scrape` entry with no date is left out instead of
+  writing a record with an empty mandatory `WARC-Date`, a partial export exits 2
+  (`INCOMPLETE`), and the file it wrote is re-read (rank 7,
+  `docs/review-2026-10-03-gap-audit.md`; rank 15, `docs/review-2026-10-04-gap-audit.md`).
+- The `citations` check reads a `[quote: ...]` marker however deeply its brackets nest (a
+  Markdown link whose own text held brackets was not a marker at all, so the quote went
+  unchecked), holds every fragment within one passage instead of anchoring words scattered
+  over a page, and measures the short-quote floor over each fragment rather than the joined
+  text (rank 4, `docs/review-2026-10-03-gap-audit.md`).
 - `collect-remote` refuses empty repository, topic, client-ref, prior and prefer
   values by name before creating an output directory or reading a token (#287).
 - Invalid `--snapshot-max-age-ms` values are usage errors with exit 2. Library callers

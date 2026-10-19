@@ -215,3 +215,41 @@ test('citations refuse a formatting-only quote that clears a raw length or word 
     .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [],
     'a found forty-character token keeps its existing exemption');
 });
+
+// Rank 4 of the 2026-10-03 gap audit (restated as rank 4 of the 2026-10-04 gap audit): the
+// marker regex read ONE level of brackets, so a passage holding a Markdown link whose own text
+// held brackets was not read as a marker at all - and a quote the gate cannot read is a quote it
+// does not check. A scanner that counts brackets has no depth limit.
+test('a quote may hold brackets more than one level deep, and is actually checked', () => {
+  const deep = 'see [the docs](https://x.invalid/a) and [the list [1]] here';
+  assert.deepEqual(quoteAnchors(`[quote: ${deep}]`).map((q) => q.quote), [deep]);
+  assert.equal(anchorFound(quoteAnchors(`[quote: ${deep}]`)[0].fragments, `We ${deep} today.`), true);
+  assert.deepEqual(quoteAnchors('[quote: a [b [c] d] e] and [quote: x]').map((q) => q.quote), ['a [b [c] d] e', 'x']);
+});
+
+// Rank 4: a quote's "fragments may be arbitrarily far apart", so `[quote: free ... requests ...
+// credits]` anchored three scattered words and passed as verified. An ellipsis stands for text
+// left out of ONE passage, not for a jump across the page.
+test('an ellipsis does not bridge a page: the fragments must lie in one passage', () => {
+  const page = `The free plan allows 10 requests. ${'x'.repeat(4000)} A note about credits.`;
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan ... A note about credits]')[0].fragments, page), false,
+    'an ellipsis bridged 4000 characters');
+  const passage = 'The free plan allows 10 requests per minute, and the paid plan grants credits.';
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan allows ... grants credits]')[0].fragments, passage), true,
+    'fragments within one passage still anchor');
+  // A word earlier in the page, out of context, must not hide the passage the quote meant.
+  const twice = `The free plan starts at $0. ${'y'.repeat(1000)} The free plan grants credits.`;
+  assert.equal(anchorFound(quoteAnchors('[quote: The free plan ... grants credits]')[0].fragments, twice), true,
+    'the placement is searched, not the first occurrence only');
+});
+
+// Rank 4: the length floor was measured over the JOINED fragments, so three one-word fragments
+// read as three "words" and cleared a floor none of them reaches alone. Measured per fragment,
+// only a quote whose every fragment is weak is short.
+test('the short-quote floor is measured over each fragment, not the joined text', () => {
+  const scattered = quoted('Pricing tiers. [quote: free ... requests ... credits]');
+  assert.equal(scattered.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', JSON.stringify(scattered));
+  const mixed = quoted('Pricing tiers. [quote: free ... includes 1,000 credits]');
+  assert.equal(mixed.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(mixed));
+  assert.equal(mixed.find((f) => f.rule === 'quote-not-found'), undefined, JSON.stringify(mixed));
+});

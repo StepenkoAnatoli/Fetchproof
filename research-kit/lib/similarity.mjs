@@ -20,8 +20,22 @@
 export function shingles(text, n = SHINGLE_WORDS) {
   const words = String(text ?? '')
     .toLowerCase()
+    // Canonically equivalent text is the SAME text: `é` and `e` + U+0301 are one word spelled
+    // once or twice, and composing first is what keeps the combining marks below from making
+    // one word into two different ones. NFC only - NFKC is deliberately NOT used, because it
+    // folds characters a page did not equate (`①` into `1`), and this measurement must not
+    // invent an equivalence the text does not have.
+    .normalize('NFC')
     .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[^a-z0-9\s]+/g, ' ')
+    // A WORD, in any script (rank 17, 2026-10-04 gap audit). This class was `[^a-z0-9]`, so a
+    // page in Russian, Arabic, Hebrew, Greek or Devanagari lost every letter to a space: the
+    // page shingled to nothing, `sketch` returned null for it, and `documentGroups` read a
+    // republished copy of it as an independent witness - the one finding this module exists to
+    // make. `\p{L}` letters, `\p{N}` numbers, `\p{M}` the combining marks that carry the vowels
+    // of Devanagari and Arabic. ASCII input is untouched, and that is not luck: after
+    // `toLowerCase` the old class kept exactly a-z, 0-9 and whitespace, which is what these
+    // keep, so no ASCII page's sketch moves (test/similarity.test.mjs pins that).
+    .replace(/[^\p{L}\p{N}\p{M}\s]+/gu, ' ')
     .split(/\s+/)
     .filter(Boolean);
   const out = new Set();

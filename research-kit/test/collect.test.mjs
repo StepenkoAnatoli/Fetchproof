@@ -1837,6 +1837,26 @@ test('force recollects a search-found fresh capture without changing URL identit
   }
 });
 
+// Rank 9 of the 2026-10-04 gap audit: the ledger's `at` for a scrape was `T00:00:00.000Z` - a
+// day written as a millisecond instant - while a failed fetch used the real time, so the two
+// sorted against each other wrongly. The moment the fetch happened belongs in `at`; the day
+// stays in the capture's `retrieved` and in the evidence row.
+test('a scrape is stamped with the moment it happened, not midnight of its day', () => {
+  const dir = makeProject();
+  const when = new Date('2026-10-08T12:34:56.789Z');
+  const markdown = `# Limits\n\n${'The free plan allows 10 requests per minute. '.repeat(40)}`;
+  const outcome = collectOne(dir, 'https://x.invalid/limits', {
+    runScrape: (u) => ({ ok: true, url: u, title: 'Limits', markdown, statusCode: 200,
+      transport: 'stub-transport', completeness: 'full', omitted: '', cmd: `stub scrape ${u}` }),
+    corpus: readCorpus(dir), transportName: 'stub-transport', date: '2026-10-08', now: when,
+  });
+  assert.equal(outcome.status, 'collected', outcome.reason);
+  const entry = readCorpus(dir).ledger.entries.at(-1);
+  assert.equal(entry.at, '2026-10-08T12:34:56.789Z', 'the ledger holds the moment, not a midnight placeholder');
+  const retrieved = readText(resolve(dir, outcome.entry.file)).match(/^retrieved: (.+)$/m);
+  assert.equal(retrieved && retrieved[1], '2026-10-08', 'the day the capture was retrieved stays the day');
+});
+
 test('fresh search hits leave selection room while same-run and plan aliases stay deduplicated', () => {
   const fresh = searchCacheFixture({ seedDate: '2026-10-08' });
   assert.equal(fresh.before.hit, true);
