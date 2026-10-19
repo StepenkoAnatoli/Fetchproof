@@ -5,6 +5,13 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A spaced quote in Chinese or Japanese - `[quote: 每月 20 美元]`, `月額 1,980 円`,
+  `API 料金 limits` - is checked against its capture again. The weight that let an elided quote
+  of full sentences be checked replaced the count on spaces, and such a fragment weighs one
+  word and a few characters, so it warned `quote-too-short` and was never compared: a quote
+  with an altered figure passed with that warning instead of failing `quote-not-found`. A
+  fragment is now short only when it is short by both counts, so every quote checked before
+  the weight is checked still (second review of the 2026-10-19 sweep, ADR-0162 amended).
 - Two `collect-remote` tests no longer fail for a contributor whose temp folder holds the word
   "token" (`C:\...\gittoken\...`). They proved that a refusal came before the token check by
   the first line's lack of "token", and the `--out` refusal names the folder; they now assert

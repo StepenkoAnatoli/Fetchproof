@@ -3,7 +3,7 @@
 - **Date:** 2026-10-17
 - **Status:** accepted; amended 2026-10-19 (review of the 2026-10-19 sweep): in the
   per-fragment floor a character of a script without word spaces weighs a third of a word, as
-  in ADR-0176
+  in ADR-0176, and a fragment is short only when it is short both by that weight and on spaces
 - **Area:** `research-kit/lib/quotes.mjs`, `research-kit/lib/checks.mjs` (ADR-0087). A fix to
   the quote check's own reading, not a new capability: it adds no command, flag, transport,
   provider, configuration key or check.
@@ -91,9 +91,10 @@ this ADR, the same quote was 50 characters and was checked.
 `quoteTooShort` now weighs each fragment the way `similarity.mjs` does (ADR-0176): one
 character of a script without word spaces, with its marks, weighs `1/CHARS_PER_WORD` of a
 word, and every other whitespace-separated run is a word. A fragment is short when it weighs
-under `MIN_QUOTE_WORDS` words (nine such characters) AND is under `MIN_QUOTE_CHARS`
-characters. The character class (`UNSPACED_CHARACTER`) and the weight (`CHARS_PER_WORD`)
-are imported from `similarity.mjs`, not copied, so the two measurements cannot drift apart.
+under `MIN_QUOTE_WORDS` words (nine such characters), has under `MIN_QUOTE_WORDS`
+whitespace-separated words, AND is under `MIN_QUOTE_CHARS` characters. The character class
+(`UNSPACED_CHARACTER`) and the weight (`CHARS_PER_WORD`) are imported from `similarity.mjs`,
+not copied, so the two measurements cannot drift apart.
 A fragment with no character of such a script weighs exactly what it did, so no quote in any
 other script changes verdict.
 
@@ -104,3 +105,16 @@ where the weight asks the same amount of text of every fragment in every script.
 punctuation, as the shingles do.** ADR-0126 kept punctuation inside a word (a dependency map,
 an identifier); here an ideographic comma or full stop counts as one character, so at most
 seven ideographs and two stops clear the floor, which is still a clause.
+
+Corrected the same day (second review of the 2026-10-19 sweep, F1): the weight first
+REPLACED the count on spaces, and a spaced fragment in such a script weighs less than its
+spaces say. `每月 20 美元` is three whitespace-separated words, so it was checked before this
+amendment, but it weighs one word and four characters, under the floor: it warned
+`quote-too-short`, and `每月 25 美元` against a capture saying `每月 20 美元` passed with that
+warning instead of failing `quote-not-found`. So did `月額 1,980 円` and `API 料金 limits` -
+the usual spacing of Chinese and Japanese pricing pages. The weight now only adds checking: a
+fragment is short only when it is short on spaces too, so every fragment checked before this
+amendment is still checked. Rejected: **weigh each whitespace-separated run as at least one
+word.** It keeps a single measure, but it is a third definition of a word beside ADR-0126's
+(on spaces) and ADR-0176's (by weight). Taking both existing counts needs no new one, and the
+warning's "no fragment reaches 3 words" is then true by either.

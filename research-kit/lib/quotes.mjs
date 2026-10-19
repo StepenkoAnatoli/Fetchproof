@@ -192,9 +192,15 @@ export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
  * full sentences joined by an ellipsis - each under MIN_QUOTE_CHARS - warned quote-too-short
  * and were never compared with the capture, and an invented figure in them passed (review of
  * the 2026-10-19 sweep). A fragment in no such script weighs exactly what it did before.
+ *
+ * The weight only ever adds checking: a fragment is short when it is short by BOTH counts, on
+ * spaces and by weight. Weighed alone, a spaced fragment such as `每月 20 美元` - three words on
+ * spaces, checked before - was one word and four characters, so it warned and an altered figure
+ * in it passed (second review of the 2026-10-19 sweep, F1).
  */
 export function quoteTooShort(anchor) {
-  return anchor.fragments.every((f) => fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
+  return anchor.fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+    && fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
     && f.length < MIN_QUOTE_CHARS);
 }
 

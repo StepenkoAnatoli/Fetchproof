@@ -310,3 +310,22 @@ test('an elided quote in a script without word spaces is checked, and a short on
   assert.equal(quoteTooShort(quoteAnchors('[quote: free plan]')[0]), true);
   assert.equal(quoteTooShort(quoteAnchors('[quote: the free plan]')[0]), false);
 });
+
+// Second review of the 2026-10-19 sweep, F1: the weight above made a spaced Chinese or Japanese
+// fragment lighter than its spaces said. `每月 20 美元` is three whitespace words, so it was
+// checked; weighed, it is one word and four characters, under the floor, so it warned
+// quote-too-short and was never compared with the capture - an altered figure passed with a
+// warning. A fragment is short only when it is short by both counts.
+test('a spaced fragment of three words in a script without word spaces is still checked', () => {
+  for (const quote of ['每月 20 美元', '月額 1,980 円', 'API 料金 limits']) {
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), false, `${quote}: three words on spaces are not short`);
+  }
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 每月 美元]')[0]), true, 'short by both counts stays short');
+
+  const page = '专业版每月 20 美元，包含 10,000 次请求。';
+  const rules = (judged) => judged.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found');
+  assert.deepEqual(rules(quotedToken(page, 'Pro price. [quote: 每月 20 美元]')), [], 'the real figure is a quote found');
+  const altered = quotedToken(page, 'Pro price. [quote: 每月 25 美元]');
+  assert.equal(altered.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(altered));
+  assert.equal(altered.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(altered));
+});
