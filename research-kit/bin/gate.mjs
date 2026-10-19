@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import { parseFlags, flagList, refuseUnknownFlags, checkFlagValues, PATHS, resolve, isDirectory } from '../lib/core.mjs';
-import { evaluate, readStagedPaths, splitPathList, stdinIsReadable, isGated, stagedProjects, trackedContracts, shellWord, SUITE_RULE } from '../lib/gate.mjs';
+import { evaluate, readStagedPaths, splitPathList, stdinIsReadable, isGated, stagedProjects, trackedContracts, shellWord, SUITE_RULE, headEvidenceRemoval } from '../lib/gate.mjs';
 import { posture } from '../lib/machine.mjs';
 import { recordDiagnostic } from '../lib/timeline.mjs';
 
@@ -97,9 +97,13 @@ if (isGated(cwd)) {
     process.stderr.write('research gate: git could not list the staged paths, so no project below this top level was judged\n');
     notGated();
   }
+  // No gate marker left on disk here is not "nothing to judge" when the commit takes the evidence
+  // HEAD holds for this top level: `rm -rf research && git add -A` (ADR-0184). Asked only when a
+  // staged path is under research/raw/, so a commit that stages none pays nothing new.
+  const atTop = headEvidenceRemoval(cwd, { stagedPaths: staged }) ? [{ root: cwd, project: null, stagedPaths: staged }] : [];
   // One git ls-files names every tracked research/DISCOVERY.md, so a repository with no project
   // pays one call and no per-folder disk reads (#309); null falls back to asking the disk.
-  judged = stagedProjects(cwd, staged, { contracts: trackedContracts(cwd) }).map((group) => ({ ...group, top: cwd }));
+  judged = [...atTop, ...stagedProjects(cwd, staged, { contracts: trackedContracts(cwd) }).map((group) => ({ ...group, top: cwd }))];
   if (!judged.length) notGated();
 }
 

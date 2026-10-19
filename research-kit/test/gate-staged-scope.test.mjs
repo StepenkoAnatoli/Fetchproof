@@ -1,6 +1,7 @@
 // ADR-0154: an unknown staged set is not an empty staged set. These cases use the
 // real verdict with an injected corpus/list reader and do not run a suite or hook; the #309
-// cases at the end run bin/gate.mjs over a scratch repository, from its top level, as the hook does.
+// cases at the end, and ADR-0184's after them, run bin/gate.mjs over a scratch repository, from
+// its top level, as the hook does.
 import { spawnSync } from 'node:child_process';
 import { test, describe, assert, makePassingProject, makeProject, tempDir, fs, path, KIT_ROOT, requireGit, fixtureInitArgs, fixtureCommitArgs } from './harness.mjs';
 import { PATHS, resolve, writeText, writeJson } from '../lib/core.mjs';
@@ -258,4 +259,184 @@ test('assigning 30,000 staged paths in 9,000 folders to projects is bounded by t
   const elapsed = Date.now() - started;
   assert.deepEqual(groups.map((g) => [g.project, g.stagedPaths.length]), [['pkg7', 1002]]);
   assert.ok(elapsed < 5000, `30,000 staged paths took ${elapsed} ms - every commit in a large repository pays this`);
+});
+
+// Review of the 2026-10-19 sweep (hooks F1, ADR-0184): #312's rule - a capture the ledger names is
+// never removed - was asked only while the disk still showed the project gated and the index still
+// held part of its research/. `rm -rf research && git add -A` left no marker, so the gate answered
+// "not-gated" and the corpus left the branch without a record. `git rm -r research` usually leaves
+// the gate's own research/raw/.diagnostics.jsonl behind, and that commit was refused as "no part of
+// research/ is tracked", with a fix that exits 128. Below the top, `git rm -r packages/a/research`
+// beside the project's code was "allow in packages/a - no gate marker". A project below the top
+// that goes whole - deleted or moved - is not judged where it was; the top level always stays.
+const ledgerGone = /research\/raw\/\.fetches\.jsonl is in HEAD and is being deleted/;
+const ledgerFix = /restore it \(git checkout HEAD -- research\/raw\/\.fetches\.jsonl\)/;
+const gitIn = (cwd) => (args, at = cwd) => {
+  const r = spawnSync('git', args, { cwd: at, encoding: 'utf8' });
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout;
+};
+
+/** A passing project committed at the top level, with the log a commit's gate writes on disk. */
+function committedTop() {
+  requireGit('a commit that removes the evidence HEAD holds');
+  const top = makePassingProject();
+  const run = gitIn(top);
+  run(fixtureInitArgs());
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['config', 'user.name', 'Fixture']);
+  run(['add', '-A', '-f']);
+  run(fixtureCommitArgs('the corpus'));
+  const first = gateCli(top, []);
+  assert.equal(first.status, 0, `the committed corpus must pass:\n${first.stdout}${first.stderr}`);
+  const diagnostics = path.join(top, ...PATHS.raw.split('/'), '.diagnostics.jsonl');
+  assert.ok(fs.existsSync(diagnostics), 'the gate writes its log into research/raw/ on every commit');
+  return { top, run, diagnostics };
+}
+
+/** monorepo({ passing: true }) with the project's own code committed beside its corpus. */
+function monorepoWithCode() {
+  const { top, project, run } = monorepo({ passing: true });
+  writeText(path.join(project, 'app.js'), 'export const x = 1;\n');
+  run(['add', 'packages/a/app.js']);
+  // The gate judges packages/a when a staged path is in it, and writes its log there then.
+  const first = gateCli(top, []);
+  assert.equal(first.status, 0, `the project must pass:\n${first.stdout}${first.stderr}`);
+  run(fixtureCommitArgs('the project\'s code'));
+  const diagnostics = path.join(project, ...PATHS.raw.split('/'), '.diagnostics.jsonl');
+  assert.ok(fs.existsSync(diagnostics), 'the gate writes its log into the project\'s research/raw/');
+  return { top, project, run, diagnostics };
+}
+
+test('ADR-0184: at the top level, rm -rf research && git add -A blocks, naming the ledger HEAD holds', () => {
+  const { top, run } = committedTop();
+  const research = path.join(top, 'research');
+  fs.rmSync(research, { recursive: true, force: true });
+  run(['add', '-A']);
+  const r = gateCli(top, []);
+  assert.equal(r.status, 1, `deleting research/ turned the gate off without a record:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /research gate: BLOCKED - /);
+  assert.match(r.stderr, ledgerGone);
+  assert.match(r.stderr, ledgerFix);
+  assert.match(r.stderr, /research\/GATE_OFF +turn the gate off for this repository/);
+  const json = JSON.parse(gateCli(top, ['--json']).stdout);
+  assert.equal(json.allow, false);
+  assert.match(json.reason, ledgerGone);
+  // The override is the one AGENTS.md names, and it is recorded.
+  writeText(path.join(research, 'GATE_OFF'), 'removing the corpus, deliberately\n');
+  const off = gateCli(top, []);
+  assert.equal(off.status, 0, `GATE_OFF did not turn the gate off:\n${off.stdout}${off.stderr}`);
+  assert.match(off.stdout, /research gate: OFF - /);
+  assert.match(fs.readFileSync(path.join(research, 'overrides.log'), 'utf8'), /GATE_OFF\tcommit gate/);
+});
+
+test('ADR-0184: at the top level, git rm -r research blocks on the ledger, with or without the gate\'s log left, and its fix runs', () => {
+  for (const leftover of [true, false]) {
+    const { top, run, diagnostics } = committedTop();
+    run(['rm', '-r', '-q', 'research']);
+    if (!leftover) fs.rmSync(path.join(top, 'research'), { recursive: true, force: true });
+    assert.equal(fs.existsSync(diagnostics), leftover, 'git rm -r leaves the ignored log, and only it, on disk');
+    const r = gateCli(top, []);
+    const said = `${r.stdout}${r.stderr}`;
+    assert.equal(r.status, 1, `git rm -r research (log left: ${leftover}) was committable:\n${said}`);
+    assert.match(r.stderr, ledgerGone, `log left: ${leftover}`);
+    assert.match(r.stderr, ledgerFix);
+    // Not "nothing was ever tracked": its `git add -f research/raw/.fetches.jsonl` exits 128 here.
+    assert.doesNotMatch(said, /no part of research\/ is tracked|git add research\//);
+    // The printed command runs, and the next verdict names the capture still being deleted.
+    run(['checkout', 'HEAD', '--', PATHS.ledger]);
+    const next = gateCli(top, []);
+    assert.equal(next.status, 1);
+    assert.match(next.stderr, /research\/raw\/[^ ]+\.md \(seq 1\) is recorded in the ledger and being deleted/);
+  }
+});
+
+test('ADR-0184: below the top, removing a project\'s research/ while its code stays blocks in that project', () => {
+  for (const leftover of [true, false]) {
+    const { top, project, run, diagnostics } = monorepoWithCode();
+    fs.appendFileSync(path.join(project, 'app.js'), 'export const y = 2;\n');
+    run(['rm', '-r', '-q', 'packages/a/research']);
+    if (!leftover) fs.rmSync(path.join(project, 'research'), { recursive: true, force: true });
+    run(['add', '-A']);
+    assert.equal(fs.existsSync(diagnostics), leftover);
+    const r = gateCli(top, []);
+    assert.equal(r.status, 1, `packages/a's evidence left with its code staged (log left: ${leftover}):\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /research gate: BLOCKED in packages\/a - research\/raw\/\.fetches\.jsonl is in HEAD and is being deleted/);
+    assert.match(r.stderr, /Fix: \(from packages\/a\) restore it \(git checkout HEAD -- research\/raw\/\.fetches\.jsonl\)/);
+    assert.match(r.stderr, /packages\/a\/research\/GATE_OFF +turn the gate off for that project/);
+    assert.doesNotMatch(r.stderr, /no part of research\/ is tracked/);
+    // Run from the project, as printed, the fix restores the ledger.
+    run(['checkout', 'HEAD', '--', PATHS.ledger], project);
+    assert.ok(fs.existsSync(path.join(project, ...PATHS.ledger.split('/'))));
+  }
+  // The project's own override still turns it off, and is recorded there.
+  const { top, project, run } = monorepoWithCode();
+  run(['rm', '-r', '-q', 'packages/a/research']);
+  fs.rmSync(path.join(project, 'research'), { recursive: true, force: true });
+  writeText(path.join(project, 'research', 'GATE_OFF'), 'removing the corpus, deliberately\n');
+  const off = gateCli(top, []);
+  assert.equal(off.status, 0, `${off.stdout}${off.stderr}`);
+  assert.match(off.stdout, /research gate: OFF in packages\/a - /);
+  assert.match(fs.readFileSync(path.join(project, 'research', 'overrides.log'), 'utf8'), /GATE_OFF/);
+});
+
+test('ADR-0184: below the top, a project deleted whole is not judged, with or without the gate\'s log left', () => {
+  for (const leftover of [true, false]) {
+    const { top, project, run, diagnostics } = monorepoWithCode();
+    run(['rm', '-r', '-q', 'packages/a']);
+    if (!leftover) fs.rmSync(project, { recursive: true, force: true });
+    assert.equal(fs.existsSync(diagnostics), leftover);
+    const r = gateCli(top, []);
+    assert.equal(r.status, 0, `deleting a whole project below the top (log left: ${leftover}) was refused:\n${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /research gate: allow in packages\/a - /);
+    assert.doesNotMatch(r.stdout + r.stderr, /BLOCKED/);
+  }
+});
+
+test('ADR-0184: below the top, a project moved whole is judged where it went, not where it was', () => {
+  const { top, run } = monorepoWithCode();
+  run(['mv', 'packages/a', 'packages/b']);
+  const r = gateCli(top, []);
+  assert.equal(r.status, 0, `moving a whole project was refused:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /research gate: allow in packages\/a - /);
+  assert.match(r.stdout, /research gate: allow in packages\/b - the gate passes/);
+  assert.doesNotMatch(r.stdout + r.stderr, /being deleted|BLOCKED/);
+});
+
+test('ADR-0184: with no HEAD, or no ledger in HEAD, the verdict is what it was', () => {
+  requireGit('a first commit, and a repository without the kit');
+  {
+    // A first commit with research/ untracked: the corpus never travelled - nothing was removed.
+    const top = makePassingProject();
+    const run = gitIn(top);
+    run(fixtureInitArgs());
+    writeText(path.join(top, 'README.md'), '# first\n');
+    run(['add', 'README.md']);
+    const r = gateCli(top, []);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /no part of research\/ is tracked/);
+    assert.match(r.stderr, /Fix: git add research\/ && git add -f research\/raw\/\.fetches\.jsonl/);
+    // And with research/ staged, the first commit passes.
+    run(['add', '-A', '-f']);
+    const staged = gateCli(top, []);
+    assert.equal(staged.status, 0, `${staged.stdout}${staged.stderr}`);
+  }
+  {
+    // A repository without the kit whose HEAD holds research/raw/data.csv and no ledger.
+    const top = tempDir('rk-noledger-');
+    const run = gitIn(top);
+    run(fixtureInitArgs());
+    run(['config', 'user.email', 'fixture@example.invalid']);
+    run(['config', 'user.name', 'Fixture']);
+    writeText(path.join(top, 'research', 'raw', 'data.csv'), 'a,b\n1,2\n');
+    writeText(path.join(top, 'src', 'app.js'), 'x\n');
+    run(['add', '-A']);
+    run(fixtureCommitArgs('data, not a corpus'));
+    run(['rm', '-q', 'research/raw/data.csv']);
+    assert.equal(fs.existsSync(path.join(top, 'research')), false, 'the fixture must leave no marker on disk');
+    const r = gateCli(top, []);
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout + r.stderr, '', 'an ungated repository stays silent');
+    assert.equal(run(['status', '--porcelain', '--untracked-files=all', '--ignored']), 'D  research/raw/data.csv\n', 'the gate wrote into a repository without the kit');
+  }
 });

@@ -753,9 +753,19 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   runSuite = null, announceSuite = null } = {}) {
   const base = { gate, root, fix: fixCommand() };
 
-  if (!isGated(root)) {
-    return { ...base, verdict: 'not-gated', allow: true, reason: 'no gate marker in this project', findings: [] };
-  }
+  // What the commit takes from the evidence HEAD holds, asked where research/ has left the disk
+  // or the index (ADR-0184). Not of an injected corpus, and not by the edit gate.
+  const headTaken = () => (gate === 'commit' && !corpus
+    ? headEvidenceRemoval(root, { top, stagedPaths, stagedText, listDeleted, headLedger }) : null);
+  const removedWhole = { ...base, verdict: 'not-gated', allow: true, reason: REMOVED_WHOLE, findings: [] };
+  const takenBlock = (taken) => ({ ...base, verdict: 'block', allow: false, judged: 'index', reason: taken.reason, fix: taken.fix, findings: [] });
+
+  // No marker left on disk is not "nothing to judge" when the commit takes HEAD's evidence:
+  // `rm -rf research && git add -A` turned the gate off without a record (ADR-0184).
+  const gated = isGated(root);
+  const taken = gated ? null : headTaken();
+  if (!gated && !taken) return { ...base, verdict: 'not-gated', allow: true, reason: 'no gate marker in this project', findings: [] };
+  if (taken?.whole) return removedWhole;
 
   if (exists(resolve(root, PATHS.gateOff))) {
     if (record) { try { recordOverride(root, 'GATE_OFF', `${gate} gate`); } catch { /* read-only checkout */ } }
@@ -765,6 +775,8 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
       findings: [],
     };
   }
+
+  if (taken) return takenBlock(taken);
 
   if (gate === 'commit' && stagedPaths === undefined && listStaged !== null) {
     let listed;
@@ -791,6 +803,12 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
       // yet tracked, which is every fresh project's first commit, leaked one temp
       // directory (found 2026-09-28, break-test).
       try { fs.rmSync(materialised.dir, { recursive: true, force: true }); } catch { /* best effort, matching the finally */ }
+      // Unless HEAD holds the evidence: then the commit removes it. `git rm -r research` leaves
+      // the gate's own research/raw/.diagnostics.jsonl on disk, so the project is still gated
+      // here, and "git add research/" was a fix that exits 128 (ADR-0184).
+      const removal = headTaken();
+      if (removal?.whole) return removedWhole;
+      if (removal) return takenBlock(removal);
       // The working tree is gated and the index holds no corpus at all: research/ is
       // untracked. Reporting that as "your contract is missing" sends the operator to
       // look for a file that is sitting right there. The real defect is that the
@@ -1033,6 +1051,52 @@ function evidenceRemoval(snapshot, stagedPaths, { listDeleted, headLedger }) {
     reason: `${deleted.slice(0, 3).map((d) => `${d.file} (seq ${d.seq})`).join(', ')}${deleted.length > 3 ? ` and ${deleted.length - 3} more` : ''} ${one ? 'is' : 'are'} recorded in the ledger and being deleted - ${integrity}`,
     fix: restore(deleted.map((d) => d.file)),
   };
+}
+
+const REMOVED_WHOLE = 'no path in this project stays tracked after the commit - a project deleted or moved whole is not judged where it was (ADR-0184)';
+
+/**
+ * What a commit takes from the evidence HEAD holds for a project whose research/ has left the
+ * disk or the index (ADR-0184): `evidenceRemoval` over the staged ledger, asked where `evaluate`
+ * had answered without it - no gate marker left on disk ("not-gated"), or no part of research/
+ * left in the index ("not tracked", whose `git add` fix exits 128 for a deleted ledger). The
+ * removal as a block's reason and fix; `{ whole: true }` for a project below the top level that
+ * keeps no tracked path - deleted or moved whole, so nothing there rests on the evidence, and it
+ * is not judged where it was; the top level always stays. null when nothing is taken, when no
+ * staged path is under research/raw/ (no git call), or with no repository at the project, where
+ * git would answer for one above it. bin/gate.mjs asks it of an ungated top level, so the hook's
+ * choice of what to judge and the verdict cannot disagree.
+ */
+export function headEvidenceRemoval(root, { top = null, stagedPaths = null,
+  stagedText = (rel) => readStagedText(root, rel, { top }),
+  listDeleted = () => stagedRawDeletions(root, { top }),
+  headLedger = () => readHeadLedger(root, { top }),
+  remains = () => projectRemains(root, { top }) } = {}) {
+  const posix = (p) => String(p).split('\\').join('/').replace(/^\.\//, '');
+  if (Array.isArray(stagedPaths) && !stagedPaths.some((p) => posix(p).startsWith(`${PATHS.raw}/`))) return null;
+  if (!isGitRepo(top ?? root)) return null;
+  let text;
+  try { text = stagedText(PATHS.ledger); } catch { text = null; }
+  const ledger = typeof text === 'string' ? { present: true, entries: ledgerEntries(text) } : { present: false, entries: [] };
+  const removal = evidenceRemoval({ ledger }, stagedPaths, { listDeleted, headLedger });
+  if (!removal) return null;
+  return top && !remains() ? { whole: true } : removal;
+}
+
+/**
+ * Whether a project below `top` keeps a tracked path after the commit: one `git ls-files` of its
+ * folder in the index, asked only once a removal was found. Read literally, whatever pathspec
+ * settings the committer's environment carries, so a folder whose name holds a glob character is
+ * that folder; git cannot combine literal with the other three, so they are dropped. A git that
+ * cannot answer counts as kept - the blocking direction. The top level is always kept.
+ */
+function projectRemains(root, { top = null, run = gitCapture } = {}) {
+  const prefix = projectPrefix(top, root);
+  if (!prefix) return true;
+  const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1' };
+  for (const name of ['GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS']) delete env[name];
+  const text = run(['ls-files', '-z', '--', prefix], { cwd: top, env });
+  return typeof text !== 'string' || text.length > 0;
 }
 
 export { GATE_MARKERS, fixCommand };

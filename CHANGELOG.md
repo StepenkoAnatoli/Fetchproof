@@ -5,6 +5,15 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- A commit that removes a project's `research/` is judged by #312's rule again. `rm -rf research
+  && git add -A` at the top level left no gate marker, so the gate answered not-gated and the
+  commit took the corpus and turned the gate off with no record; `git rm -r research`, with the
+  gate's own ignored `.diagnostics.jsonl` left on disk, was told "no part of research/ is
+  tracked" and a `git add research/` that exits 128; and below the top level, removing
+  `packages/a/research` while `packages/a`'s code stayed was allowed. Each now blocks naming the
+  ledger HEAD holds, with `git checkout HEAD --` as the fix and `research/GATE_OFF` as the recorded
+  override. A project below the top deleted or moved whole is not judged where it was, as before
+  (ADR-0184; review of the 2026-10-19 sweep).
 - The commit's scratch repository, where the suite rule runs the suite, builds in a sparse
   checkout of a partial clone and in a repository with Git LFS. The build dropped the sparse
   checkout's skip-worktree bits and asked for every blob outside the cone, which a blobless

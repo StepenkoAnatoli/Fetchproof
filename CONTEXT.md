@@ -78,7 +78,7 @@ human; if a decision is genuinely wrong, write a new ADR that supersedes it.
 
 | Term | Meaning |
 |---|---|
-| **gated project** | At the repository's top level, a project holding any one **gate marker**. Below the top level, a folder holding `research/DISCOVERY.md` and either `research/raw/` or a contract `new-project` rendered (ADR-0182). |
+| **gated project** | At the repository's top level, a project holding any one **gate marker**. Below the top level, a folder holding `research/DISCOVERY.md` and either `research/raw/` or a contract `new-project` rendered (ADR-0182). A commit that removes the evidence HEAD holds for a project is judged as one even with no marker left on disk, unless the project is below the top level and keeps no tracked path - deleted or moved whole (ADR-0184). |
 | **gate marker** | One of exactly four artifacts: `research/DISCOVERY.md`, `research/plan.json`, `research/EVIDENCE.md`, `research/raw/`. Declared once, in `research-kit/lib/scaffold.mjs`; the predicate derives from it. |
 | **gate verdict** | The single answer to *is this project gated, and does it pass?* — `evaluate()` in `research-kit/lib/gate.mjs`, consumed by all three callers so they cannot disagree. |
 | **verdict context** | The unit the verdict reads: the research corpus, the machine-side gate state, and the operator's evidence policy. Owned by `verdictContext()` in `research-kit/lib/preflight.mjs` — preflight, doctor, and the gate path all consume it, so the same snapshot cannot yield a different verdict. |
