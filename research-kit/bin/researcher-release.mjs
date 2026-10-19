@@ -23,19 +23,39 @@ function usage() {
   ].join('\n');
 }
 
+// The flags each subcommand reads, as its usage names them. Any other flag, a word no flag
+// takes and a flag given twice (but --file) are usage errors (review of the 2026-10-19 sweep,
+// F2): a typo such as `conform --fiel a.json` was stored and never read, so every file under
+// the root was judged, and a repeated --schema or --root was replaced by the last, in silence.
+const KNOWN_FLAGS = {
+  validate: ['root', 'package', 'registry', 'roles', 'pointers', 'schemas', 'ledger', 'genesis', 'checkpoints',
+    'head', 'keys', 'genesis-hash', 'snapshot-max-age-ms', 'json'],
+  conform: ['root', 'schema', 'file', 'json'],
+  'fi-validate': ['root', 'workbook', 'records', 'manifest', 'report', 'json'],
+};
+
 function argsAfterCommand(argv) {
   const command = argv[0];
+  const known = KNOWN_FLAGS[command];
   const result = { command, _: [] };
+  const seen = new Set();
   for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--json') { result.json = true; continue; }
-    if (arg.startsWith('--')
-      && (argv[i + 1] === undefined || argv[i + 1] === '' || argv[i + 1].startsWith('--'))) {
+    if (!arg.startsWith('--')) { result._.push(arg); continue; }
+    if (known && !known.includes(arg.slice(2))) {
+      return { error: `unknown option ${arg} - ${command} takes ${known.map((flag) => `--${flag}`).join(' ')}` };
+    }
+    if (arg !== '--json' && (argv[i + 1] === undefined || argv[i + 1] === '' || argv[i + 1].startsWith('--'))) {
       return { error: `${arg} needs a value` };
     }
-    if (arg === '--file') { result.files ??= []; result.files.push(argv[++i]); continue; }
-    if (arg.startsWith('--')) { result[arg.slice(2).replaceAll('-', '')] = argv[++i]; continue; }
-    result._.push(arg);
+    if (known && arg !== '--file' && seen.has(arg)) return { error: `${arg} was given twice - give it once` };
+    seen.add(arg);
+    if (arg === '--json') result.json = true;
+    else if (arg === '--file') { result.files ??= []; result.files.push(argv[++i]); }
+    else result[arg.slice(2).replaceAll('-', '')] = argv[++i];
+  }
+  if (known && result._.length) {
+    return { error: `${command} takes no arguments, and ${result._.map((word) => `"${word}"`).join(', ')} would not be read` };
   }
   return result;
 }

@@ -220,6 +220,60 @@ test('researcher-release names a missing value before resolving paths', () => {
   }
 });
 
+// Review of the 2026-10-19 sweep (F2): the parser stored any `--x value` and never read it,
+// kept a stray word it never read, and let the last of a repeated flag win, so
+// `conform --root R --schema S --fiel a.json stray-word` judged every file under the root, in
+// silence. Each is a usage error now, named, before any file is read.
+test('researcher-release refuses a flag it does not read, a stray word and a repeated flag, by name', () => {
+  const root = tempRoot();
+  try {
+    const schema = path.resolve('research-kit/schemas/r28-r32-envelope.schema.json');
+    const file = path.join(root, 'record.json');
+    writeJson(file, { not: 'an envelope' });
+    writeJson(path.join(root, 'other.json'), { not: 'an envelope' });
+    const cli = (...argv) => spawnSync(process.execPath, ['research-kit/bin/researcher-release.mjs', ...argv], { encoding: 'utf8' });
+    const cases = [
+      [['conform', '--root', root, '--schema', schema, '--fiel', file], /unknown option --fiel/],
+      [['conform', '--root', root, '--schema', schema, '--file', file, 'stray-word'], /"stray-word" would not be read/],
+      [['conform', '--root', root, '--schema', path.join(root, 'missing.json'), '--schema', schema, '--file', file], /--schema was given twice/],
+      [['conform', '--root', root, '--schema', schema, '--file', file, '--json', '--json'], /--json was given twice/],
+      // A flag another subcommand reads is not this one's: neither validate nor fi-validate reads --file.
+      [['validate', '--root', root, '--package', 'R28', '--registry', file, '--roles', file, '--pointers', root, '--file', file], /unknown option --file/],
+      [['validate', '--root', root, '--root', root, '--package', 'R28', '--registry', file, '--roles', file, '--pointers', root], /--root was given twice/],
+      [['fi-validate', '--root', root, '--workbook', file, '--records', root, '--manifest', file, '--schema', schema], /unknown option --schema/],
+    ];
+    for (const [argv, message] of cases) {
+      const run = cli(...argv);
+      const output = `${argv.join(' ')}: ${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, output);
+      assert(message.test(run.stderr), output);
+      assert(run.stderr.includes('Usage:'), output);
+      assertEqual(run.stdout, '', `${output}\na verdict was printed for a refused command`);
+    }
+    // Each subcommand still takes every flag its usage names (--file more than once), so the
+    // lists the parser keeps are the usage's.
+    const blocks = cli('--help').stdout.split(/\n(?=\s+node )/).slice(1);
+    assertEqual(blocks.length, 3, 'the usage no longer names three subcommands');
+    for (const block of blocks) {
+      const [, command] = block.match(/researcher-release\.mjs (\S+)/);
+      const flags = [...new Set(block.match(/--[a-z-]+/g))];
+      const argv = [command];
+      for (const flag of flags) {
+        if (flag === '--json') argv.push(flag);
+        else if (flag === '--package') argv.push(flag, 'R28');
+        else if (/hash|max-age/.test(flag)) argv.push(flag, '0');
+        else argv.push(flag, path.join(root, `missing${flag}`));
+        if (flag === '--file') argv.push(flag, path.join(root, 'missing-too'));
+      }
+      const run = cli(...argv);
+      assert(!/unknown option|given twice|would not be read|needs a value|Usage:/.test(run.stderr), `${argv.join(' ')}: ${run.stderr}`);
+      assert(JSON.parse(run.stdout).status, `${argv.join(' ')}: ${run.stdout}`);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('researcher-release refuses invalid snapshot ages as usage before judging a valid package', async () => {
   const root = tempRoot();
   try {

@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `researcher-release` refuses a flag its subcommand does not read, an argument no flag takes
+  and a flag given twice (all but `--file`) by name, exit 2, before any file is read.
+  `conform --fiel a.json` had been stored and never read, so every file under the root was
+  judged; a stray word was dropped; and a repeated `--schema` or `--root` was replaced by the
+  last, in silence - the contract #286 and #289 gave the other CLIs (review of the 2026-10-19
+  sweep, F2).
 - An elided quote in Japanese, Chinese or another script without word spaces is checked
   against its capture again (review of the 2026-10-19 sweep). The short-quote floor, measured
   per fragment since ADR-0162, counted words on spaces, so a Japanese sentence was one word
