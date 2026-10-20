@@ -99,8 +99,10 @@ if (isGated(cwd)) {
   }
   // No gate marker left on disk here is not "nothing to judge" when the commit takes the evidence
   // HEAD holds for this top level: `rm -rf research && git add -A` (ADR-0184). Asked only when a
-  // staged path is under research/raw/, so a commit that stages none pays nothing new.
-  const atTop = headEvidenceRemoval(cwd, { stagedPaths: staged }) ? [{ root: cwd, project: null, stagedPaths: staged }] : [];
+  // staged path is under research/raw/, so a commit that stages none pays nothing new. Evidence
+  // moved whole below the top (`git mv research packages/x/research`) is judged where it went.
+  const taken = headEvidenceRemoval(cwd, { stagedPaths: staged });
+  const atTop = taken && !taken.whole ? [{ root: cwd, project: null, stagedPaths: staged }] : [];
   // One git ls-files names every tracked research/DISCOVERY.md, so a repository with no project
   // pays one call and no per-folder disk reads (#309); null falls back to asking the disk.
   judged = [...atTop, ...stagedProjects(cwd, staged, { contracts: trackedContracts(cwd) }).map((group) => ({ ...group, top: cwd }))];

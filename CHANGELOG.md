@@ -5,6 +5,18 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Moving the top level's project below it - `git mv research packages/x/research`, turning a
+  one-project repository into the nested layout - commits again. The gate counted the top level as
+  always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
+  being deleted ... restore it", a fix that undoes the move. When one other folder's staged ledger
+  holds every entry of HEAD's ledger, every capture HEAD holds sits beside it unchanged, and no
+  part of the top level's `research/` stays tracked, the top level is not judged for it, and the
+  project is judged where it went. A ledger copied with a capture dropped or edited, or a
+  `research/` left partly tracked at the top, still blocks. A move that leaves the old `research/`
+  on disk holding only untracked files - the gate's own log after a copy and `git rm -r research` -
+  blocks, naming them, with `git clean -f -d -x -- research` as the fix; with it gone, the project
+  is judged where it went (check (c) of the 2026-10-19 review, F2, and check (e), E1 and E2;
+  ADR-0184 amended).
 - `researcher-release constructor --root x` prints the usage and exits 2, as any unknown
   subcommand does, and so do `toString`, `__proto__`, `hasOwnProperty` and the other
   `Object.prototype` names. The per-subcommand flag lists that refuse an unknown flag were

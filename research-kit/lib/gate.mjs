@@ -769,7 +769,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   // or the index (ADR-0184). Not of an injected corpus, and not by the edit gate.
   const headTaken = () => (gate === 'commit' && !corpus
     ? headEvidenceRemoval(root, { top, stagedPaths, stagedText, listDeleted, headLedger }) : null);
-  const removedWhole = { ...base, verdict: 'not-gated', allow: true, reason: REMOVED_WHOLE, findings: [] };
+  const removedWhole = (taken) => ({ ...base, verdict: 'not-gated', allow: true, reason: taken.movedTo ? movedReason(taken.movedTo) : REMOVED_WHOLE, findings: [] });
   const takenBlock = (taken) => ({ ...base, verdict: 'block', allow: false, judged: 'index', reason: taken.reason, fix: taken.fix, findings: [] });
 
   // No marker left on disk is not "nothing to judge" when the commit takes HEAD's evidence:
@@ -777,7 +777,7 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
   const gated = isGated(root);
   const taken = gated ? null : headTaken();
   if (!gated && !taken) return { ...base, verdict: 'not-gated', allow: true, reason: 'no gate marker in this project', findings: [] };
-  if (taken?.whole) return removedWhole;
+  if (taken?.whole) return removedWhole(taken);
 
   if (exists(resolve(root, PATHS.gateOff))) {
     if (record) { try { recordOverride(root, 'GATE_OFF', `${gate} gate`); } catch { /* read-only checkout */ } }
@@ -819,7 +819,10 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
       // the gate's own research/raw/.diagnostics.jsonl on disk, so the project is still gated
       // here, and "git add research/" was a fix that exits 128 (ADR-0184).
       const removal = headTaken();
-      if (removal?.whole) return removedWhole;
+      // A move with the old research/ left on disk blocks until it goes (check (e) of the
+      // 2026-10-19 review, E1).
+      if (removal?.movedTo) return takenBlock(movedLeftover(root, removal.movedTo));
+      if (removal?.whole) return removedWhole(removal);
       if (removal) return takenBlock(removal);
       // The working tree is gated and the index holds no corpus at all: research/ is
       // untracked. Reporting that as "your contract is missing" sends the operator to
@@ -999,6 +1002,13 @@ export function shellWord(word) {
   return /^[\w./@+=:,-]+$/.test(word) ? word : `"${String(word).replace(/(["\\$`])/g, '\\$1')}"`;
 }
 
+/** A ledger entry as a commit keeps it (#312): by seq and the files it names, so the sanctioned
+ *  `rebuildLedger` migration, which keeps both, keeps the entry. */
+function ledgerKey(entry) {
+  const posix = (p) => String(p).split('\\').join('/').replace(/^\.\//, '');
+  return `${entry.seq}\0${posix(entry.raw ?? '')}\0${posix(entry.source ?? '')}`;
+}
+
 function ledgerEntries(text) {
   const entries = [];
   for (const line of String(text ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
@@ -1034,9 +1044,8 @@ function evidenceRemoval(snapshot, stagedPaths, { listDeleted, headLedger }) {
     return { reason: `${PATHS.ledger} is in HEAD and is being deleted - the ledger is the proof every capture was fetched; ${integrity}`,
       fix: restore([PATHS.ledger]) };
   }
-  const key = (entry) => `${entry.seq}\0${posix(entry.raw ?? '')}\0${posix(entry.source ?? '')}`;
-  const kept = new Set(staged.map(key));
-  const dropped = head.filter((entry) => !kept.has(key(entry)));
+  const kept = new Set(staged.map(ledgerKey));
+  const dropped = head.filter((entry) => !kept.has(ledgerKey(entry)));
   if (dropped.length) {
     return { reason: `${PATHS.ledger} loses ${dropped.length === 1 ? 'the entry' : 'entries'} HEAD records (seq ${dropped.slice(0, 5).map((e) => e.seq).join(', ')}${dropped.length > 5 ? ', ...' : ''}) - the ledger is append-only; ${integrity}`,
       fix: restore([PATHS.ledger, ...dropped.flatMap((e) => [e.raw, e.source]).filter((f) => typeof f === 'string' && f).map(posix)]) };
@@ -1066,6 +1075,29 @@ function evidenceRemoval(snapshot, stagedPaths, { listDeleted, headLedger }) {
 }
 
 const REMOVED_WHOLE = 'no path in this project stays tracked after the commit - a project deleted or moved whole is not judged where it was (ADR-0184)';
+const RESEARCH = path.posix.dirname(PATHS.raw);
+const movedText = (prefix) => `the evidence HEAD holds here moves to ${prefix}/${PATHS.raw}/ - the ledger with every entry HEAD records, and each capture HEAD holds, unchanged`;
+const movedReason = (prefix) => `${movedText(prefix)} - so it is not judged where it was (ADR-0184)`;
+
+/**
+ * The block for a move whose old research/ is still on disk at a gated top level, holding only
+ * files git does not track - the gate's own ignored log after a copy and `git rm -r research`
+ * (check (e) of the 2026-10-19 review, E1). The top stays gated, and a gated top is the only
+ * project the hook judges (ADR-0182), so allowing it would let the moved project in unjudged.
+ * The files are named (a count and the first three) so the operator can check them before
+ * deleting anything; the printed `git clean` deletes only what git does not track. With research/
+ * gone the top level is ungated, and the moved project is judged where it went. One literal
+ * `git ls-files -o`.
+ */
+function movedLeftover(root, prefix, { run = gitCapture } = {}) {
+  const text = run(['ls-files', '-o', '-z', '--', RESEARCH], { cwd: root, env: literalPathspecs() });
+  const files = typeof text === 'string' ? text.split('\0').filter(Boolean) : [];
+  const named = files.length ? ` (${files.length}: ${files.slice(0, 3).join(', ')}${files.length > 3 ? ', ...' : ''})` : '';
+  return {
+    reason: `${movedText(prefix)} - but ${RESEARCH}/ is still here, holding only files git does not track${named}, so this top level stays gated and ${prefix} would not be judged where it went (ADR-0184)`,
+    fix: `check those files and move out any you keep, then delete ${RESEARCH}/ here (git clean -f -d -x -- ${RESEARCH} deletes only what git does not track; -n in place of -f lists it), and commit again - with ${RESEARCH}/ gone this top level is not gated, and ${prefix} is judged where it went`,
+  };
+}
 
 /**
  * What a commit takes from the evidence HEAD holds for a project whose research/ has left the
@@ -1074,40 +1106,122 @@ const REMOVED_WHOLE = 'no path in this project stays tracked after the commit - 
  * left in the index ("not tracked", whose `git add` fix exits 128 for a deleted ledger). The
  * removal as a block's reason and fix; `{ whole: true }` for a project below the top level that
  * keeps no tracked path - deleted or moved whole, so nothing there rests on the evidence, and it
- * is not judged where it was; the top level always stays. null when nothing is taken, when no
- * staged path is under research/raw/ (no git call), or with no repository at the project, where
- * git would answer for one above it. bin/gate.mjs asks it of an ungated top level, so the hook's
- * choice of what to judge and the verdict cannot disagree.
+ * is not judged where it was. The top level always stays, but its ledger deleted is a move, not a
+ * removal, when the staged list names one other folder's ledger that holds the evidence
+ * (`evidenceMovedTo`) and the index keeps no path under research/ here (`researchRemains`):
+ * `{ whole: true, movedTo }`. null when nothing is taken, when no staged path
+ * is under research/raw/ (no git call), or with no repository at the project, where git would
+ * answer for one above it. bin/gate.mjs asks it of an ungated top level, so the hook's choice of
+ * what to judge and the verdict cannot disagree.
  */
 export function headEvidenceRemoval(root, { top = null, stagedPaths = null,
   stagedText = (rel) => readStagedText(root, rel, { top }),
   listDeleted = () => stagedRawDeletions(root, { top }),
   headLedger = () => readHeadLedger(root, { top }),
-  remains = () => projectRemains(root, { top }) } = {}) {
+  remains = () => projectRemains(root, { top }),
+  movedTo = (headText) => evidenceMovedTo(root, stagedPaths, headText),
+  keepsResearch = () => researchRemains(top ?? root) } = {}) {
   const posix = (p) => String(p).split('\\').join('/').replace(/^\.\//, '');
   if (Array.isArray(stagedPaths) && !stagedPaths.some((p) => posix(p).startsWith(`${PATHS.raw}/`))) return null;
   if (!isGitRepo(top ?? root)) return null;
   let text;
   try { text = stagedText(PATHS.ledger); } catch { text = null; }
   const ledger = typeof text === 'string' ? { present: true, entries: ledgerEntries(text) } : { present: false, entries: [] };
-  const removal = evidenceRemoval({ ledger }, stagedPaths, { listDeleted, headLedger });
+  // HEAD's ledger is read once: the move below compares against the same text.
+  let headText;
+  const head = () => {
+    if (headText === undefined) { try { headText = headLedger() ?? null; } catch { headText = null; } }
+    return headText;
+  };
+  const removal = evidenceRemoval({ ledger }, stagedPaths, { listDeleted, headLedger: head });
   if (!removal) return null;
-  return top && !remains() ? { whole: true } : removal;
+  if (projectPrefix(top, root)) return remains() ? removal : { whole: true };
+  // At the top level only the ledger's own deletion can be a move: a ledger kept in place stays
+  // the top's, and what it names is judged here. An unknown staged list names no candidate. A
+  // move takes research/ out of the index whole: raw/ moved while the top keeps its other files
+  // tracked leaves a corpus whose evidence is gone, #312's harm (check (e) of the 2026-10-19
+  // review, E2).
+  const prefix = !ledger.present && Array.isArray(stagedPaths) ? movedTo(head()) : null;
+  return prefix && !keepsResearch() ? { whole: true, movedTo: prefix } : removal;
+}
+
+/**
+ * Where the top level's evidence went when the commit moves it below the top (check (c) of the
+ * 2026-10-19 review, F2): the one folder P for which the index stages P/research/raw/.fetches.jsonl
+ * holding every entry of HEAD's ledger (by `ledgerKey`, as `evidenceRemoval` keeps them), and, at
+ * P/<the same path>, every capture and source HEAD's ledger names and HEAD holds, as the same blob -
+ * moved, not changed. `git mv research packages/x/research` is one; a ledger copied with a capture
+ * dropped, edited or put elsewhere is not. The candidates are the staged paths that end in
+ * /research/raw/.fetches.jsonl, so a commit that stages none asks git nothing; each asks one
+ * `git ls-files -s` (literal pathspecs) and reads its ledger by blob id, after one `git ls-tree` of
+ * HEAD's research/raw/. null when no folder holds it all, or git cannot say - the blocking direction.
+ */
+function evidenceMovedTo(root, stagedPaths, headText, { run = gitCapture } = {}) {
+  const posix = (p) => String(p).split('\\').join('/').replace(/^\.\//, '');
+  const tail = `/${PATHS.ledger}`;
+  const candidates = [...new Set(stagedPaths.map(posix).filter((p) => p.endsWith(tail)).map((p) => p.slice(0, -tail.length)))];
+  if (!candidates.length || typeof headText !== 'string') return null;
+  const env = literalPathspecs();
+  // `<mode> <type> <id>\t<path>` (ls-tree) and `<mode> <id> <stage>\t<path>` (ls-files -s), NUL-ended.
+  const blobs = (args, idAt) => {
+    const text = run(args, { cwd: root, env });
+    if (typeof text !== 'string') return null;
+    const ids = new Map();
+    for (const record of text.split('\0')) {
+      const tab = record.indexOf('\t');
+      if (tab > 0) ids.set(record.slice(tab + 1), record.slice(0, tab).split(' ')[idAt]);
+    }
+    return ids;
+  };
+  const inHead = blobs(['ls-tree', '-r', '-z', 'HEAD', '--', PATHS.raw], 2);
+  if (!inHead) return null;
+  const head = ledgerEntries(headText);
+  const held = [...new Set(head.filter((entry) => entry.op !== 'fail')
+    .flatMap((entry) => [entry.raw, entry.source]).filter((file) => typeof file === 'string' && file).map(posix))]
+    .filter((file) => inHead.has(file));
+  for (const prefix of candidates) {
+    const staged = blobs(['ls-files', '-s', '-z', '--', `${prefix}/${PATHS.raw}`], 1);
+    const ledgerId = staged?.get(`${prefix}/${PATHS.ledger}`);
+    if (!ledgerId || !held.every((file) => staged.get(`${prefix}/${file}`) === inHead.get(file))) continue;
+    const text = run(['cat-file', 'blob', ledgerId], { cwd: root });
+    if (typeof text !== 'string') continue;
+    const kept = new Set(ledgerEntries(text).map(ledgerKey));
+    if (head.every((entry) => kept.has(ledgerKey(entry)))) return prefix;
+  }
+  return null;
+}
+
+/**
+ * The environment for a git call whose pathspec is a path, read literally whatever pathspec
+ * settings the committer's environment carries, so a folder whose name holds a glob character is
+ * that folder; git cannot combine literal with the other three, so they are dropped.
+ */
+function literalPathspecs() {
+  const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1' };
+  for (const name of ['GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS']) delete env[name];
+  return env;
+}
+
+/**
+ * Whether the top level's index keeps a path under research/ after the commit: one literal
+ * `git ls-files`, asked only once `evidenceMovedTo` named a folder - the top level's counterpart of
+ * `projectRemains` (check (e) of the 2026-10-19 review, E2). A git that cannot answer counts as
+ * kept, which blocks.
+ */
+function researchRemains(root, { run = gitCapture } = {}) {
+  const text = run(['ls-files', '-z', '--', RESEARCH], { cwd: root, env: literalPathspecs() });
+  return typeof text !== 'string' || text.length > 0;
 }
 
 /**
  * Whether a project below `top` keeps a tracked path after the commit: one `git ls-files` of its
- * folder in the index, asked only once a removal was found. Read literally, whatever pathspec
- * settings the committer's environment carries, so a folder whose name holds a glob character is
- * that folder; git cannot combine literal with the other three, so they are dropped. A git that
+ * folder in the index, asked only once a removal was found, with literal pathspecs. A git that
  * cannot answer counts as kept - the blocking direction. The top level is always kept.
  */
 function projectRemains(root, { top = null, run = gitCapture } = {}) {
   const prefix = projectPrefix(top, root);
   if (!prefix) return true;
-  const env = { ...process.env, GIT_LITERAL_PATHSPECS: '1' };
-  for (const name of ['GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS']) delete env[name];
-  const text = run(['ls-files', '-z', '--', prefix], { cwd: top, env });
+  const text = run(['ls-files', '-z', '--', prefix], { cwd: top, env: literalPathspecs() });
   return typeof text !== 'string' || text.length > 0;
 }
 

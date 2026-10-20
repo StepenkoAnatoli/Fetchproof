@@ -403,6 +403,128 @@ test('ADR-0184: below the top, a project moved whole is judged where it went, no
   assert.doesNotMatch(r.stdout + r.stderr, /being deleted|BLOCKED/);
 });
 
+// Check (c) of the 2026-10-19 review, F2: the top level always counted as kept, so turning a
+// one-project repository into the ADR-0182 layout - `git mv research packages/x/research` - was
+// refused at the top with "is in HEAD and is being deleted ... restore it", the false message
+// ADR-0184 rejected alternative A for. Its ledger, with every entry HEAD records, and every capture
+// HEAD holds, unchanged, staged under one other folder is a move: not judged where it was.
+const movedTop = /research gate: allow - the evidence HEAD holds here moves to packages\/x\/research\/raw\//;
+/** packages/x with the project's own .gitattributes, as new-project writes it below the top: the
+ *  top's `research/raw/* text eol=lf` does not reach packages/x/research/raw/, and a checkout under
+ *  core.autocrlf=true (Git for Windows' default) gives the moved captures CRLF bytes. */
+function newHome(top, run) {
+  fs.mkdirSync(path.join(top, 'packages', 'x'), { recursive: true });
+  fs.copyFileSync(path.join(top, '.gitattributes'), path.join(top, 'packages', 'x', '.gitattributes'));
+  run(['add', 'packages/x/.gitattributes']);
+}
+
+test('ADR-0184: at the top level, git mv research below the top is a move - allowed, and judged where it went', () => {
+  const { top, run } = committedTop();
+  newHome(top, run);
+  run(['mv', 'research', 'packages/x/research']);
+  assert.equal(fs.existsSync(path.join(top, 'research')), false, 'git mv carries the gate\'s log too, so no marker is left');
+  const r = gateCli(top, []);
+  assert.equal(r.status, 0, `moving the top level's project below it was refused:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /research gate: allow in packages\/x - /);
+  assert.doesNotMatch(r.stdout + r.stderr, /being deleted|restore it|BLOCKED/);
+  assert.equal(JSON.parse(gateCli(top, ['--json']).stdout).allow, true);
+  // Read literally, whatever pathspec settings the committer's environment carries.
+  for (const variable of ['GIT_LITERAL_PATHSPECS', 'GIT_GLOB_PATHSPECS', 'GIT_NOGLOB_PATHSPECS', 'GIT_ICASE_PATHSPECS']) {
+    const under = gateCli(top, [], undefined, { [variable]: '1' });
+    assert.equal(under.status, 0, `${variable}=1 turned the move into a removal:\n${under.stdout}${under.stderr}`);
+    assert.match(under.stdout, /research gate: allow in packages\/x - /);
+  }
+});
+
+// Check (e) of the 2026-10-19 review, E1: a copy and `git rm -r research` leave the gate's
+// ignored log, so the top stays gated on disk, and a gated top is the only project the hook judges
+// (ADR-0182). Allowing the move there let code into packages/x unjudged. It blocks, naming what is
+// left and a fix that works: with research/ gone the top is ungated, and packages/x is judged
+// where it went.
+test('ADR-0184: at the top level, a move that leaves untracked files in research/ blocks, naming them, until they go', () => {
+  const { top, run, diagnostics } = committedTop();
+  newHome(top, run);
+  fs.cpSync(path.join(top, 'research'), path.join(top, 'packages', 'x', 'research'),
+    { recursive: true, filter: (from) => !from.endsWith('.diagnostics.jsonl') });
+  run(['rm', '-r', '-q', 'research']);
+  writeText(path.join(top, 'research', 'scratch-notes.md'), 'an operator\'s untracked note\n');
+  // The moved project fails its gate, and the commit stages code beside it.
+  const discovery = path.join(top, 'packages', 'x', ...PATHS.discovery.split('/'));
+  const closed = fs.readFileSync(discovery, 'utf8');
+  fs.writeFileSync(discovery, closed.replace('CLOSED', 'OPEN'));
+  writeText(path.join(top, 'packages', 'x', 'app.js'), 'export const x = 1;\n');
+  run(['add', 'packages/x']);
+  assert.ok(fs.existsSync(diagnostics), 'the fixture must leave the log at the top');
+  const r = gateCli(top, []);
+  assert.equal(r.status, 1, `a move with research/ left behind let code into a failing project:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /research gate: BLOCKED - the evidence HEAD holds here moves to packages\/x\/research\/raw\/ .*research\/ is still here, holding only files git does not track \(2: research\/raw\/\.diagnostics\.jsonl, research\/scratch-notes\.md\)/);
+  assert.match(r.stderr, /Fix: .*git clean -f -d -x -- research/);
+  assert.doesNotMatch(r.stdout + r.stderr, /allow - the evidence HEAD holds here moves|being deleted|restore it|no part of research\/ is tracked/);
+  // The fix works, and touches nothing git tracks: the top is then ungated, and packages/x is judged.
+  run(['clean', '-f', '-d', '-x', '--', 'research']);
+  assert.equal(fs.existsSync(path.join(top, 'research')), false, 'the printed fix must remove the leftover research/');
+  assert.ok(fs.existsSync(discovery), 'the fix must not touch the moved project');
+  const judged = gateCli(top, []);
+  assert.equal(judged.status, 1, `with the leftover gone, the failing moved project was not judged:\n${judged.stdout}${judged.stderr}`);
+  assert.match(judged.stderr, /research gate: BLOCKED in packages\/x - .*discovery-contract\/status/);
+  assert.doesNotMatch(judged.stdout + judged.stderr, /being deleted|restore it/);
+  fs.writeFileSync(discovery, closed);
+  run(['add', `packages/x/${PATHS.discovery}`]);
+  const passing = gateCli(top, []);
+  assert.equal(passing.status, 0, `the moved project, passing, was refused:\n${passing.stdout}${passing.stderr}`);
+  assert.match(passing.stdout, /research gate: allow in packages\/x - /);
+});
+
+// Check (e) of the 2026-10-19 review, E2: a move leaves the top level's research/ out of the
+// index. Its raw/ moved while its other files stay tracked here is no move: the top keeps a corpus
+// whose ledger and captures are gone, #312's harm.
+test('ADR-0184: at the top level, a move that keeps other research/ files tracked here is no move', () => {
+  const { top, run } = committedTop();
+  newHome(top, run);
+  fs.cpSync(path.join(top, 'research'), path.join(top, 'packages', 'x', 'research'),
+    { recursive: true, filter: (from) => !from.endsWith('.diagnostics.jsonl') });
+  run(['add', 'packages/x']);
+  run(['rm', '-r', '-q', '--cached', PATHS.raw]);
+  fs.rmSync(path.join(top, 'research'), { recursive: true, force: true });
+  assert.notEqual(run(['ls-files', '--', 'research']), '', 'the fixture must keep top-level research/ files tracked');
+  const r = gateCli(top, []);
+  assert.equal(r.status, 1, `a partial move left a corpus without its evidence:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /research gate: BLOCKED - research\/raw\/\.fetches\.jsonl is in HEAD and is being deleted/);
+  assert.match(r.stderr, ledgerFix);
+  assert.doesNotMatch(r.stdout + r.stderr, /moves to packages\/x/);
+});
+
+test('ADR-0184: at the top level, a move that drops or changes the evidence still blocks with #312\'s reason', () => {
+  const fakes = {
+    'a capture deleted at the new place': (run, at, capture) => run(['rm', '-q', '-f', `${at}/${capture}`]),
+    'a capture edited at the new place': (run, at, capture, top) => {
+      fs.appendFileSync(path.join(top, ...`${at}/${capture}`.split('/')), 'an edit after the fetch\n');
+      run(['add', `${at}/${capture}`]);
+    },
+    'an entry dropped from the moved ledger': (run, at, capture, top) => {
+      fs.writeFileSync(path.join(top, ...`${at}/${PATHS.ledger}`.split('/')), '');
+      run(['add', `${at}/${PATHS.ledger}`]);
+    },
+    'the ledger moved, the captures split off to another folder': (run, at, capture, top) => {
+      fs.mkdirSync(path.join(top, 'packages', 'y', ...PATHS.raw.split('/')), { recursive: true });
+      run(['mv', `${at}/${capture}`, `packages/y/${capture}`]);
+    },
+  };
+  for (const [fake, apply] of Object.entries(fakes)) {
+    const { top, run } = committedTop();
+    const capture = run(['ls-files', '--', PATHS.raw]).split('\n').find((name) => name.endsWith('.md'));
+    assert.ok(capture, 'the fixture must commit a capture');
+    newHome(top, run);
+    run(['mv', 'research', 'packages/x/research']);
+    apply(run, 'packages/x', capture, top);
+    const r = gateCli(top, []);
+    assert.equal(r.status, 1, `${fake}: committable as a move:\n${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /research gate: BLOCKED - research\/raw\/\.fetches\.jsonl is in HEAD and is being deleted/, fake);
+    assert.match(r.stderr, ledgerFix, fake);
+    assert.doesNotMatch(r.stdout, movedTop, fake);
+  }
+});
+
 test('ADR-0184: with no HEAD, or no ledger in HEAD, the verdict is what it was', () => {
   requireGit('a first commit, and a repository without the kit');
   {
