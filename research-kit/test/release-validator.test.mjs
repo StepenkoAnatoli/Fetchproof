@@ -250,6 +250,20 @@ test('researcher-release refuses a flag it does not read, a stray word and a rep
       assert(run.stderr.includes('Usage:'), output);
       assertEqual(run.stdout, '', `${output}\na verdict was printed for a refused command`);
     }
+    // A word that names an Object.prototype member is not a subcommand (review of the
+    // 2026-10-19 sweep's fixes, F4): the flag lists were read by plain index, so
+    // `constructor --root x` found Object's constructor and threw on `.includes` - a stack and
+    // exit 1, FAIL's code - and `toString stray-word` was told that toString takes no arguments.
+    // Like any unknown subcommand, each is the usage, exit 2.
+    for (const command of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      for (const tail of [['--root', root], ['stray-word']]) {
+        const run = cli(command, ...tail);
+        const output = `${command} ${tail.join(' ')}: ${run.stdout}${run.stderr}`;
+        assertEqual(run.status, 2, output);
+        assert(run.stderr.startsWith('Usage:'), output);
+        assertEqual(run.stdout, '', output);
+      }
+    }
     // Each subcommand still takes every flag its usage names (--file more than once), so the
     // lists the parser keeps are the usage's.
     const blocks = cli('--help').stdout.split(/\n(?=\s+node )/).slice(1);

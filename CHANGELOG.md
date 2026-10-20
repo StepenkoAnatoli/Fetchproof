@@ -5,6 +5,12 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- `researcher-release constructor --root x` prints the usage and exits 2, as any unknown
+  subcommand does, and so do `toString`, `__proto__`, `hasOwnProperty` and the other
+  `Object.prototype` names. The per-subcommand flag lists that refuse an unknown flag were
+  looked up by plain index, so such a word found an `Object.prototype` member and crashed with
+  a stack and exit 1, the code for FAIL; they are now read by own member only (review of the
+  2026-10-19 sweep's fixes, F4).
 - A file hidden with `git update-index --skip-worktree` and present on disk is in the commit's
   scratch again, as the commit holds it. The sparse-checkout fix below marked every entry
   `ls-files -t` tags `S` as skipped in the scratch, but the bit has a second writer: the user,

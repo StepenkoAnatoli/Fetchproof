@@ -36,7 +36,9 @@ const KNOWN_FLAGS = {
 
 function argsAfterCommand(argv) {
   const command = argv[0];
-  const known = KNOWN_FLAGS[command];
+  // An own member only: `constructor` or `toString` found Object.prototype's and threw on
+  // `.includes`, a stack and exit 1 (review of the 2026-10-19 sweep's fixes, F4).
+  const known = Object.hasOwn(KNOWN_FLAGS, command) ? KNOWN_FLAGS[command] : undefined;
   const result = { command, _: [] };
   const seen = new Set();
   for (let i = 1; i < argv.length; i += 1) {
