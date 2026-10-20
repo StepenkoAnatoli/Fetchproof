@@ -114,8 +114,8 @@ test('the hook widens its watchdog for a kit checkout below the top level, and o
     if (tracked.length) git(dir, ['add', '-f', '--', ...tracked]);
     return dir;
   };
-  const watchdogIn = (dir) => {
-    const env = { ...process.env, RESEARCH_KIT_HOME: KIT_ROOT, RESEARCH_KIT_CONFIG: isolatedConfig() };
+  const watchdogIn = (dir, extra = {}) => {
+    const env = { ...process.env, RESEARCH_KIT_HOME: KIT_ROOT, RESEARCH_KIT_CONFIG: isolatedConfig(), ...extra };
     delete env.RESEARCH_KIT_GATE_TIMEOUT;
     const shell = spawnSync(SH, [scriptFile], { cwd: dir, encoding: 'utf8', timeout: 30_000, env });
     assert.equal(shell.status, 0, `${shell.stdout}${shell.stderr}`);
@@ -130,6 +130,15 @@ test('the hook widens its watchdog for a kit checkout below the top level, and o
   assert.equal(watchdogIn(repo(['vendor/research-kit/bin/selftest.mjs'])), '120', 'a runner alone is not a kit checkout');
   assert.equal(watchdogIn(repo([], markers.map((rel) => `kit/${rel}`))), '120',
     'a checkout the index does not hold is not one the gate runs a suite for');
+  // Found 2026-10-19 (the review of the 2026-10-19 sweep): `git --literal-pathspecs commit` hands
+  // the hook GIT_LITERAL_PATHSPECS=1, which read the runner's glob literally, so it matched
+  // nothing and the suite the gate still ran was killed at 120 s. trackedContracts in
+  // lib/gate.mjs neutralises the same two variables for the same reason.
+  const nested = repo(markers.map((rel) => `kit/${rel}`));
+  assert.equal(watchdogIn(nested, { GIT_LITERAL_PATHSPECS: '1' }), widened,
+    'GIT_LITERAL_PATHSPECS=1 in the committer\'s environment hid a kit checkout below the top level');
+  assert.equal(watchdogIn(nested, { GIT_LITERAL_PATHSPECS: '1', GIT_NOGLOB_PATHSPECS: '1' }), widened,
+    'GIT_LITERAL_PATHSPECS and GIT_NOGLOB_PATHSPECS together hid a kit checkout below the top level');
 });
 
 // Found 2026-10-05 (ADR-0142): RESEARCH_KIT_GATE_TIMEOUT reached the hook's watchdog and not the

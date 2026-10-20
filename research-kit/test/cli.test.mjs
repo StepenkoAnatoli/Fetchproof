@@ -836,7 +836,8 @@ test('collect-remote refuses a --url that is not http(s), before it asks for a t
   const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--url', 'ftp://x.example/a'], { root: project() });
   assert.equal(r.status, 3, r.all);
   assert.match(r.all, /not an http\(s\) URL/);
-  assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the URL refusal must come first');
+  // Asserted by what the first line is, not by the absence of "token": a path may hold that word.
+  assert.match(r.err.split('\n')[0] ?? '', /^not an http\(s\) URL/, 'the URL refusal must come first');
 });
 
 test('collect-remote refuses an --out it cannot write, before it asks for a token or dispatches', () => {
@@ -847,7 +848,9 @@ test('collect-remote refuses an --out it cannot write, before it asks for a toke
   assert.equal(r.status, 3, r.all);
   assert.match(r.all, /OUT_DIR/);
   assert.match(r.all, /writable folder/);
-  assert.ok(!/token/i.test(r.err.split('\n')[0] ?? ''), 'the folder refusal must come first');
+  // The refusal names the folder, and a temp folder can hold "token" (C:\...\gittoken\...):
+  // assert that the first line is the folder refusal, not that it lacks the word.
+  assert.match(r.err.split('\n')[0] ?? '', /^OUT_DIR: /, 'the folder refusal must come first');
 });
 
 // Found 2026-09-29 (Arena break test): `--max-pages 8o` was sent as it was, and the paid run it
@@ -1224,6 +1227,32 @@ test('a flag given twice is refused by name, and nothing is made from the pair',
     ['collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--query', 'a', '--query', 'b', '--url', 'https://a.example/', '--url', 'https://b.example/']]]) {
     const r = run(bin, args, { root: planned('repeat'), env });
     assert.doesNotMatch(r.err, /was given twice/, `${bin} refused a flag that repeats by design:\n${r.all.slice(0, 400)}`);
+  }
+});
+
+// Review of the 2026-10-19 sweep (F1): merging #303 with #286/#289 left disclosure a second
+// checkFlagValues call that did not name --topic, so every `--topic "<text>"` - the spelling
+// README and collect.yml use - was refused as a flag that takes no value, and `--topic no`
+// dropped the subject in silence. The probe runs here, offline: a preload points every request
+// at a closed loopback port, so each probe fails at once and the run is not measured (exit 3).
+test('disclosure takes --topic as the subject to look for, in either spelling', () => {
+  const dir = tempDir('rk-disclosure-topic-');
+  const asked = path.join(dir, 'asked');
+  const preload = path.join(dir, 'loopback-fetch.mjs');
+  fs.writeFileSync(preload, `import fs from 'node:fs';\nconst real = globalThis.fetch;\n`
+    + `globalThis.fetch = (url, init) => { fs.appendFileSync(${JSON.stringify(asked)}, String(url) + ' '); return real('http://127.0.0.1:9/', init); };\n`);
+  for (const topic of [['--topic', 'x y'], ['--topic=x y'], ['--topic', 'no']]) {
+    fs.rmSync(asked, { force: true });
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, path.join(KIT_ROOT, 'bin', 'disclosure.mjs'),
+      '--repository', 'o/r', '--run', '1', ...topic], {
+      cwd: dir, encoding: 'utf8', timeout: 60_000, windowsHide: true, env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot },
+    });
+    const said = `${topic.join(' ')}: ${r.stdout}${r.stderr}`.slice(0, 600);
+    assert.doesNotMatch(r.stderr, /takes no value/, said);
+    assert.equal(r.status, 3, said);
+    assert.ok(fs.existsSync(asked), `${said}\nthe probe made no request`);
+    assert.match(r.stdout, /NOT MEASURED/, said);
+    assert.match(r.stdout, /the subject itself exposed : not measured/, `${said}\nthe topic did not reach the probe`);
   }
 });
 

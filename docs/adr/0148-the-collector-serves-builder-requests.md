@@ -1,7 +1,7 @@
 # ADR-0148: The collector serves builder requests (auto-collect)
 
 - **Date:** 2026-10-07
-- **Status:** accepted
+- **Status:** accepted; amended by ADR-0173 (decision 4, last sentence: with no topics folder approved, a topic request waits)
 - **Area:** lifts the feature freeze (ADR-0117) for one item: **the collector serves builder
   requests**. That one item has three parts: the request file format
   `research/requests/<id>.json` and its result file `<id>.result.json`; the auto-collect

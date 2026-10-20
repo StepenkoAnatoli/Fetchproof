@@ -220,6 +220,74 @@ test('researcher-release names a missing value before resolving paths', () => {
   }
 });
 
+// Review of the 2026-10-19 sweep (F2): the parser stored any `--x value` and never read it,
+// kept a stray word it never read, and let the last of a repeated flag win, so
+// `conform --root R --schema S --fiel a.json stray-word` judged every file under the root, in
+// silence. Each is a usage error now, named, before any file is read.
+test('researcher-release refuses a flag it does not read, a stray word and a repeated flag, by name', () => {
+  const root = tempRoot();
+  try {
+    const schema = path.resolve('research-kit/schemas/r28-r32-envelope.schema.json');
+    const file = path.join(root, 'record.json');
+    writeJson(file, { not: 'an envelope' });
+    writeJson(path.join(root, 'other.json'), { not: 'an envelope' });
+    const cli = (...argv) => spawnSync(process.execPath, ['research-kit/bin/researcher-release.mjs', ...argv], { encoding: 'utf8' });
+    const cases = [
+      [['conform', '--root', root, '--schema', schema, '--fiel', file], /unknown option --fiel/],
+      [['conform', '--root', root, '--schema', schema, '--file', file, 'stray-word'], /"stray-word" would not be read/],
+      [['conform', '--root', root, '--schema', path.join(root, 'missing.json'), '--schema', schema, '--file', file], /--schema was given twice/],
+      [['conform', '--root', root, '--schema', schema, '--file', file, '--json', '--json'], /--json was given twice/],
+      // A flag another subcommand reads is not this one's: neither validate nor fi-validate reads --file.
+      [['validate', '--root', root, '--package', 'R28', '--registry', file, '--roles', file, '--pointers', root, '--file', file], /unknown option --file/],
+      [['validate', '--root', root, '--root', root, '--package', 'R28', '--registry', file, '--roles', file, '--pointers', root], /--root was given twice/],
+      [['fi-validate', '--root', root, '--workbook', file, '--records', root, '--manifest', file, '--schema', schema], /unknown option --schema/],
+    ];
+    for (const [argv, message] of cases) {
+      const run = cli(...argv);
+      const output = `${argv.join(' ')}: ${run.stdout}${run.stderr}`;
+      assertEqual(run.status, 2, output);
+      assert(message.test(run.stderr), output);
+      assert(run.stderr.includes('Usage:'), output);
+      assertEqual(run.stdout, '', `${output}\na verdict was printed for a refused command`);
+    }
+    // A word that names an Object.prototype member is not a subcommand (review of the
+    // 2026-10-19 sweep's fixes, F4): the flag lists were read by plain index, so
+    // `constructor --root x` found Object's constructor and threw on `.includes` - a stack and
+    // exit 1, FAIL's code - and `toString stray-word` was told that toString takes no arguments.
+    // Like any unknown subcommand, each is the usage, exit 2.
+    for (const command of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      for (const tail of [['--root', root], ['stray-word']]) {
+        const run = cli(command, ...tail);
+        const output = `${command} ${tail.join(' ')}: ${run.stdout}${run.stderr}`;
+        assertEqual(run.status, 2, output);
+        assert(run.stderr.startsWith('Usage:'), output);
+        assertEqual(run.stdout, '', output);
+      }
+    }
+    // Each subcommand still takes every flag its usage names (--file more than once), so the
+    // lists the parser keeps are the usage's.
+    const blocks = cli('--help').stdout.split(/\n(?=\s+node )/).slice(1);
+    assertEqual(blocks.length, 3, 'the usage no longer names three subcommands');
+    for (const block of blocks) {
+      const [, command] = block.match(/researcher-release\.mjs (\S+)/);
+      const flags = [...new Set(block.match(/--[a-z-]+/g))];
+      const argv = [command];
+      for (const flag of flags) {
+        if (flag === '--json') argv.push(flag);
+        else if (flag === '--package') argv.push(flag, 'R28');
+        else if (/hash|max-age/.test(flag)) argv.push(flag, '0');
+        else argv.push(flag, path.join(root, `missing${flag}`));
+        if (flag === '--file') argv.push(flag, path.join(root, 'missing-too'));
+      }
+      const run = cli(...argv);
+      assert(!/unknown option|given twice|would not be read|needs a value|Usage:/.test(run.stderr), `${argv.join(' ')}: ${run.stderr}`);
+      assert(JSON.parse(run.stdout).status, `${argv.join(' ')}: ${run.stdout}`);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
 test('researcher-release refuses invalid snapshot ages as usage before judging a valid package', async () => {
   const root = tempRoot();
   try {
@@ -500,6 +568,126 @@ test('ledger verification reports a record without a payload as LEDGER-PAYLOAD-H
   try { result = verifyQualificationLedger({ records, pointer: {} }); } catch (error) { assert(false, `threw ${error.stack}`); }
   assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
   assert(result.errors.some((error) => error.code === 'LEDGER-PAYLOAD-HASH'), JSON.stringify(result.errors));
+});
+
+// Review of the 2026-10-19 sweep: a lone surrogate (the JSON escape \ud800) is a value
+// canonical JSON refuses. The fix above guarded payloadHash only, so the record hash on the
+// next line threw, and so did the record schema's const/enum comparison: `validate --ledger`
+// crashed with a stack. Each refusal is now a named FAIL finding.
+test('ledger verification names a record canonical JSON refuses instead of throwing', async () => {
+  const { verifyQualificationLedger } = await import('../lib/release-validator.mjs');
+  const base = { ledgerVersion: '1.0.0', physicalSequence: 1, recordKind: 'prepare', state: 'pending', prevChainHash: '0'.repeat(64), payloadSha256: 'e'.repeat(64), payload: {} };
+  const cases = [
+    [{ ...base, payload: { note: '\ud800' } }, ['LEDGER-PAYLOAD-HASH', 'LEDGER-RECORD-HASH']],
+    [{ ...base, actorId: '\udc00' }, ['LEDGER-RECORD-HASH']],
+    [{ ...base, recordKind: '\ud800' }, ['LEDGER-SCHEMA-SCHEMA-CANONICAL', 'LEDGER-RECORD-HASH']],
+  ];
+  for (const [record, codes] of cases) {
+    let result;
+    try { result = verifyQualificationLedger({ records: [record], pointer: {} }); } catch (error) { assert(false, `threw ${error.stack}`); }
+    assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+    for (const code of codes) {
+      const found = result.errors.find((error) => error.code === code);
+      assert(found, `${code} missing: ${JSON.stringify(result.errors)}`);
+      assertEqual(found.status, 'FAIL', JSON.stringify(found));
+    }
+  }
+});
+
+test('validateEnvelope names a record hash canonical JSON refuses instead of throwing', async () => {
+  const { validateEnvelope } = await import('../lib/release-validator.mjs');
+  const entry = registryFor().artifacts[0];
+  for (const record of [
+    envelope({ payload: { note: '\ud800' }, recordHash: 'f'.repeat(64) }),
+    envelope({ ownerId: '\ud800', recordHash: 'f'.repeat(64) }),
+  ]) {
+    let result;
+    try { result = validateEnvelope(record, entry, { roster: roster(), records: new Map() }); } catch (error) { assert(false, `threw ${error.stack}`); }
+    assertEqual(result.status, 'FAIL', JSON.stringify(result.errors));
+    assert(result.errors.some((error) => error.code === 'ENV-RECORD-HASH' && /not canonical JSON/.test(error.message)), JSON.stringify(result.errors));
+  }
+});
+
+// The pointer is hashed three times in validatePointer (payload, record, pointerHash) and once
+// more by the ledger check; each threw on the same escape.
+test('a pointer canonical JSON refuses is named by validate, with and without --ledger', async () => {
+  const { validateRelease } = await import('../lib/release-validator.mjs');
+  const root = tempRoot();
+  try {
+    const { ledgerPath, ...paths } = await writePointerRelease(root);
+    const pointerFile = path.join(paths.pointersDir, 'R28-04.json');
+    const pointer = JSON.parse(fs.readFileSync(pointerFile, 'utf8'));
+    pointer.payload.note = '\ud800';
+    pointer.payload.pointerHash = 'c'.repeat(64);
+    fs.writeFileSync(pointerFile, JSON.stringify(pointer, null, 2), 'utf8');
+    for (const inputs of [paths, { ...paths, ledgerPath }]) {
+      let result;
+      try { result = validateRelease(inputs); } catch (error) { assert(false, `threw ${error.stack}`); }
+      const named = (code, at) => result.errors.some((error) => error.code === code && error.path === at && /not canonical JSON/.test(error.message));
+      assert(named('PTR-LINK', '.payloadSha256'), JSON.stringify(result.errors));
+      assert(named('PTR-HASH', '.recordHash'), JSON.stringify(result.errors));
+      assert(named('PTR-HASH', '.payload.pointerHash'), JSON.stringify(result.errors));
+      if (inputs.ledgerPath) assert(named('PTR-SIGNATURE', '.pointerHash'), JSON.stringify(result.errors));
+      assert(result.status !== 'PASS', JSON.stringify(result));
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+const STACK_LINE = /\n\s+at /;
+
+test('researcher-release validate --ledger prints a report for a ledger line canonical JSON refuses', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    // One line whose payload string is the six-character escape \ud800.
+    fs.writeFileSync(inputs.ledgerPath, `{"ledgerVersion":"1.0.0","physicalSequence":1,"recordKind":"prepare","state":"pending","prevChainHash":"${'0'.repeat(64)}","payloadSha256":"${'e'.repeat(64)}","payload":{"note":"\\ud800"}}\n`, 'utf8');
+    const run = spawnSync(process.execPath, [
+      'research-kit/bin/researcher-release.mjs', 'validate',
+      '--root', root, '--package', 'R28', '--registry', inputs.registryPath,
+      '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir, '--ledger', inputs.ledgerPath, '--json',
+    ], { encoding: 'utf8' });
+    const output = `${run.stdout}${run.stderr}`;
+    assert(!STACK_LINE.test(output), `a stack reached the operator:\n${output.slice(-600)}`);
+    let report;
+    try { report = JSON.parse(run.stdout); } catch { assert(false, `stdout is not a report (exit ${run.status}):\n${output.slice(-600)}`); }
+    // The line carries no contract or roster hash, which is REOPEN; the refusal adds FAIL findings.
+    assert(['FAIL', 'REOPEN'].includes(report.status), run.stdout);
+    assertEqual(run.status, 1, output);
+    const codes = report.errors.map((error) => error.code);
+    assert(codes.includes('LEDGER-PAYLOAD-HASH') && codes.includes('LEDGER-RECORD-HASH'), codes.join(', '));
+  } finally {
+    cleanup(root);
+  }
+});
+
+// The backstop, as path-authority has it: validation that still throws is VALIDATE-ERROR,
+// INCOMPLETE, exit 2, with a report - never exit 1 (FAIL's code) and a stack. A malformed
+// schema in --schemas makes the schema subset throw a TypeError, which is not a refusal.
+test('researcher-release validate reports a validator throw as VALIDATE-ERROR, exit 2, not a stack', async () => {
+  const root = tempRoot();
+  try {
+    const inputs = await writePointerRelease(root);
+    const schemas = path.join(root, 'schemas');
+    fs.mkdirSync(schemas);
+    fs.writeFileSync(path.join(schemas, 'r28-r32-envelope.schema.json'), '{"enum":5}', 'utf8');
+    const run = spawnSync(process.execPath, [
+      'research-kit/bin/researcher-release.mjs', 'validate',
+      '--root', root, '--package', 'R28', '--registry', inputs.registryPath,
+      '--roles', inputs.rolesPath, '--pointers', inputs.pointersDir, '--schemas', schemas, '--json',
+    ], { encoding: 'utf8' });
+    const output = `${run.stdout}${run.stderr}`;
+    assert(run.status !== 1, `a validator throw exited 1, FAIL's code:\n${output.slice(-600)}`);
+    assertEqual(run.status, 2, output);
+    assert(!STACK_LINE.test(output), `a stack reached the operator:\n${output.slice(-600)}`);
+    const report = JSON.parse(run.stdout);
+    assertEqual(report.status, 'INCOMPLETE', run.stdout);
+    assertEqual(report.errors[0]?.code, 'VALIDATE-ERROR', run.stdout);
+    assertEqual(report.errors[0]?.status, 'INCOMPLETE', run.stdout);
+  } finally {
+    cleanup(root);
+  }
 });
 
 test('nested promotion pointers require a committed promotion and verify pointer linkage', async () => {

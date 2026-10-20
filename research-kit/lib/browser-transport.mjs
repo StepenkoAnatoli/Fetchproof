@@ -18,9 +18,10 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { mainContent, htmlToMarkdown, titleOf, gradeCompleteness, isInternal, serverReason, bodyKind, decodeEntities, retryAfter } from './http-transport.mjs';
 import httpKeyless from './http-transport.mjs';
-import { REFUSAL_MARKER } from './browser-guard.mjs';
+import { REFUSAL_MARKER, makeRenderFolder } from './browser-guard.mjs';
 import { CHILD_OUTPUT_LIMIT, MAX_PAGE_BYTES, outputOverflow, internalRedirectsSetting } from './runtime.mjs';
 import { loadConfig } from './machine.mjs';
+import { removeRetrying } from './core.mjs';
 
 const GUARD_CHILD = fileURLToPath(new URL('./browser-guard.mjs', import.meta.url));
 
@@ -103,10 +104,20 @@ export function renderGuarded(binary, args, { url, env = process.env, timeout = 
   // or a caller's explicit choice, overrides it.
   // An unreadable value is a refusal, never the default (#290, internalRedirectsSetting).
   const allow = allowInternalRedirects ?? internalRedirectsSetting(env).value;
-  const job = { binary, args, url: String(url), timeout, ...(allow === undefined ? {} : { allowInternalRedirects: allow }) };
-  const result = spawn(nodePath, [GUARD_CHILD], {
-    input: JSON.stringify(job), encoding: 'utf8', timeout: guardChildTimeout(timeout), windowsHide: true, maxBuffer: CHILD_OUTPUT_LIMIT, env,
-  });
+  // The render's folder is made here and removed here once the child is gone, however it went
+  // (ADR-0185): the child removes it too, but a child killed at guardChildTimeout - or by
+  // anything else - never reaches its finally, and its browser's profile and net log stayed
+  // in the temp folder (B1, 2026-10-19).
+  const folder = makeRenderFolder();
+  const job = { binary, args, url: String(url), timeout, ...(allow === undefined ? {} : { allowInternalRedirects: allow }), ...(folder ? { folder } : {}) };
+  let result;
+  try {
+    result = spawn(nodePath, [GUARD_CHILD], {
+      input: JSON.stringify(job), encoding: 'utf8', timeout: guardChildTimeout(timeout), windowsHide: true, maxBuffer: CHILD_OUTPUT_LIMIT, env,
+    });
+  } finally {
+    removeRetrying(folder);
+  }
   const failed = (code, message) => ({ status: null, signal: null, stdout: '', stderr: '', error: Object.assign(new Error(message), { code }), refused: [] });
   if (result.error?.code === 'ETIMEDOUT') return { ...failed('ETIMEDOUT', `the guard child did not finish within ${Math.round(guardChildTimeout(timeout) / 1000)} s - the launch allowance, the render budget and 10 s to report (ADR-0119) - so its record of where the time went was lost`), gaveUp: true };
   const overflow = outputOverflow(result, 'the browser');

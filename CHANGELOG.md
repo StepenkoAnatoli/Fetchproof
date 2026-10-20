@@ -5,6 +5,123 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- Moving the top level's project below it - `git mv research packages/x/research`, turning a
+  one-project repository into the nested layout - commits again. The gate counted the top level as
+  always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
+  being deleted ... restore it", a fix that undoes the move. When one other folder's staged ledger
+  holds every entry of HEAD's ledger, every capture HEAD holds sits beside it unchanged, and no
+  part of the top level's `research/` stays tracked, the top level is not judged for it, and the
+  project is judged where it went. A ledger copied with a capture dropped or edited, or a
+  `research/` left partly tracked at the top, still blocks. A move that leaves the old `research/`
+  on disk holding only untracked files - the gate's own log after a copy and `git rm -r research` -
+  blocks, naming them, with `git clean -f -d -x -- research` as the fix; with it gone, the project
+  is judged where it went (check (c) of the 2026-10-19 review, F2, and check (e), E1 and E2;
+  ADR-0184 amended).
+- `researcher-release constructor --root x` prints the usage and exits 2, as any unknown
+  subcommand does, and so do `toString`, `__proto__`, `hasOwnProperty` and the other
+  `Object.prototype` names. The per-subcommand flag lists that refuse an unknown flag were
+  looked up by plain index, so such a word found an `Object.prototype` member and crashed with
+  a stack and exit 1, the code for FAIL; they are now read by own member only (review of the
+  2026-10-19 sweep's fixes, F4).
+- A file hidden with `git update-index --skip-worktree` and present on disk is in the commit's
+  scratch again, as the commit holds it. The sparse-checkout fix below marked every entry
+  `ls-files -t` tags `S` as skipped in the scratch, but the bit has a second writer: the user,
+  keeping local edits out of `git status` in a full clone. Such a file was left out of the tree
+  the suite ran on, so a test that read it failed and the commit blocked on a file it holds.
+  Only the entries absent from the working tree, a sparse checkout's, stay skipped (check (c)
+  of the 2026-10-19 review fixes, ADR-0183 amended).
+- A spaced quote in Chinese or Japanese - `[quote: 每月 20 美元]`, `月額 1,980 円`,
+  `API 料金 limits` - is checked against its capture again. The weight that let an elided quote
+  of full sentences be checked replaced the count on spaces, and such a fragment weighs one
+  word and a few characters, so it warned `quote-too-short` and was never compared: a quote
+  with an altered figure passed with that warning instead of failing `quote-not-found`. A
+  fragment is now short only when it is short by both counts, so every quote checked before
+  the weight is checked still (second review of the 2026-10-19 sweep, ADR-0162 amended).
+- Two `collect-remote` tests no longer fail for a contributor whose temp folder holds the word
+  "token" (`C:\...\gittoken\...`). They proved that a refusal came before the token check by
+  the first line's lack of "token", and the `--out` refusal names the folder; they now assert
+  that the first line is the refusal itself. README's long-path row names `git clone` and
+  `checkout` too, where a deep folder first meets `MAX_PATH`, and the one-clone
+  `git clone -c core.longpaths=true` (break-test pass 9, Windows).
+- A browser render no longer leaves its profile or its net log in the temp folder. Chromium
+  ran without `--user-data-dir`, so each render left a `HeadlessChrome*` profile there - killed
+  or not, on the operator's PC - and a guard child the transport killed at its allowance never
+  removed its `rk-netlog-*` folder: 1841 profiles (656 MB) and 72 net-log folders had built up
+  in `%TEMP%` there. Each render now has one `rk-render-` folder, made by the transport,
+  holding the profile (`--user-data-dir`) and the net log; the guard child removes it, and the
+  transport removes it again once the child is gone, however it ended. A removal Windows holds
+  is retried for about 1.6 s, and a folder that will not go is left without changing the
+  render's result (ADR-0185, break-test of the 2026-10-19 review, B1). Folders already in the
+  temp folder stay; remove them while no headless Chrome is running, e.g.
+  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/rk-netlog-*` on Windows.
+- A commit that removes a project's `research/` is judged by #312's rule again. `rm -rf research
+  && git add -A` at the top level left no gate marker, so the gate answered not-gated and the
+  commit took the corpus and turned the gate off with no record; `git rm -r research`, with the
+  gate's own ignored `.diagnostics.jsonl` left on disk, was told "no part of research/ is
+  tracked" and a `git add research/` that exits 128; and below the top level, removing
+  `packages/a/research` while `packages/a`'s code stayed was allowed. Each now blocks naming the
+  ledger HEAD holds, with `git checkout HEAD --` as the fix and `research/GATE_OFF` as the recorded
+  override. A project below the top deleted or moved whole is not judged where it was, as before
+  (ADR-0184; review of the 2026-10-19 sweep).
+- The commit's scratch repository, where the suite rule runs the suite, builds in a sparse
+  checkout of a partial clone and in a repository with Git LFS. The build dropped the sparse
+  checkout's skip-worktree bits and asked for every blob outside the cone, which a blobless
+  clone never fetched, so every kit commit there blocked; it now keeps the bits and skips those
+  files, as the working tree does. Its checkout ran git-lfs's smudge filter, which made a
+  network request from the commit hook for an object the clone did not hold and then blocked;
+  the build now leaves LFS pointers in place (`GIT_LFS_SKIP_SMUDGE=1`, for the build only). A
+  scratch that cannot be built quotes git's `fatal:` or `error:` line, not a progress line
+  (review of the 2026-10-19 sweep, ADR-0183 amended).
+- A builder request whose search failed or found nothing on keyless search or SearXNG is
+  recorded `failed`, as #321 meant, not `collected` with 0 pages and "pull and read the
+  captures". The run wrote its usage row only for a page spent or a search a provider reported,
+  and those routes report none, nor does any provider on a failed ask, so auto-collect never
+  read the search's outcome. A search outcome now writes the row on its own; it carries
+  `searchesUsed: 0` and moves no meter (review of the 2026-10-19 sweep).
+- `researcher-release` refuses a flag its subcommand does not read, an argument no flag takes
+  and a flag given twice (all but `--file`) by name, exit 2, before any file is read.
+  `conform --fiel a.json` had been stored and never read, so every file under the root was
+  judged; a stray word was dropped; and a repeated `--schema` or `--root` was replaced by the
+  last, in silence - the contract #286 and #289 gave the other CLIs (review of the 2026-10-19
+  sweep, F2).
+- An elided quote in Japanese, Chinese or another script without word spaces is checked
+  against its capture again (review of the 2026-10-19 sweep). The short-quote floor, measured
+  per fragment since ADR-0162, counted words on spaces, so a Japanese sentence was one word
+  and under 40 characters: two full sentences joined by an ellipsis warned `quote-too-short`
+  and were never compared with the capture, and one with an invented figure passed with that
+  warning instead of failing `quote-not-found`. A fragment is now weighed as `similarity.mjs`
+  weighs text (ADR-0176), a character of such a script with its marks counting a third of a
+  word, so nine characters reach the three-word floor. A quote in any other script is judged
+  as before (ADR-0162 amended).
+- `researcher-release validate` names a ledger record, an envelope or a pointer that canonical
+  JSON refuses (an unpaired surrogate, the escape `\ud800`) instead of crashing. The #340 fix
+  guarded the ledger's payload hash but not the record hash on the next line or the record
+  schema's const/enum comparison, and the envelope's record hash and the pointer's hashes were
+  never guarded, so such a line ended `validate`, with or without `--ledger`, with a stack, exit
+  1 - FAIL's code - and nothing on stdout. Each is now the finding of the hash it has no
+  canonical bytes for (`LEDGER-RECORD-HASH`, `ENV-RECORD-HASH`, `PTR-LINK`, `PTR-HASH`, FAIL;
+  `PTR-SIGNATURE`, INCOMPLETE) or `LEDGER-SCHEMA-SCHEMA-CANONICAL` (FAIL), and a throw left in
+  validation is `VALIDATE-ERROR`, INCOMPLETE, exit 2, with a report, as in `path-authority`
+  (review of the 2026-10-19 sweep).
+- The commit hook finds a kit checkout below the top level under `git --literal-pathspecs
+  commit` too. That option hands the hook `GIT_LITERAL_PATHSPECS=1`, the hook's glob for the
+  tracked runners then matched nothing, and the watchdog stayed at 120 s - so the suite the gate
+  still ran was killed and the commit decided by posture, allowed on a fail-open machine. The
+  hook's one `git ls-files` now sets `GIT_LITERAL_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` to 0, as
+  the gate's own lookup already dropped them (review of the 2026-10-19 sweep).
+- A builder request whose id holds `u-<digits>` (`fact-u-9`, `u-3-pricing`) no longer blocks
+  its project. The collector tags the plan entries it adds `U-1 request fact-u-9`, and #291's
+  check read the id's `u-9` as an unknown the contract does not declare: `research` refused the
+  project's own plan, dry run included, until the `why` was edited by hand, and auto-collect's
+  run exited before its accounting, so the request was recorded failed, its pages were charged
+  to the daily cap and the collector paused. A tagged `why` is now read by its tag, for the
+  plan check and for the closed-unknown search skip alike (review of the 2026-10-19 sweep).
+- `disclosure --topic "<text>"` looks for the subject again. Merging #303 with #286/#289 left
+  a second `checkFlagValues` call that did not name `--topic`, and a flag a call does not name
+  takes no value, so every topic - `--topic x` or `--topic=x`, as README and `collect.yml` spell
+  it - was refused with exit 3, and `--topic no` (`false`, `0`, `off`) or `--topic yes` probed
+  without the subject, "not checked". One call now names `--repository`, `--run` and `--topic`
+  (review of the 2026-10-19 sweep, F1).
 - The commit gate's suite rule runs the suite on the commit, not the working tree. It had run
   the checkout's `bin/selftest.mjs` in place, so an unstaged red edit blocked a green commit (a
   25-40 minute run on the operator's PC), and a red file staged and then fixed only on disk was

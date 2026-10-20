@@ -23,7 +23,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isInternal, internalTarget } from './http-transport.mjs';
 import { proxyVariable, MAX_PAGE_BYTES } from './runtime.mjs';
-import { tempBase } from './core.mjs';
+import { tempBase, removeRetrying } from './core.mjs';
 
 /** The body of a refused request: what Chromium renders in place of the page it was sent to. */
 export const REFUSAL_MARKER = 'research-kit-guard-refused';
@@ -316,12 +316,30 @@ export function guardFlags(port) {
   return [`--proxy-server=127.0.0.1:${port}`, '--proxy-bypass-list=<-loopback>'];
 }
 
+/** The start of a render's folder's name, in the kit's temp folder (ADR-0185). */
+const RENDER_FOLDER_PREFIX = 'rk-render-';
+
+/**
+ * A new, empty folder for one render: the browser's profile and its net log go in it, and it
+ * goes with the render (ADR-0185). null when none can be made - the browser then runs on a
+ * profile of its own choosing, and without a net log, as it did before; never a render refused.
+ */
+export function makeRenderFolder() {
+  try { return fs.mkdtempSync(path.join(tempBase(), RENDER_FOLDER_PREFIX)); } catch { return null; }
+}
+
+/** A folder a job may name as its render's: an absolute path whose last part makeRenderFolder would have made. */
+function isRenderFolder(dir) {
+  return typeof dir === 'string' && path.isAbsolute(dir) && path.basename(dir).startsWith(RENDER_FOLDER_PREFIX);
+}
+
 /**
  * Run `binary` through a guard that exempts only the `host:port` of `url`: `args` are its flags
  * ending in `--dump-dom <url>`; the guard's flags are inserted before those two. Resolves to Chromium's exit as spawnSync would report
- * it, plus `refused`, `truncated` and `netLog` (ADR-0137).
+ * it, plus `refused`, `truncated` and `netLog` (ADR-0137). `folder` is the render's folder the
+ * transport made (ADR-0185); without one, this render makes its own.
  */
-export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, bypass = '', lookup = dns.lookup } = {}) {
+export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, bypass = '', lookup = dns.lookup, folder = null } = {}) {
   const asked = new URL(url);
   // The host and port asked for are exempt from the literal-address judgment; a name among
   // them is still judged by what it resolves to (ADR-0155).
@@ -333,15 +351,21 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
   const clock = { timer: null, started: 0, firstRequestAt: null, timedOut: false, kill: () => {} };
   const arm = () => { clearTimeout(clock.timer); clock.timer = setTimeout(() => { clock.timedOut = true; clock.kill(); }, timeout); };
   const guard = await startGuard({ allowInternal, exempt, upstream, bypass, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
-  // Chromium's net log, for the origin's HTTP status `--dump-dom` does not report (ADR-0137,
-  // 2026-10-03): written to a private folder of this render's, read once the browser is gone,
-  // and deleted on every way out. A folder that cannot be made means no log, which the
-  // transport grades as a status not observed - never a render refused for it.
-  let logDir = null;
-  try { logDir = fs.mkdtempSync(path.join(tempBase(), 'rk-netlog-')); } catch { logDir = null; }
-  const logFile = logDir ? path.join(logDir, 'net-log.json') : null;
+  // The render's folder (ADR-0185): the browser's profile and its net log - for the origin's
+  // HTTP status `--dump-dom` does not report (ADR-0137) - are written there, read once the
+  // browser is gone, and removed with the folder on every way out. Without --user-data-dir,
+  // Chromium made a HeadlessChrome profile in the temp folder per render and left it there,
+  // killed or not (B1, 2026-10-19). The transport makes the folder and removes it again after
+  // this child, so a child killed before its finally leaves nothing either. A folder that
+  // cannot be made means no profile flag and no log, which the transport grades as a status
+  // not observed - never a render refused for it.
+  const dir = isRenderFolder(folder) ? folder : makeRenderFolder();
+  let profile = null;
+  if (dir) { try { fs.mkdirSync(path.join(dir, 'profile'), { recursive: true }); profile = path.join(dir, 'profile'); } catch { profile = null; } }
+  const logFile = profile ? path.join(dir, 'net-log.json') : null;
   try {
-    const argv = [...args.slice(0, -2), ...guardFlags(guard.port), ...(logFile ? [`--log-net-log=${logFile}`] : []), ...args.slice(-2)];
+    const own = profile ? [`--user-data-dir=${profile}`, `--log-net-log=${logFile}`] : [];
+    const argv = [...args.slice(0, -2), ...guardFlags(guard.port), ...own, ...args.slice(-2)];
     const rendered = await new Promise((resolve) => {
       let child;
       // Its own process group on POSIX, so a timeout kills the helpers Chromium forks too: left
@@ -410,7 +434,9 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
     return { ...rendered, netLog: readNetLog(logFile) };
   } finally {
     await guard.close();
-    if (logDir) { try { fs.rmSync(logDir, { recursive: true, force: true }); } catch { /* a temp folder that will not go is the OS's business */ } }
+    // Tried again while the browser's helpers still hold it; one that will not go is left,
+    // and the render's result stands (ADR-0185).
+    removeRetrying(dir);
   }
 }
 

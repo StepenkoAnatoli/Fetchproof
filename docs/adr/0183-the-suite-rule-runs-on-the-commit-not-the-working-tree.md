@@ -1,7 +1,11 @@
 # ADR-0183 - The suite rule runs on the commit, not the working tree
 
 - **Date:** 2026-10-19
-- **Status:** accepted
+- **Status:** accepted; amended 2026-10-19 by the review of PR #430 (a sparse checkout's
+  skip-worktree entries stay skipped in the scratch, LFS pointers are not smudged there, and the
+  block quotes git's `fatal:` or `error:` line, not its first) and by its check (c) (only the
+  skip-worktree entries absent from the working tree stay skipped; a file the user hid and has
+  on disk is checked out)
 - **Area:** `research-kit/lib/gate.mjs` (`runSuiteOnCommit`, `suiteBreach`)
 - **Supersedes in part:** ADR-0120, which ran "the checkout's `bin/selftest.mjs`": the runner is
   now the commit's own, run in a scratch repository built from the index being committed. The
@@ -58,7 +62,21 @@ The suite runs in a scratch repository built from the index being committed
    commit's object format (the machine's default may differ, and a sha256 scratch refuses a sha1
    index); the real object store, as an absolute path, in `objects/info/alternates`;
    `git update-index -z --index-info` with the entries; `git checkout-index --all --force -u`
-   with `core.longpaths`; and `git update-ref HEAD <parent>` when there is one.
+   with `core.longpaths`; and `git update-ref HEAD <parent>` when there is one. Amended
+   2026-10-19 (review of PR #430): the entries `git ls-files -t` tags `S` (skip-worktree) whose
+   file is absent from the working tree - a sparse checkout's - are marked so in the scratch with
+   `update-index --skip-worktree` before the checkout, which skips them - `--index-info` drops
+   the bit, and the checkout had asked for every blob outside the cone, which a partial clone
+   never fetched, so every kit commit there blocked. An `S` entry whose file is on disk is checked
+   out as the commit holds it (amended again the same day, check (c) of the review fixes, F3):
+   the bit has a second writer, the user's `git update-index --skip-worktree <file>`, which keeps
+   local edits out of `git status` in a full clone, and marking every `S` entry left such a file
+   out of the scratch - a test that read it failed, and the commit blocked on a file it holds.
+   Marking `S` only when `core.sparseCheckout` is true was set aside: a file the user hid inside
+   the cone of a sparse checkout is the same case, and the disk is what the scratch mirrors.
+   The build runs with `GIT_LFS_SKIP_SMUDGE=1`: git-lfs's smudge filter, which the
+   machine's config runs at checkout, had gone to the network from the commit hook for an
+   object the clone did not hold, and then blocked. The suite's own environment is unchanged.
 3. The runner is the scratch's `research-kit/bin/selftest.mjs`, with the scratch - or the
    project's place in it, for a project below the top level (#309) - as its cwd. The result-file
    contract, the stripped environment and the budget are ADR-0120's and ADR-0142's.
@@ -74,12 +92,14 @@ The scratch is a repository of its own, at the real HEAD, holding the commit: it
 `git rev-parse --show-toplevel` is itself, so repo-hygiene's tests run instead of returning early,
 and its `git status` shows what the commit stages and nothing else.
 
-A scratch that cannot be built is a block that names the failed step and git's first line of
-error, as an index the gate cannot read blocks (ADR-0024). It never falls back to the working
-tree: that fallback is the defect. Where the project has no `.git` there is no index, and the
-files there are judged, as before: a fixture or a copy. The one hook that meets this is a
-repository whose `.git` lives elsewhere (`--git-dir`, `core.worktree`), where the suite still
-runs in place; the kit's checkouts do not use that layout.
+A scratch that cannot be built is a block that names the failed step and git's own line of
+error - its first `fatal:` line, else its first `error:` line, else its first line (amended
+2026-10-19: a filter's progress line, `Downloading assets.bin (2.0 KB)`, came first and was
+quoted as git's words) - as an index the gate cannot read blocks (ADR-0024). It never falls
+back to the working tree: that fallback is the defect. Where the project has no `.git` there is
+no index, and the files there are judged, as before: a fixture or a copy. The one hook that
+meets this is a repository whose `.git` lives elsewhere (`--git-dir`, `core.worktree`), where
+the suite still runs in place; the kit's checkouts do not use that layout.
 
 Measured on 2026-10-19 on this repository's tree (1743 tracked files, Windows 11): the scratch
 built in 9.3 to 10.8 s over three runs and was removed in under a second. The full suite, run in
@@ -131,6 +151,12 @@ tracked path is 172 characters) - so the scratch sits directly under `tempBase()
   whole-index scratch is built only when the suite is owed.
 - The edit gate, and `bin/selftest.mjs` run by hand, still judge the working tree - ADR-0024's
   "every other caller".
+- In a sparse checkout the files outside the cone are not in the scratch, as they are not in the
+  working tree, and its `git status` does not list them; an LFS-tracked file is its pointer there
+  (amended 2026-10-19), as in a clone made with `GIT_LFS_SKIP_SMUDGE=1`. A test that reads a
+  file outside the cone, or an LFS file's content, fails at the commit as it would in that clone.
+  A file hidden with `git update-index --skip-worktree` and present on disk is in the scratch as
+  the commit holds it, without the local edit the bit hides.
 - The hook runs the deployed kit's gate (ADR-0120): until `~/.agents/research-kit` carries this
   `lib/gate.mjs`, the deployed gate still runs the working tree, and kit changes are committed
   with the working tree equal to the index.

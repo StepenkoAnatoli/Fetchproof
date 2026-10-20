@@ -5,7 +5,7 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
-import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
+import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
 
@@ -283,4 +283,49 @@ test('the short-quote floor is measured over each fragment, not the joined text'
   const mixed = quoted('Pricing tiers. [quote: free ... includes 1,000 credits]');
   assert.equal(mixed.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(mixed));
   assert.equal(mixed.find((f) => f.rule === 'quote-not-found'), undefined, JSON.stringify(mixed));
+});
+
+// Review of the 2026-10-19 sweep: Japanese and Chinese put no space between their words, so
+// under the per-fragment floor each fragment of an elided quote was one "word" under 40
+// characters. Two full sentences joined by an ellipsis warned quote-too-short and were never
+// compared with the capture, so an invented figure in them passed. A character of such a
+// script weighs a third of a word, as in similarity.mjs (ADR-0176).
+test('an elided quote in a script without word spaces is checked, and a short one still warns', () => {
+  const page = '無料プランでは一分あたり六十回までリクエストできます。上限を超えるとサービスはエラー429を返します。';
+  const real = '[quote: 無料プランでは一分あたり六十回までリクエストできます ... 上限を超えるとサービスはエラー429を返します]';
+  const rules = (judged) => judged.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found');
+  assert.deepEqual(rules(quotedToken(page, `Rate limit. ${real}`)), [], 'two real sentences, elided, are a quote found');
+  const invented = quotedToken(page, `Rate limit. ${real.replace('六十', '六百')}`);
+  assert.equal(invented.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(invented));
+  assert.equal(invented.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(invented));
+
+  const short = quotedToken(page, 'Rate limit. [quote: 無料プラン ... エラー429]');
+  assert.equal(short.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', JSON.stringify(short));
+  // Nine characters are three words; eight are not. A Thai consonant keeps its marks.
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回ま ... 上限]')[0]), false);
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回 ... 上限]')[0]), true);
+  assert.equal(quoteTooShort(quoteAnchors('[quote: Vim は、このチュー]')[0]), false, 'one word and seven characters are a mix');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: ที่นี่ที่นี่]')[0]), true, 'four letters with their marks are four characters, not twelve code points');
+  // A quote in no such script weighs what it did: two words stay short, three do not.
+  assert.equal(quoteTooShort(quoteAnchors('[quote: free plan]')[0]), true);
+  assert.equal(quoteTooShort(quoteAnchors('[quote: the free plan]')[0]), false);
+});
+
+// Second review of the 2026-10-19 sweep, F1: the weight above made a spaced Chinese or Japanese
+// fragment lighter than its spaces said. `每月 20 美元` is three whitespace words, so it was
+// checked; weighed, it is one word and four characters, under the floor, so it warned
+// quote-too-short and was never compared with the capture - an altered figure passed with a
+// warning. A fragment is short only when it is short by both counts.
+test('a spaced fragment of three words in a script without word spaces is still checked', () => {
+  for (const quote of ['每月 20 美元', '月額 1,980 円', 'API 料金 limits']) {
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), false, `${quote}: three words on spaces are not short`);
+  }
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 每月 美元]')[0]), true, 'short by both counts stays short');
+
+  const page = '专业版每月 20 美元，包含 10,000 次请求。';
+  const rules = (judged) => judged.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found');
+  assert.deepEqual(rules(quotedToken(page, 'Pro price. [quote: 每月 20 美元]')), [], 'the real figure is a quote found');
+  const altered = quotedToken(page, 'Pro price. [quote: 每月 25 美元]');
+  assert.equal(altered.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(altered));
+  assert.equal(altered.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(altered));
 });

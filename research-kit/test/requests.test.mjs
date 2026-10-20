@@ -6,9 +6,10 @@
 // runs the stand-in Node scripts.
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, tempDir, fs, path, makeProject, requireGit, requireSymlink, fixtureInitArgs } from './harness.mjs';
+import { test, describe, assert, assertEqual, tempDir, fs, path, KIT_ROOT, makeProject, requireGit, requireSymlink, fixtureInitArgs } from './harness.mjs';
 import { writeText, readText, readJson, HEADERS } from '../lib/core.mjs';
 import { parseTable, appendRow } from '../lib/corpus.mjs';
+import { planProblems, contractUnknownIds } from '../lib/research-run.mjs';
 import {
   requestProblems, requestProblemsResolved, urlProblem, applyRequest, listRequests, writeResult, settingsProblem, saveAutoCollect, readAutoCollect, requestPages,
 } from '../lib/requests.mjs';
@@ -196,6 +197,36 @@ test('a re-applied request keeps a search the operator had already planned (#322
     JSON.stringify([['vendor rate limits', 'U-1'], ['vendor burst limit docs', 'U-1 request limits']]));
 });
 
+// Review of the 2026-10-19 sweep: a request named after its unknown wrote the tag
+// "U-1 request fact-u-9" into research/plan.json, and #291's check read the id's "u-9" as an
+// unknown the contract does not declare - so research.mjs refused the project's own plan, even
+// in a dry run, and auto-collect's run exited before its accounting: the cap was charged and
+// the collector paused.
+test('a request id holding "u-<n>" is not read as an unknown the plan names', () => {
+  const project = makeProject(undefined, { topic: 'Tagged why', content: true });
+  const { unknown, planFile } = applyRequest(project, 'fact-u-9', { ...GOOD, queries: ['x burst limit'] }, 1);
+  assertEqual(unknown, 'U-1');
+  const unknowns = contractUnknownIds(project);
+  for (const file of ['research/plan.json', planFile]) {
+    const problems = planProblems(readJson(path.join(project, file)), { unknowns });
+    assertEqual(JSON.stringify(problems), '[]', file);
+  }
+  const dryRun = () => spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', 'research.mjs'), '--dry-run', '--transport', 'http-keyless'], {
+    cwd: project, encoding: 'utf8', timeout: 60_000, windowsHide: true,
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA },
+  });
+  const open = dryRun();
+  assertEqual(open.status, 0, `${open.stdout}${open.stderr}`);
+  assert(/would search "x burst limit"/.test(open.stdout), open.stdout);
+  // The tag's own unknown decides whether its search is still needed, not the id's "u-9".
+  appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-9', 'Another fact', 'the design', 'OPEN', '']);
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  writeText(discovery, readText(discovery).replace(/(\| U-1 \|[^\n]*\| )OPEN( \|)/, '$1CLOSED$2'));
+  const closed = dryRun();
+  assertEqual(closed.status, 0, `${closed.stdout}${closed.stderr}`);
+  assert(/would skip search "x burst limit" - U-1 is closed/.test(closed.stdout), closed.stdout);
+});
+
 test('a request or its collector-owned sibling that is a symbolic link is ignored, and never written through', () => {
   const project = makeProject(undefined, { content: true });
   const dir = path.join(project, 'research', 'requests');
@@ -275,7 +306,7 @@ const path = require('node:path');
 fs.appendFileSync(path.join(process.env.STANDIN_LOG, 'calls.log'), JSON.stringify(process.argv.slice(2)) + '\\n');
 const mode = process.env.STANDIN_MODE || '';
 fs.mkdirSync('research/raw', { recursive: true });
-if (!['fetch-failed', 'gone', 'search-cached', 'search-empty', 'search-offtopic'].includes(mode)) {
+if (!['fetch-failed', 'gone', 'search-cached', 'search-empty', 'search-failed', 'search-offtopic'].includes(mode)) {
   fs.writeFileSync('research/raw/2026-10-07-page.md', 'captured\\n');
   fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ url: 'https://docs.example.com/limits' }) + '\\n');
 }
@@ -294,6 +325,7 @@ if (mode.startsWith('search-')) {
   const outcome = {
     'search-cached': { query: q, results: 1, held: ['https://docs.example.com/rate-limits'], targets: [] },
     'search-empty': { query: q, results: 0, held: [], targets: [] },
+    'search-failed': { query: q, failed: true },
     'search-offtopic': { query: q, results: 3, held: [], targets: [] },
     'search-foreign': { query: q, results: 1, held: [], targets: ['https://docs.example.com/limits'] },
   }[mode];
@@ -302,8 +334,16 @@ if (mode.startsWith('search-')) {
     fs.appendFileSync('research/raw/.fetches.jsonl', JSON.stringify({ op: 'fail', url: 'https://operator.example/found', raw: '',
       discoveredBy: 'serpapi', transport: 'http-keyless', error: 'operator terminal run' }) + '\\n');
   }
-  fs.appendFileSync('research/raw/.usage.jsonl', JSON.stringify({ at: new Date().toISOString(), spent: mode === 'search-foreign' ? 1 : 0,
-    cached: 0, failed: 0, searchesUsed: 1, searchOutcomes: [outcome] }) + '\\n');
+  // Empty and failed are the keyless route's searches (http-keyless, SearXNG): it reports no
+  // searches used, and no provider reports any on a failed ask. The line is written under
+  // runResearch's own rule (lib/research-run.mjs), not whenever a search ran.
+  const spentHere = mode === 'search-foreign' ? 1 : 0;
+  const searchesUsed = ['search-empty', 'search-failed'].includes(mode) ? 0 : 1;
+  const searchOutcomes = [outcome];
+  if (spentHere || searchesUsed || searchOutcomes.length) {
+    fs.appendFileSync('research/raw/.usage.jsonl', JSON.stringify({ at: new Date().toISOString(), spent: spentHere,
+      cached: 0, failed: 0, searchesUsed, searchOutcomes }) + '\\n');
+  }
 }
 const plan = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 for (const query of plan.queries || []) console.log('search found 1 for "' + query.q + '"');
@@ -917,7 +957,7 @@ test('a search that finds only a page another request captured is collected and 
   assert(result.next.includes(`already captured (${X})`), result.next);
 });
 
-test('nothing fetched is failed only with evidence: an empty search fails, an off-topic one does not (#321)', async () => {
+test('nothing fetched is failed only with evidence: an empty or failed search fails, an off-topic one does not (#321)', async () => {
   const w = world({ STANDIN_MODE: 'search-empty' });
   saveAutoCollect({ mode: 'auto' }, w.m.env);
   const asked = (q) => ({ fact: GOOD.fact, blocks: GOOD.blocks, queries: [q] });
@@ -934,6 +974,15 @@ test('nothing fetched is failed only with evidence: an empty search fails, an of
   const offtopic = readJson(path.join(w.collector, 'research', 'requests', 'offtopic.result.json'));
   assertEqual(offtopic.status, 'collected', 'results that matched nothing are not evidence that nothing exists');
   assertEqual(offtopic.pages, 0);
+  // Review of the 2026-10-19 sweep: a failed search on the keyless route, which reports no
+  // searches used, is failed too - not collected with 0 pages.
+  git(w.builder, w.m.env, 'pull', '-q', '--ff-only');
+  w.m.env.STANDIN_MODE = 'search-failed';
+  builderPushes(w, 'broken', asked('z burst limit'));
+  await auto.cycle();
+  const broken = readJson(path.join(w.collector, 'research', 'requests', 'broken.result.json'));
+  assertEqual(broken.status, 'failed', JSON.stringify(broken));
+  assert(/the search "z burst limit" failed/.test(broken.detail), broken.detail);
 });
 
 test('another run\'s failure on a page its own search found is not this request\'s (#321)', async () => {

@@ -41,7 +41,7 @@ function fetchStub({ name = 'stub-fetch', results = ['https://fetchside.example/
   };
 }
 
-function searchStub({ name = 'stub-search', results = ['https://searchside.example/a'], fail = null } = {}) {
+function searchStub({ name = 'stub-search', results = ['https://searchside.example/a'], fail = null, searchesUsed = 1 } = {}) {
   const calls = { search: 0 };
   return {
     name,
@@ -50,7 +50,7 @@ function searchStub({ name = 'stub-search', results = ['https://searchside.examp
       calls.search += 1;
       if (fail) return { ok: false, query: 'q', results: [], error: fail, provider: name };
       return {
-        ok: true, query: 'q', provider: name, searchId: 'sid-1', searchesUsed: 1,
+        ok: true, query: 'q', provider: name, searchId: 'sid-1', ...(searchesUsed ? { searchesUsed } : {}),
         results: results.map((url, i) => ({ url, title: `T${i}`, description: '', position: i + 1 })),
       };
     },
@@ -219,6 +219,36 @@ test('DR-1: a run that only SEARCHED is still recorded - a second meter spent is
   const [usage] = jsonLines(root, '.usage.jsonl');
   assert.ok(usage, 'a search-only run vanished from the usage record');
   assert.equal(usage.searchesUsed, 1);
+});
+
+// Review of the 2026-10-19 sweep: the usage row was written only for a page spent or a search
+// a provider reported, and keyless search and SearXNG report none, nor does any provider on a
+// failed ask. So a search that failed or found nothing left no row, auto-collect never read
+// its `searchOutcomes`, and a request whose one search failed was recorded `collected`, 0 pages.
+test('a search that failed, or found nothing, with no usage reported, still writes its outcome to the usage row (#321)', () => {
+  const cases = [
+    ['failed', { fail: 'search:searxng returned HTTP 500' }, { query: 'a query', failed: true }],
+    ['empty', { results: [], searchesUsed: 0 }, { query: 'a query', results: 0, held: [], targets: [] }],
+  ];
+  for (const [label, stub, outcome] of cases) {
+    const root = project();
+    // Chosen explicitly, as a configured SearXNG is, so a failure is not degraded to the
+    // fetch side's own search.
+    const run = runResearch(root, { adapter: fetchStub(), searchAdapter: searchStub({ name: 'searxng', ...stub }), searchExplicit: true, plan: plan() });
+    assert.equal(run.spent, 0, label);
+    assert.equal(run.searchesUsed, 0, label);
+    const usage = jsonLines(root, '.usage.jsonl');
+    assert.equal(usage.length, 1, `${label}: the run's search outcome left no usage row`);
+    assert.deepEqual(usage[0].searchOutcomes, [outcome], label);
+    assert.equal(usage[0].searchesUsed, 0, label);
+    // A row that spent nothing moves no meter.
+    const meter = searchUsage(root);
+    assert.deepEqual([meter.lastHour, meter.thisMonth, meter.providers], [0, 0, []], label);
+    // A dry run still writes nothing.
+    const dry = project();
+    runResearch(dry, { adapter: fetchStub(), searchAdapter: searchStub({ name: 'searxng', ...stub }), searchExplicit: true, plan: plan(), dryRun: true });
+    assert.equal(jsonLines(dry, '.usage.jsonl').length, 0, `${label}: a dry run wrote a usage row`);
+  }
 });
 
 test('DR-4: a provider outage is attributable in the failure log', () => {

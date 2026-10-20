@@ -77,7 +77,18 @@ const SOURCE_TYPES = Object.freeze(['P', 'S', 'L']);
 // A URL that does not parse is still repeated in its problem; whatever stands between its
 // scheme and an `@` is masked first, so a credential in it is not printed either.
 const maskUserinfo = (url) => String(url).replace(/^([a-z][a-z0-9+.-]*:[\\/]*)[^\\/?#]*@/i, '$1…@');
-const unknownIds = (why) => uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+/**
+ * A `why` the collector wrote for a builder request, `U-n request <id>` (`requests.mjs`, #322),
+ * or null. The one reader of that tag: `requests.mjs` finds and replaces its entries with it,
+ * and `unknownIds` reads such a `why` by its tag alone - the id is the builder's name and may
+ * hold `u-9`, which the scan below read as unknown U-9, so the plan check refused the project's
+ * own plan (review of the 2026-10-19 sweep).
+ */
+export const taggedRequest = (why) => (typeof why === 'string' ? /^(U-\d+) request ([a-z0-9-]+)$/.exec(why) : null);
+const unknownIds = (why) => {
+  const tag = taggedRequest(why);
+  return tag ? [tag[1]] : uniq((String(why ?? '').match(/\bU-\d+\b/gi) ?? []).map((id) => id.toUpperCase()));
+};
 
 export function planProblems(plan, { unknowns = null } = {}) {
   const out = [];
@@ -704,9 +715,13 @@ ${compatibility.remedy}`);
 
   // A run that only searched still spent something - on a different meter. Logging only
   // when `spent` was non-zero would make a search-only run invisible in the usage record
-  // (DR-1).
+  // (DR-1). A search outcome alone writes it too: keyless search and SearXNG report no usage,
+  // and no provider does on a failed ask, so a run whose search failed or found nothing left
+  // no row, and auto-collect, which reads `searchOutcomes` from it, recorded the request as
+  // collected with 0 pages (review of the 2026-10-19 sweep). Such a row says `searchesUsed: 0`,
+  // which `searchUsage` skips, so no meter moves.
   const { searchesUsed, searchesOn, searchCreditsEstimate, searchFailures, searchFailuresOn, degraded } = session.meters();
-  if (!dryRun && (spent || searchesUsed)) {
+  if (!dryRun && (spent || searchesUsed || searchOutcomes.length)) {
     appendJsonLine(root, PATHS.usage, {
       at: new Date().toISOString(), depth: tier, budget, attempts, spent, cached, failed,
       transport: adapter.name,

@@ -151,12 +151,15 @@ command -v node >/dev/null 2>&1 || decide_without_gate "node is not on PATH"
 # index tracks - one git ls-files, of the index the commit is made from. A runner the index does
 # not hold is not one a commit can owe a suite for, and a runner without the rest of the
 # checkout is not a checkout (2026-10-19; the top level alone had been looked at, and that
-# suite was killed at 120 s).
+# suite was killed at 120 s). The pattern is magic on purpose, so GIT_LITERAL_PATHSPECS (set by
+# `git --literal-pathspecs commit`) and GIT_NOGLOB_PATHSPECS are set to 0 for this one read:
+# under the first it matched nothing and the suite was killed at 120 s again; trackedContracts
+# in lib/gate.mjs drops the same two (2026-10-19). An assignment, not `env -u`, which POSIX lacks.
 kit_checkout_at() {
   [ -f "${1}research-kit/bin/selftest.mjs" ] && [ -f "${1}research-kit/bin/gate.mjs" ] && [ -d "${1}research-kit/test" ] && [ -f "${1}research-kit/lib/core.mjs" ]
 }
 kit_below_top() {
-  git ls-files -z -- ':(glob)**/research-kit/bin/selftest.mjs' 2>/dev/null | tr '\0' '\n' | while IFS= read -r _runner; do
+  GIT_LITERAL_PATHSPECS=0 GIT_NOGLOB_PATHSPECS=0 git ls-files -z -- ':(glob)**/research-kit/bin/selftest.mjs' 2>/dev/null | tr '\0' '\n' | while IFS= read -r _runner; do
     if kit_checkout_at "${_runner%research-kit/bin/selftest.mjs}"; then echo yes; break; fi
   done
 }

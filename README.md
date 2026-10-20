@@ -643,7 +643,7 @@ Environment variables take precedence where one exists: `RESEARCH_KIT_TRANSPORT`
 | the run stops with `credits ran out` and exits 2 | the Firecrawl account is empty | top up and run the same command, or run it with `--fallback` to finish on the free transports; `research --status` shows the budget |
 | `research.mjs` or `decompose.mjs` exits 2 with "builder" | this machine is declared a builder | collect on the collector, or `install-hooks.mjs --role collector` |
 | tests print `UNSUP PYTHON-NOT-FOUND` and block | no Python 3.11+ | install it; a green suite without it would claim two languages agree while testing one |
-| Windows: `git add` refuses with a long-path error | `MAX_PATH` | `git config core.longpaths true` |
+| Windows: `git clone`, `checkout` or `add` fails with `Filename too long` | `MAX_PATH` (260): the clone's folder plus the repository's longest paths, under `docs/decisions/`, pass it | clone into a short folder, or `git clone -c core.longpaths=true ...`; in an existing clone, `git config core.longpaths true` |
 | the commit gate blocks with "is not staged with them" | in this repository, a declared code path changed without `docs/ARCHITECTURE.md` | update the map in the same commit |
 
 ## Supported platforms
