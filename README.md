@@ -1,6 +1,6 @@
 ![Research-Kit workflow: frame the unknowns, collect primary sources, review claims, run the gate, and hand an authored brief to a builder.](docs/assets/research-overview.svg)
 
-# Research-Kit
+# Fetchproof
 
 [![Tests and CI](https://img.shields.io/github/actions/workflow/status/StepenkoAnatoli/Research-Kit/offline-suite.yml?branch=main&label=tests%20%26%20CI&style=flat-square)](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-2563eb?style=flat-square)](LICENSE)
