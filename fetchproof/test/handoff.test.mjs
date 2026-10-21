@@ -1,14 +1,16 @@
 // The arrival question, and one remedy per cause (ADR-0011, ADR-0020).
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, requireGit, fixtureCommitArgs, fixtureInitArgs } from './harness.mjs';
+import crypto from 'node:crypto';
+import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, requireGit, fixtureCommitArgs, fixtureInitArgs, KIT_ROOT, Unsupported } from './harness.mjs';
 import { evaluate } from '../lib/gate.mjs';
 import { TEMPLATE_DIR } from '../lib/scaffold.mjs';
-import { PATHS, resolve, writeText } from '../lib/core.mjs';
+import { PATHS, resolve, writeText, today } from '../lib/core.mjs';
 import { verifyHandoff, handoffRemedy, HANDOFF_REMEDY, lineEndingRemedy, alteredRemedy, safePathspec, insideRepository, repositoryState, NAMES_FILE, PIN_LINES } from '../lib/handoff.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
 import { appendFetch } from '../lib/provenance.mjs';
+import { writeRaw } from '../lib/collect.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 
 describe('handoff');
@@ -546,6 +548,223 @@ test('a report holding both causes prints both remedies', () => {
 test('the remedy texts are the module\'s, so neither consumer can drift', () => {
   assert.match(HANDOFF_REMEDY, /COLLECTOR machine/);
   assert.match(lineEndingRemedy(['research/raw/a.md']), /research\/raw\/a\.md/);
+});
+
+// Discussion #413: handoff answers whether the corpus arrived intact, not whether its pages
+// still say the same thing, and a builder cannot fetch to find out. So the report says how
+// old the captures are, dated as freshness dates them - by the capture, which the ledger's
+// hash covers, not by the table's editable Retrieved cell (ADR-0187).
+function datedProject(first, second, { url = 'https://example.invalid/docs/pricing' } = {}) {
+  const dir = makePassingProject(tempDir('fp-handoff-dated-'), { date: first });
+  const entry = writeRaw(dir, {
+    url, title: 'Pricing', cmd: `firecrawl scrape ${url} --only-main-content --json`, statusCode: 200,
+    transport: 'firecrawl-cli', completeness: 'full',
+    markdown: `# Pricing\n\n${'The paid plan costs 20 dollars a month and allows 600 requests per minute. '.repeat(30)}`,
+  }, { date: second });
+  appendFetch(dir, {
+    op: 'scrape', url, type: 'P', raw: entry.file,
+    bodySha256: crypto.createHash('sha256').update(fs.readFileSync(resolve(dir, entry.file))).digest('hex'),
+    transport: 'firecrawl-cli', completeness: 'full', cmd: entry.command, at: `${second}T00:00:00.000Z`,
+  });
+  fs.appendFileSync(resolve(dir, PATHS.evidence), `| E-02 | ${second} | P | ${url} | The paid plan costs 20 dollars a month. | ${entry.file} |\n`);
+  return dir;
+}
+
+test('the handoff report gives the days its captures were fetched and the oldest one\'s age', () => {
+  const now = new Date('2026-10-20T12:00:00.000Z');
+  const report = verifyHandoff(datedProject('2026-09-13', '2026-10-02'), { now });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.equal(report.rows, 2);
+  assert.deepEqual(report.fetched, { from: '2026-09-13', to: '2026-10-02', oldestDays: 37 });
+});
+
+test('the fetch dates are the captures\', not the table\'s editable Retrieved cells', () => {
+  const dir = datedProject('2026-09-13', '2026-10-02');
+  // Editing the oldest row's cell to a recent day must not make the snapshot look younger:
+  // the capture on disk still says 2026-09-13 (the same rule as freshnessDate, G8).
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/^\| E-01 \| 2026-09-13 \|/m, '| E-01 | 2026-10-19 |'));
+  assert.match(fs.readFileSync(resolve(dir, PATHS.evidence), 'utf8'), /^\| E-01 \| 2026-10-19 \|/m, 'the fixture did not edit the cell');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-09-13', to: '2026-10-02', oldestDays: 37 });
+});
+
+// Found 2026-10-20 (review): every row counted, so a page the collector re-checked kept its
+// first fetch's age - ADR-0026 keeps the superseded row as history - and the line could not
+// tell a re-checked snapshot from a stale one.
+test('a row a later capture superseded is history, not the snapshot\'s age', () => {
+  const dir = datedProject('2026-09-13', '2026-10-19', { url: 'https://example.invalid/docs/limits' });
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.equal(report.rows, 2, 'the superseded row is still counted as a row');
+  assert.deepEqual(report.fetched, { from: '2026-10-19', to: '2026-10-19', oldestDays: 1 });
+});
+
+// The Raw cell of E-01 blanked and its Retrieved cell set to `cell`.
+function unnamedCapture(dir, cell) {
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/^(\| E-01 \| )2026-09-13( \|.*\| )\S+( \|)$/m, `$1${cell}$2$3`));
+  assert.match(fs.readFileSync(resolve(dir, PATHS.evidence), 'utf8'), new RegExp(`^\\| E-01 \\| ${cell} \\|.*\\|  \\|$`, 'm'), 'the fixture did not blank the Raw cell');
+  return dir;
+}
+
+// A row whose Raw cell names no capture is dated by its cell, as stale-evidence dates it: the
+// URL's latest capture may be a later fetch the row never read (G8). The docs say so.
+test('a row whose Raw cell names no capture is dated by its Retrieved cell, as freshness is', () => {
+  const dir = unnamedCapture(datedProject('2026-09-13', '2026-10-02'), '2026-09-20');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.deepEqual(report.fetched, { from: '2026-09-20', to: '2026-10-02', oldestDays: 30 });
+});
+
+// Found 2026-10-20 (review): `2026-00-13` is shaped like a date and is not one, and the OK line
+// printed "(oldest null days)".
+test('a day that does not parse is left out of the fetch dates, never printed as null', () => {
+  const dir = unnamedCapture(datedProject('2026-09-13', '2026-10-02'), '2026-00-13');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-10-02', to: '2026-10-02', oldestDays: 18 });
+});
+
+// Found 2026-10-20 (review): a collector's clock ahead of the builder's across UTC midnight
+// printed "(oldest -1 days)". hygiene allows the same day of slack (future-date).
+test('a capture dated after the asking machine\'s clock is 0 days old, not -1', () => {
+  const dir = makePassingProject(tempDir('fp-handoff-ahead-'), { date: '2026-10-21' });
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-10-21', to: '2026-10-21', oldestDays: 0 });
+});
+
+test('a table with no rows has no fetch dates, and the report says null rather than a guess', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (text) => text.split('\n').filter((line) => !line.startsWith('| E-')).join('\n'));
+  const report = verifyHandoff(dir);
+  assert.equal(report.rows, 0);
+  assert.equal(report.fetched, null);
+});
+
+// Discussion #413: can the next agent tell a current citation from a consistent but stale
+// snapshot? Pinned end to end, offline: one page is collected, an unknown closed on it, and
+// then the page changes. On the builder the handoff still says OK and the gate still passes -
+// the corpus is intact, and a builder cannot fetch to learn more - but the OK line says how
+// old the snapshot is (ADR-0187). Currency is the collector's: a same-day `--refresh-days 0`
+// re-collects nothing, `--force` captures the new text, and the gate blocks the old citation
+// until it moves, keeping the old row (ADR-0026). The server lives in its own process:
+// `scrape` runs its child with spawnSync, which blocks this process's event loop. It exits when
+// its stdin closes, so a suite killed from outside (the gate's budget) leaves no server behind.
+test('a page that changes after collection: the handoff stays OK and dated, the collector\'s re-fetch blocks the stale citation', async () => {
+  const { spawn } = await import('node:child_process');
+  const work = tempDir('fp-handoff-changed-');
+  const page = path.join(work, 'page.html');
+  const say = (limit) => writeText(page, `<html><head><title>Limits</title></head><body><h1>Rate limits</h1><p>The free plan allows ${limit} requests per minute. ${'Every request counts against the same minute window, and a burst above it is refused. '.repeat(4)}</p></body></html>`);
+  say(10);
+  const serverFile = path.join(work, 'server.mjs');
+  writeText(serverFile, `
+import http from 'node:http';
+import fs from 'node:fs';
+http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'text/html' });
+  res.end(fs.readFileSync(${JSON.stringify(page)}, 'utf8'));
+}).listen(0, '127.0.0.1', function () { process.stdout.write('PORT ' + this.address().port + '\\n'); });
+process.stdin.on('end', () => process.exit(0));
+process.stdin.resume();
+`);
+  const proc = spawn(process.execPath, [serverFile], { cwd: work, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
+  try {
+    const port = await new Promise((done, fail) => {
+      let out = '';
+      proc.stdout.on('data', (d) => { out += d; const m = out.match(/PORT (\d+)/); if (m) done(Number(m[1])); });
+      proc.on('exit', (code) => fail(new Error(`the page server exited ${code}`)));
+    });
+
+    // Two machines, each with its own temp config and kit home; never this machine's.
+    const base = Object.fromEntries(Object.entries(process.env)
+      .filter(([name]) => !['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].includes(name) && !name.startsWith('FETCHPROOF_')));
+    const machine = (role) => {
+      const config = path.join(work, `${role}.json`);
+      writeText(config, JSON.stringify({ role }));
+      return { ...base, FETCHPROOF_CONFIG: config, FETCHPROOF_HOME: path.join(work, `${role}-home`, 'fetchproof') };
+    };
+    const collector = machine('collector');
+    const builder = machine('builder');
+    const dir = path.join(work, 'project');
+    fs.mkdirSync(dir);
+    const kit = (env, bin, ...args) => {
+      const r = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', bin), ...args], { cwd: dir, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+      return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const evidence = () => readCorpus(dir).evidence;
+
+    let r = kit(collector, 'new-project.mjs', '.', '--topic', 'What is the free plan\'s rate limit?');
+    assert.equal(r.status, 0, r.out);
+    const planFile = resolve(dir, PATHS.plan);
+    const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+    // A loopback URL named directly is collected; only a redirect to one is refused (ADR-0110).
+    plan.urls = [{ url: `http://127.0.0.1:${port}/page`, type: 'P', why: 'U-01' }];
+    writeText(planFile, JSON.stringify(plan, null, 2));
+
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless');
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(evidence().map((row) => row.id), ['E-01'], r.out);
+    const first = evidence()[0];
+    assert.match(fs.readFileSync(resolve(dir, first.raw), 'utf8'), /10 requests per minute/);
+
+    const cite = (id) => {
+      const file = resolve(dir, PATHS.discovery);
+      const text = fs.readFileSync(file, 'utf8').replace(/^\| U-01 \|.*\n/m, '');
+      writeText(file, text.replace(/^(\| ID \| Unknown \|.*\n\|[-| ]+\|\n)/m,
+        `$1| U-01 | What is the free plan's rate limit? | Decides the client's throttle | CLOSED | ${id}: the free plan's limit per minute |\n`));
+    };
+    cite('E-01');
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+    r = kit(collector, 'brief.mjs');
+    assert.equal(r.status, 0, r.out);
+
+    // The live page changes. Nothing in the corpus has.
+    say(2);
+
+    // On the builder: intact, consistent, and stale. handoff and the gate both pass - the
+    // documented limit - and the line says when the captures were fetched (today, in UTC, or
+    // yesterday if the run crossed midnight).
+    r = kit(builder, 'handoff.mjs');
+    assert.equal(r.status, 0, r.out);
+    const day = first.retrieved;
+    assert.match(r.out, new RegExp(`^handoff OK - .*chain verifies; captures fetched ${day}\\.\\.${day} \\(oldest (?:0 days|1 day)\\)\\.  \\[role=builder\\]$`, 'm'), r.out);
+    r = kit(builder, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+
+    // On the collector: a capture made today is not older than 0 days, so nothing is fetched.
+    // Past UTC midnight it is a day old, and this same-day rule is not what the run can show.
+    if (today() !== day) throw new Unsupported('CROSSED_MIDNIGHT', `the run crossed UTC midnight after collecting on ${day}, so the same-day refresh rule cannot be checked`);
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless', '--refresh-days', '0');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^collected\s+0$/m, r.out);
+    assert.equal(evidence().length, 1);
+
+    // --force fetches the page as it reads now, beside the old capture.
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless', '--force');
+    assert.equal(r.status, 0, r.out);
+    const rows = evidence();
+    assert.deepEqual(rows.map((row) => row.id), ['E-01', 'E-02'], r.out);
+    assert.match(fs.readFileSync(resolve(dir, rows[1].raw), 'utf8'), /2 requests per minute/);
+
+    // The gate blocks the claim that still cites the superseded capture, and the brief drafted
+    // over the old corpus is no longer current.
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /^FAIL /m, r.out);
+    assert.match(r.out, /cites-superseded-row.*E-01.*E-02/, r.out);
+    assert.match(r.out, /brief-stale/, r.out);
+
+    // The citation moves to the new capture: the gate passes, and the old row stays.
+    cite('E-02');
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+    assert.deepEqual(evidence().map((row) => row.id), ['E-01', 'E-02'], 'history is kept');
+    assert.ok(fs.existsSync(resolve(dir, first.raw)), 'the old capture is still on disk');
+  } finally {
+    proc.kill();
+  }
 });
 
 test('verifyHandoff is read-only: it never repairs, and never writes the corpus', () => {

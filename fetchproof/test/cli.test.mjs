@@ -1666,7 +1666,27 @@ test('handoff OK counts the rows that cite the captures it checked', () => {
   const root = makePassingProject();
   const r = run('handoff.mjs', [], { root });
   assert.equal(r.status, 0, r.all);
-  assert.match(r.out, /handoff OK - \d+ ledger entries, [1-9]\d* evidence rows, every capture they cite on disk, chain verifies/);
+  assert.match(r.out, /handoff OK - \d+ ledger entries, [1-9]\d* evidence rows, every capture they cite on disk, chain verifies; captures fetched \d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2} \(oldest \d+ days?\)\.  \[role=\w+\]/);
+});
+
+// Discussion #413: a builder got `handoff OK` for a corpus whose source page had changed since
+// it was fetched - correctly, since handoff checks integrity, not currency, and a builder
+// cannot fetch. The line now says how old the snapshot is, on the machine that cannot check
+// (ADR-0187). Dated by the capture, so the fixture's past date is what it must print.
+test('handoff OK on a builder gives the days its captures were fetched and the oldest one\'s age', () => {
+  const home = tempDir('fp-handoff-age-home-');
+  const config = path.join(home, 'b.json');
+  fs.writeFileSync(config, JSON.stringify({ role: 'builder' }));
+  const env = { HOME: home, USERPROFILE: home, FETCHPROOF_CONFIG: config };
+  const root = makePassingProject(tempDir('fp-handoff-age-'), { date: '2026-09-13' });
+  const before = Math.floor((Date.now() - Date.parse('2026-09-13')) / 86_400_000);
+  const r = run('handoff.mjs', [], { root, env });
+  const after = Math.floor((Date.now() - Date.parse('2026-09-13')) / 86_400_000);
+  assert.equal(r.status, 0, r.all);
+  const line = r.out.split('\n').find((l) => l.startsWith('handoff OK')) ?? '';
+  const age = line.match(/; captures fetched 2026-09-13\.\.2026-09-13 \(oldest (\d+) days?\)\.  \[role=builder\]$/);
+  assert.ok(age, `the OK line does not give the capture dates: ${line}`);
+  assert.ok([before, after].includes(Number(age[1])), `oldest ${age[1]} days, expected ${before}`);
 });
 
 // Found 2026-09-27: `research --status` printed 0 searches beside a balance that had fallen by 9.

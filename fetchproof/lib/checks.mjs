@@ -57,8 +57,11 @@ function ownCapture(corpus, row) {
   return row?.raw ? (corpus.captures.byFile.get(row.raw) ?? null) : null;
 }
 
-/** The day a row's freshness is judged by, as a comparable string ('' when it has none). */
-function freshnessDay(corpus, row) {
+/**
+ * The day a row's freshness is judged by, as a comparable string ('' when it has none).
+ * Exported for the handoff's fetch dates (ADR-0187), so both read one rule.
+ */
+export function freshnessDay(corpus, row) {
   return retrievedDay(freshnessDate(corpus, row)) ?? '';
 }
 

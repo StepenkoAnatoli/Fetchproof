@@ -23,6 +23,10 @@ if (flags.help) {
 Checks that research/raw/.fetches.jsonl is present and non-empty, that research/EVIDENCE.md
 is here with its table, that every capture an evidence row names is on disk, and that the
 chain verifies. Exit 1 names what is missing, and the remedy depends on the cause.
+
+It checks integrity, not currency: OK means the corpus arrived as it was fetched, not that
+the pages still say the same today. The OK line ends with the days the captures were
+fetched and the oldest one's age.
 `);
   process.exit(0);
 }
@@ -35,7 +39,13 @@ if (flags.json) {
 }
 
 if (report.ok) {
-  process.stdout.write(`handoff OK - ${report.entries} ledger entries, ${report.rows} evidence rows, every capture they cite on disk, chain verifies.  [role=${machineRole()}]\n`);
+  // How old the snapshot is, never whether it is current: this machine cannot fetch to know
+  // (ADR-0187).
+  const { fetched } = report;
+  const age = fetched
+    ? `captures fetched ${fetched.from}..${fetched.to} (oldest ${fetched.oldestDays} day${fetched.oldestDays === 1 ? '' : 's'})`
+    : 'no capture date on record';
+  process.stdout.write(`handoff OK - ${report.entries} ledger entries, ${report.rows} evidence rows, every capture they cite on disk, chain verifies; ${age}.  [role=${machineRole()}]\n`);
   // The corpus arrived whole; whether anyone reviewed the handoff is a separate fact, and
   // phase 2 starts from the brief.
   if (report.brief.state === 'draft') {

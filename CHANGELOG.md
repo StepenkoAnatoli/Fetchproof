@@ -63,6 +63,23 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   corpus again with the new kit. A package's ID starts with `FP-` (was `RK-`). The schemas' identifiers are `fetchproof/<name>-v1`, and an FI
   sidecar conformance packet must name `fetchproof/fi-signoff-sidecar-v1` and
   `fetchproof/fi-evidence-manifest-v1`.
+- `handoff OK` now says how old the snapshot is: the line ends with `captures fetched
+  2026-09-13..2026-10-02 (oldest 37 days)`, the first and last days on which the captures the
+  evidence rows name were fetched, and the age of the oldest. A row a later capture of the same
+  page superseded is history and is left out, so a re-checked page shows as younger. Each row is
+  dated as `stale-evidence` dates it: by the capture its Raw cell names, which the ledger's hash
+  covers, and by its Retrieved cell only when the Raw cell names no capture. `--json` carries it as `fetched`. The age is never a
+  finding and the exit code does not change: the handoff checks that the corpus arrived
+  intact, and whether the pages are still current is the collector's to re-check. Discussion
+  #413; ADR-0187 lifts the feature freeze for this one item.
+- The README now says what `handoff OK` does not prove. It means the corpus arrived intact
+  and consistent, not that the pages still say the same thing: a builder cannot fetch, the
+  fetch dates are in `research/EVIDENCE.md`'s `Retrieved` column, and a builder who suspects
+  a fact has changed reports it for the collector to re-check. The five-minute example points
+  there. The `freshness-recheck` skill says that `--refresh-days 0` does not re-collect a
+  capture made today, and that a same-day re-check is `--force`, which re-fetches every page
+  the plan names and runs every search again, those for closed unknowns included (`--only`
+  narrows only the searches). Prompted by discussion #413.
 - Moving the top level's project below it - `git mv research packages/x/research`, turning a
   one-project repository into the nested layout - commits again. The gate counted the top level as
   always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
