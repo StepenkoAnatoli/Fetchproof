@@ -245,6 +245,10 @@ the keyless transport, there is no subtopic map yet, and one source carries the 
 That is the whole loop. Decide what you need to know, fetch the page that owns it, and let
 the gate check that the claim points at a real capture.
 
+`PASS` checks the claim against the page as it was fetched, not as it reads today.
+[Hand the research to a builder](#hand-the-research-to-a-builder) says where the fetch date is
+and who re-checks a page that may have changed.
+
 ## Run it on a real project
 
 A project is its own folder, and it is the **current working directory**. The kit takes no
@@ -466,6 +470,14 @@ missing and which machine the fix lives on: something did not travel (the collec
 `research/raw/.fetches.jsonl` by name), or the checkout rewrote line endings (fix it on the
 builder with `.gitattributes`: `research/raw/* text eol=lf`). The scaffold ships that
 `.gitattributes`.
+
+`handoff OK` means the corpus arrived intact and consistent: every capture is the page as it
+was fetched, and the ledger proves it. It does not mean the pages still say the same thing
+today. A builder cannot fetch, so it cannot check that. Each capture's fetch date is in the
+`Retrieved` column of `research/EVIDENCE.md`. A builder who suspects a fact has changed
+reports which one, and the collector re-checks it (the `freshness-recheck` skill). Once the
+collector has re-collected a page that changed, the gate fails with `cites-superseded-row`
+until the claim is re-read and its citation moved to the new capture.
 
 A builder who finds a fact missing reports which one and lets the collector fetch it. A
 page fetched by hand is not evidence in this kit.
