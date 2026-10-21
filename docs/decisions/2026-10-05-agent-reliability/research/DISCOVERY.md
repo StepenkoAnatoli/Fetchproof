@@ -1,12 +1,12 @@
-# Discovery Contract - How can Research-Kit reduce unsupported claims and coding mistakes while accurately stating its guarantees?
+# Discovery Contract - How can Fetchproof reduce unsupported claims and coding mistakes while accurately stating its guarantees?
 
 Started 2026-10-05. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Help the owner understand how Research-Kit can better serve its original purpose:
+Help the owner understand how Fetchproof can better serve its original purpose:
 reducing unsupported claims and mistakes in agent research, coding and writing, while
 accurately describing its guarantees. This phase produces a source-backed recommendation
 and a local audit, not product code or a new gate. Done means the five external questions

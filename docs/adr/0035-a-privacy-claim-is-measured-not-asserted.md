@@ -72,7 +72,7 @@ in the design.
 `lib/disclosure.mjs` and `bin/disclosure.mjs` make the measurement repeatable by anyone:
 
 ```
-node research-kit/bin/disclosure.mjs --repository OWNER/REPO --run <id> --topic "..."
+node fetchproof/bin/disclosure.mjs --repository OWNER/REPO --run <id> --topic "..."
 ```
 
 Unauthenticated by construction — there is no token parameter, and an unknown flag matching
@@ -113,7 +113,7 @@ reviewers, wait timers, administrator bypass and custom protection rules.
 It also carries the part E-06 did not, and it changes the predicted failure. Environment
 **variables** are governed the same way — available for all public repositories, and for
 private ones only on Pro or Team. So a Free repository converted to private loses
-`RESEARCH_KIT_COLLECTION_ENV` as well as `FIRECRAWL_API_KEY`.
+`FETCHPROOF_COLLECTION_ENV` as well as `FIRECRAWL_API_KEY`.
 
 This ADR predicted the collector would stop at the **credential** check. It would in fact
 stop one step earlier, at "the protected environment is the one that approved this run",
@@ -178,7 +178,7 @@ cannot make — the same reason `client_ref` warns rather than refuses.
 
 ## Consequences
 
-- `collect.yml`, `README.md` and `research-kit/README.md` now carry the measured table and
+- `collect.yml`, `README.md` and `fetchproof/README.md` now carry the measured table and
   the command, and each states what was not measured.
 - Both corrected passages **quote the claim they replaced**. A correction that erases what
   it corrected teaches nobody, and this one is the second time in two days that something

@@ -31,7 +31,7 @@ switched off.
   - The `host:port` of the URL the operator asked for is exempt: the page itself has to load.
     Only that port, not every port on its host.
   - An internal URL the operator asked for makes the whole render theirs, as for the keyless
-    fetch; `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1` lifts the check.
+    fetch; `FETCHPROOF_ALLOW_INTERNAL_REDIRECTS=1` lifts the check.
   - A refused request is answered with a 403 whose body carries a marker. When the DOM
     Chromium prints is that marker, or Chromium's own error page after a refused tunnel, the
     transport reports the refusal by name and keeps nothing. A refused image on a page that

@@ -1,5 +1,5 @@
 {
-  "topic": "Which Node.js versions the research kit must run on, and when Node fetch honours HTTPS_PROXY",
+  "topic": "Which Node.js versions Fetchproof must run on, and when Node fetch honours HTTPS_PROXY",
   "notes": "Phase 0 search came back mostly tutorials and mirrors; the pages that own these facts are known, so they are fetched directly.",
   "depth": "normal",
   "refreshDays": 30,

@@ -1,7 +1,7 @@
 # Discovery Contract - SearXNG's search API as a keyless search transport: the JSON output format, its query parameters and response fields, the settings that enable it, and the bot limiter
 
 Started 2026-09-30. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

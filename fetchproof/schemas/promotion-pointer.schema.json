@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fetchproof/promotion-pointer-v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "promotion"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/pointerArtifactId" },
+        "promotion": { "$ref": "#/$defs/promotion" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "payload"],
+      "properties": {
+        "envelope": { "$ref": "#/$defs/envelope" },
+        "payload": { "type": "object", "required": ["promotion"], "properties": { "promotion": { "$ref": "#/$defs/promotion" } }, "additionalProperties": true }
+      }
+    }
+  ],
+  "$defs": {
+    "pointerArtifactId": {
+      "type": "string",
+      "enum": ["R28-04", "R29-06", "R30-05", "R31-03", "R32-05", "R33-03"]
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "package", "targetHash", "predecessorClosureHash", "requiredGate", "publishedAt", "previousPointerHash", "revokedDescendantHashes"],
+      "properties": {
+        "state": { "type": "string", "enum": ["not-published", "provisional-cold", "ready", "revoked"] },
+        "package": { "type": "string", "enum": ["R28", "R29", "R30", "R31", "R32", "R33"] },
+        "generation": { "type": "integer", "minimum": 1 },
+        "targetArtifactId": { "$ref": "#/$defs/pointerArtifactId" },
+        "targetHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "promotionCommitHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "predecessorClosureHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "requiredGate": { "type": "string", "pattern": "^Q[0-5]$" },
+        "publishedAt": { "type": "string", "minLength": 1 },
+        "liveVerifiedUntil": { "type": ["string", "null"] },
+        "previousPointerHash": { "type": ["string", "null"] },
+        "rollbackRecordHash": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "revokedDescendantHashes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "schema", "benchmarkSpecVersion", "benchmarkSpecSha256", "package", "recordId", "ownerRole", "ownerId", "roleRosterSha256", "createdAt", "predecessorHashes", "payloadSha256", "state", "visibility"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/pointerArtifactId" },
+        "schema": { "type": "integer", "minimum": 1 },
+        "benchmarkSpecVersion": { "const": "1.0.0" },
+        "benchmarkSpecSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "package": { "type": "string", "enum": ["R28", "R29", "R30", "R31", "R32", "R33"] },
+        "recordId": { "type": "string", "minLength": 1 },
+        "ownerRole": { "type": "string", "minLength": 1 },
+        "ownerId": { "type": "string", "minLength": 1 },
+        "roleRosterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "createdAt": { "type": "string", "minLength": 1 },
+        "predecessorHashes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+        "payloadSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": { "const": "sealed" },
+        "visibility": { "type": "string", "enum": ["candidate-visible", "grader-only"] },
+        "recordHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pointerHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

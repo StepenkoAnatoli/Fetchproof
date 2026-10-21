@@ -1,4 +1,4 @@
-# Brief - Measuring the research kit: citation accuracy metrics from deep research benchmarks
+# Brief - Measuring Fetchproof: citation accuracy metrics from deep research benchmarks
 
 _Auto-drafted 2026-09-28 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require human/agent judgement; everything else is assembled from evidence already
@@ -78,8 +78,7 @@ single-host closure. Then run it on all 17 corpora in this repository and MoonAl
 ## Next steps
 
 1. Build `measure.mjs` above, with its ADR, in the same commit.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=afa4f605b3a6e3a3 inputs=16d30810e7bf81e1 gate=pass -->
+<!-- fetchproof:brief-draft body=7a8e07c9d9800647 inputs=b004f65e028a68e3 gate=pass -->

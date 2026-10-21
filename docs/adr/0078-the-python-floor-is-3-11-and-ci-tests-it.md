@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-28
 - **Status:** accepted
-- **Area:** `lib/runtime.mjs` (`REQUIRED_PYTHON`), `README.md`, `research-kit/README.md`,
+- **Area:** `lib/runtime.mjs` (`REQUIRED_PYTHON`), `README.md`, `fetchproof/README.md`,
   `.github/workflows/offline-suite.yml` (`python-version`), `test/support-policy.test.mjs`
 
 ## Context

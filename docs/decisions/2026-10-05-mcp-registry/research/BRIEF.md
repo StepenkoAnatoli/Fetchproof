@@ -99,5 +99,4 @@ Only after that decision should a builder prepare a reviewable package and serve
 test installation/launch and perform the operator checks above. Publication is a later
 explicit action. This briefing authorizes no publication and makes no catalog-placement
 claim.
-
-<!-- research-kit:brief-draft body=0835a2ba22cfafa9 inputs=6cb208fc6c5a8e1c gate=pass -->
+<!-- fetchproof:brief-draft body=af6be1ac2d12ef3f inputs=e4581fc861bbb81c gate=pass -->

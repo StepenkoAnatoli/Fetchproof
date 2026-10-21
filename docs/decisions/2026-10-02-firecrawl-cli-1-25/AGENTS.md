@@ -20,8 +20,8 @@ The gate is the handoff point. Before it passes, phase 2 does not start.
 ## Two machines, two roles
 
 The role is machine config - `role: "collector" | "builder"` in
-`~/.agents/research-kit.config.json`, default `collector`; declare it with
-`node "$HOME/.agents/research-kit/bin/install-hooks.mjs" --role builder`.
+`~/.agents/fetchproof.config.json`, default `collector`; declare it with
+`node "$HOME/.agents/fetchproof/bin/install-hooks.mjs" --role builder`.
 
 | | **collector** (the operator's PC) | **builder** (a sandbox, a CI box, a laptop) |
 |---|---|---|
@@ -37,7 +37,7 @@ page forges a corpus instead of reporting a gap. Name the missing fact instead.
 A builder's first command is:
 
 ```
-node "$HOME/.agents/research-kit/bin/handoff.mjs"
+node "$HOME/.agents/fetchproof/bin/handoff.mjs"
 ```
 
 The remedy depends on the cause, and the command says which: something that did not
@@ -71,18 +71,18 @@ spent credits are not spent again.
 
 The sequence is decompose -> contract -> collect -> gate -> brief.
 
-0. **Decompose** (collector machine): `node "$HOME/.agents/research-kit/bin/decompose.mjs"` - it maps the project's own topic from `research/plan.json`; pass `--topic "<topic>"` only while the project is untitled, since a different topic is refused -
+0. **Decompose** (collector machine): `node "$HOME/.agents/fetchproof/bin/decompose.mjs"` - it maps the project's own topic from `research/plan.json`; pass `--topic "<topic>"` only while the project is untitled, since a different topic is refused -
    drafts `research/MAP.md` seeded with the universal checklist. The tool contains no
    judgment. Mark every row COVERED (citing U-## rows), DISMISSED (reason required), or
    GAP.
 1. **Write the intent** in `research/DISCOVERY.md` under `## Build intent`, and enumerate
    the blocking unknowns FROM the map.
-2. **Collect**: `node "$HOME/.agents/research-kit/bin/research.mjs" --plan research/plan.json`. Prefer the page
+2. **Collect**: `node "$HOME/.agents/fetchproof/bin/research.mjs" --plan research/plan.json`. Prefer the page
    that *owns* the fact over any write-up about it.
 3. **Rewrite** each auto-extracted `Finding` cell into a real claim, keeping the `Raw`
    cell pointing at the cached page. Where a claim rests on one sentence, add it as
    `[quote: the sentence, copied from the capture]` - the gate checks it is really there.
-4. **Gate**: `node "$HOME/.agents/research-kit/bin/preflight.mjs"`. **Do not start building until it prints
+4. **Gate**: `node "$HOME/.agents/fetchproof/bin/preflight.mjs"`. **Do not start building until it prints
    PASS.** Evidence must be *fetched*, not typed, and by a named transport.
 5. **Hand off**: write `research/BRIEF.md`.
 
@@ -116,7 +116,7 @@ hint, never proof. Never invent a citation. Flag contradictions instead of avera
 ## Rule 5 - cost discipline
 
 Every scrape spends credits. Plan the queries in `research/plan.json` first, reuse the
-cache (`--refresh-days`), and check the budget with `node "$HOME/.agents/research-kit/bin/research.mjs" --status`.
+cache (`--refresh-days`), and check the budget with `node "$HOME/.agents/fetchproof/bin/research.mjs" --status`.
 
 ## Rule 6 - secrets
 

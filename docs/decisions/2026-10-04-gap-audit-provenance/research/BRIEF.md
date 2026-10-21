@@ -1,4 +1,4 @@
-# Brief - How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Research-Kit's hash-chained ledger
+# Brief - How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Fetchproof's hash-chained ledger
 
 _Auto-drafted 2026-10-04 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Benchmark Research-Kit's evidence ledger against the provenance, attestation and integrity
+Benchmark Fetchproof's evidence ledger against the provenance, attestation and integrity
 standards below. The ledger is `research/raw/.fetches.jsonl`: one entry per fetch with the
 URL, the sha256 of the capture, a link to the previous entry and the transport that ran, in
 a chain that the collector writes and that `preflight.mjs` verifies by recomputing the hashes.
@@ -131,9 +131,7 @@ the audit) or lifted by an ADR.
 ## Next steps
 
 1. The TODO sections (Contradictions, Decision) are answered above; the lead reads the benchmark table and the two known unknowns.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-
-<!-- research-kit:brief-draft body=416ab17342ec3018 inputs=5bcb646871538aa0 gate=pass -->
+<!-- fetchproof:brief-draft body=23b35e5b2b4875e6 inputs=abb059bed59d035b gate=pass -->

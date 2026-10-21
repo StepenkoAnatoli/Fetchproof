@@ -89,8 +89,8 @@ process.
 ## Next steps
 
 1. Build the fallback above (ADR in the same commit).
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=e5811775491d132d inputs=b0c6f1e37427af57 gate=pass -->
+<!-- fetchproof:brief-draft body=e5811775491d132d inputs=b0c6f1e37427af57 gate=pass -->

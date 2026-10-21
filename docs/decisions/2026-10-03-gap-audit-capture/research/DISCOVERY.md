@@ -1,12 +1,12 @@
-# Discovery Contract - What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Research-Kit's captures
+# Discovery Contract - What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Fetchproof's captures
 
 Started 2026-10-03. This file is the definition of "enough information to build".
-`node "/root/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "/root/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Benchmark Research-Kit's capture fidelity against the standards and tools below. A
+Benchmark Fetchproof's capture fidelity against the standards and tools below. A
 decision about this repository (ADR-0030), feeding the 2026-10-03 gap audit of the kit:
 the lead reads this brief as evidence for what a faithful (bytes and encoding), re-anchorable
 (a quotation that can be found again after the page changes) and current (revalidated

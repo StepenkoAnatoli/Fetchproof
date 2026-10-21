@@ -20,15 +20,15 @@ _Ledger seq 1, chained: neither this text nor its place before the evidence
 can be changed now. Read it against the findings below - it may well be wrong, and a wrong
 prior that was recorded in advance is worth more than a right one remembered afterwards._
 
-> Expect: Windows PowerShell 5.1 passes ~ to a native command literally, so node ~/.agents/... fails there; PowerShell 7 expands an unquoted ~ for native commands on Windows only through the PSNativeWindowsTildeExpansion feature - experimental in 7.4, and perhaps mainstream by 7.5 or 7.6. Expect $HOME to be an automatic variable in every PowerShell, expanded inside double-quoted strings, including arguments to native commands. Expect bash to expand ~ only unquoted at the start of a word, and $HOME inside double quotes. Expect cmd.exe to use %NAME% syntax, with the home folder in %USERPROFILE%, and to expand neither ~ nor $HOME. So the likely answer is "$HOME/.agents/research-kit/bin/x.mjs" in double quotes for PowerShell, bash and zsh, plus a cmd line with %USERPROFILE%. Cannot know yet: which shell the operator actually uses - an intent question, not a document.
+> Expect: Windows PowerShell 5.1 passes ~ to a native command literally, so node ~/.agents/... fails there; PowerShell 7 expands an unquoted ~ for native commands on Windows only through the PSNativeWindowsTildeExpansion feature - experimental in 7.4, and perhaps mainstream by 7.5 or 7.6. Expect $HOME to be an automatic variable in every PowerShell, expanded inside double-quoted strings, including arguments to native commands. Expect bash to expand ~ only unquoted at the start of a word, and $HOME inside double quotes. Expect cmd.exe to use %NAME% syntax, with the home folder in %USERPROFILE%, and to expand neither ~ nor $HOME. So the likely answer is "$HOME/.agents/fetchproof/bin/x.mjs" in double quotes for PowerShell, bash and zsh, plus a cmd line with %USERPROFILE%. Cannot know yet: which shell the operator actually uses - an intent question, not a document.
 
 ## Intent
 
 Every project the kit scaffolds carries commands that run the kit, such as
 `node {{KIT}}/bin/preflight.mjs` in AGENTS.md and START_HERE.md. `{{KIT}}` is rendered as this
 machine's absolute kit path, or, for a project that travels, as a spelling passed with `--kit`.
-The Actions collector passes `~/.agents/research-kit` (collect.yml), so every remote package
-tells its reader to run `node ~/.agents/research-kit/bin/doctor.mjs`. The operator reads those
+The Actions collector passes `~/.agents/fetchproof` (collect.yml), so every remote package
+tells its reader to run `node ~/.agents/fetchproof/bin/doctor.mjs`. The operator reads those
 packages on Windows. Whether that command runs depends on the shell: whether it expands `~` for
 a native command, whether it knows `$HOME`, and whether quoting (needed for a path with a
 space) stops the expansion.
@@ -69,8 +69,8 @@ bash 5.2.21, in this container, 2026-09-27, with a HOME that contains a space:
 | `echo "~/x"` | `~/x` - quoted, not expanded (agrees with E-06) |
 | `echo ~/x` | the home path - unquoted, expanded |
 | `echo "$HOME/x"` | the home path - expanded inside double quotes (agrees with E-07) |
-| `node "$HOME/.agents/research-kit/bin/preflight.mjs" --help` | runs |
-| `node ~/.agents/research-kit/bin/preflight.mjs --help` | runs as well: bash does not word-split the result of tilde expansion |
+| `node "$HOME/.agents/fetchproof/bin/preflight.mjs" --help` | runs |
+| `node ~/.agents/fetchproof/bin/preflight.mjs --help` | runs as well: bash does not word-split the result of tilde expansion |
 
 PowerShell and zsh are not installed here, so their rows rest on their documentation alone.
 
@@ -88,8 +88,8 @@ None. Every blocking unknown was closed with primary-source evidence.
 
 ## Decision
 
-**A project that travels spells the kit `$HOME/.agents/research-kit`, and every command is
-double-quoted.** `node "$HOME/.agents/research-kit/bin/doctor.mjs"` reaches node as one
+**A project that travels spells the kit `$HOME/.agents/fetchproof`, and every command is
+double-quoted.** `node "$HOME/.agents/fetchproof/bin/doctor.mjs"` reaches node as one
 absolute path:
 - in Windows PowerShell 5.1 and every PowerShell 7 (U-2);
 - in bash and zsh (U-3);
@@ -98,7 +98,7 @@ absolute path:
 `~` does not reach node that way in 5.1, 7.4, or 7.5 without an experimental feature (U-1), and
 quoting it (needed for a space in an absolute path) stops bash and zsh expanding it (U-3).
 
-1. `collect.yml` passes `--kit` `$HOME/.agents/research-kit` instead of `~/.agents/research-kit`.
+1. `collect.yml` passes `--kit` `$HOME/.agents/fetchproof` instead of `~/.agents/fetchproof`.
    It is not expanded there, because the argument goes through `execFileSync` with no shell.
 2. Every `node {{KIT}}/bin/...` in the template becomes `node "{{KIT}}/bin/..."`. For a local
    project, `{{KIT}}` is an absolute path, and quotes keep a space in it from splitting the
@@ -106,13 +106,13 @@ quoting it (needed for a space in an absolute path) stops bash and zsh expanding
 3. START_HERE.md, the operator's file, says what cmd needs: `%USERPROFILE%` in place of `$HOME`
    (U-4). cmd expands neither `~` nor `$HOME`.
 4. The kit-root copy of START_HERE.md follows the template. new-project's help shows
-   `--kit '$HOME/.agents/research-kit'`, single-quoted so the shell typing it does not expand it.
+   `--kit '$HOME/.agents/fetchproof'`, single-quoted so the shell typing it does not expand it.
 
 **Out of scope:** a launcher on PATH, which would avoid the home path altogether. It is a new
 installed artifact with its own failure modes, and quoting plus `$HOME` already reach every shell
 the kit's readers use.
 
-**First step:** a test that scaffolds with `--kit '$HOME/.agents/research-kit'` and has bash
+**First step:** a test that scaffolds with `--kit '$HOME/.agents/fetchproof'` and has bash
 resolve every command in the project's documents against a home folder that contains a space.
 
 ## Next steps

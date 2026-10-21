@@ -27,7 +27,7 @@ claimed for every Node version.
 
 1. The fixed `research.mjs` child gets a private Node IPC descriptor, separate from stdout
    and stderr. After `runResearch` returns, it sends exactly one internal object:
-   `{ type: 'research-kit-accounting', spent, stoppedOn }`. `spent` is that run's actual
+   `{ type: 'fetchproof-accounting', spent, stoppedOn }`. `spent` is that run's actual
    page-attempt count; `stoppedOn` is its exhaustion provider or an empty string. The child
    waits for its send callback and disconnect before an explicit exit. A send callback is
    not an acknowledgment of parent receipt.

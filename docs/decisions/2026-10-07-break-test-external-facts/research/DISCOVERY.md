@@ -1,7 +1,7 @@
 # Discovery Contract - what the runtime does: Node's certificate store, and the mode a copied file gets
 
 Started 2026-10-07; corrected 2026-10-07/08 after review of the committed pass-7 corpus.
-Run the checkout's `research-kit/bin/preflight.mjs` from this nested project; a root verdict does not validate this corpus.
+Run the checkout's `fetchproof/bin/preflight.mjs` from this nested project; a root verdict does not validate this corpus.
 
 ## Build intent
 
@@ -29,5 +29,5 @@ No additional intent questions are needed. The owner authorized correcting Arena
 - Append complete raw owner-source captures at exact v22.22.3 and correction-host v24.20.0. These do not establish documentation for every Node version, including Node 26.
 - Reuse the existing judged decomposition. `decompose.mjs --dry-run --transport http-keyless` refused to erase it without --force; retain and extend the map rather than discard its decisions.
 - Correction collection fetched three direct owner files on 2026-10-07 and the IPC plus two process API files on 2026-10-08. The last run fetched only the two new process URLs and reused all four existing correction pages. Total new fetches are six, no searches, http-keyless, maxScrapes 6, and no fallback. The quick depth tier still caps any one run at four scrapes; cache reuse made the last run spend two. The initial sandbox's failed search lane remains historical context.
-- Doctor confirmed the eligible collector role and intact corpus with RESEARCH_KIT_HOME selecting this checkout, and reported that the registered edit hook was outside that selected kit. This comparison does not establish that the operator's deployed configuration is broken. No READY claim, role/config mutation, or machine-wide hook/settings repair is made by this corpus correction.
+- Doctor confirmed the eligible collector role and intact corpus with FETCHPROOF_HOME selecting this checkout, and reported that the registered edit hook was outside that selected kit. This comparison does not establish that the operator's deployed configuration is broken. No READY claim, role/config mutation, or machine-wide hook/settings repair is made by this corpus correction.
 - The corpus is already committed by 9939ce0 and the original POSIX repair by 4619922. The reviewed follow-up and product repair are separately reviewable work; no code-test success is inferred from this project's PASS.

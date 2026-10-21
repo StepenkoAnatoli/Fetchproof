@@ -5,8 +5,8 @@
   level's evidence moved whole below it is a move, not judged where it was - and by check (e)
   (E1, E2): a move takes the top level's `research/` out of the index whole, and one that leaves
   it on disk blocks until it goes
-- **Area:** `research-kit/lib/gate.mjs` (`evaluate`, `headEvidenceRemoval`, `evidenceMovedTo`,
-  `researchRemains`, `movedLeftover`), `research-kit/bin/gate.mjs`
+- **Area:** `fetchproof/lib/gate.mjs` (`evaluate`, `headEvidenceRemoval`, `evidenceMovedTo`,
+  `researchRemains`, `movedLeftover`), `fetchproof/bin/gate.mjs`
 - **Defect:** #312's rule, found open by the review of the 2026-10-19 sweep (hooks F1)
 - **Extends:** #312, which no ADR recorded - "a capture is never removed" lived in the gate's
   reason text and the CHANGELOG - and ADR-0182 (a project below the top level)

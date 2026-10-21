@@ -12,7 +12,7 @@ failure: a machine meant to collect with Firecrawl silently falls back to the ke
 and its captures carry a weaker transport.
 
 The kit also has routes that need no Firecrawl: `http-keyless` and `browser` (ADR-0088). An
-operator who picks one of them in the machine config, or with `RESEARCH_KIT_TRANSPORT`, is
+operator who picks one of them in the machine config, or with `FETCHPROOF_TRANSPORT`, is
 not degraded. That is their setup.
 
 The break-test (PR #140, risk 6) found that `doctor` exits 1 on such a machine. So `doctor`
@@ -21,7 +21,7 @@ could not serve as a health check anywhere Firecrawl is deliberately unused.
 ## Decision
 
 - **An explicit choice passes.** On a collector whose transport was explicitly chosen and is
-  not `firecrawl-cli` (machine config `transport`, or `RESEARCH_KIT_TRANSPORT`), the two
+  not `firecrawl-cli` (machine config `transport`, or `FETCHPROOF_TRANSPORT`), the two
   Firecrawl findings pass. They say which route was chosen, and print no fix.
 - **Everything else is unchanged.** With nothing chosen they still fail, because that is the
   silent degradation. They also still fail when `firecrawl-cli` itself was chosen.

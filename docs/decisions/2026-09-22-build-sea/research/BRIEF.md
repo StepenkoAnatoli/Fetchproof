@@ -61,8 +61,8 @@ update in ADR-0031.
 ## Next steps
 
 1. Read the Decision above; it records what was already decided, and when.
-2. Hand this file to the builder (phase 2). Re-running `node /home/user/Research-Kit/research-kit/bin/brief.mjs`
+2. Hand this file to the builder (phase 2). Re-running `node /home/user/Fetchproof/fetchproof/bin/brief.mjs`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=9551583c24d1302b inputs=5fb9112dee142c8d gate=pass -->
+<!-- fetchproof:brief-draft body=9551583c24d1302b inputs=5fb9112dee142c8d gate=pass -->

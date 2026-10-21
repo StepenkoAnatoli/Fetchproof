@@ -2,7 +2,7 @@
 
 ## Topic
 
-How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Research-Kit's converter, completeness grade and capture acceptance
+How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Fetchproof's converter, completeness grade and capture acceptance
 
 ## Subtopics
 

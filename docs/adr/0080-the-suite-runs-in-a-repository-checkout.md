@@ -6,7 +6,7 @@
 
 ## Context
 
-`install.mjs` deploys a full mirror of `research-kit/` to `~/.agents/research-kit`, and
+`install.mjs` deploys a full mirror of `fetchproof/` to `~/.agents/fetchproof`, and
 that mirror includes `test/`. The suite changes directory to the folder above the kit
 (ADR-0071), which in a checkout is the repository root. Many tests read what only the
 repository holds there: `.github/workflows`, `docs/adr`, `AGENTS.md`, this repository's
@@ -19,7 +19,7 @@ kit, and `doctor` is the check that actually verifies a deployment.
 ## Decision
 
 Before running any test, `selftest` checks for `.github/workflows`, `docs/adr` and
-`AGENTS.md` beside `research-kit/`. If any is missing, it names them, says the suite runs
+`AGENTS.md` beside `fetchproof/`. If any is missing, it names them, says the suite runs
 in a clone of the repository, prints the `doctor` command for a deployed kit, and exits 2.
 Exit 2 marks misuse, not a red suite.
 
@@ -36,7 +36,7 @@ Exit 2 marks misuse, not a red suite.
 
 ## Consequences
 
-- A copy of `research-kit/` alone, outside a repository, cannot run the suite. It never
+- A copy of `fetchproof/` alone, outside a repository, cannot run the suite. It never
   could run it green.
 - The three anchors are what a checkout has and a deployment does not. A repository that
   drops one of them will need this list changed.

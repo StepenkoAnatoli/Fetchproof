@@ -19,7 +19,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 ## Intent
 
 A decision about this repository (ADR-0030): whether `TESTED_CLI_VERSION` in
-`research-kit/lib/firecrawl.mjs` should move from 1.24.6 to 1.25.2, the version the CLI's
+`fetchproof/lib/firecrawl.mjs` should move from 1.24.6 to 1.25.2, the version the CLI's
 own update banner now advertises on an operator's PC (2026-10-02). The adapter drives the
 `firecrawl` binary with specific flags (`scrape <url> --only-main-content --json`,
 `search <q> --limit n --json`, `map <url> --limit n --json`, `--status`) and reads a
@@ -93,7 +93,7 @@ files land beside the 1.24.6 fixtures before any version string moves.
 ## Next steps
 
 1. Review the **TODO** sections above (Contradictions, Decision) before handing off.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
@@ -102,11 +102,10 @@ files land beside the 1.24.6 fixtures before any version string moves.
 Step 1 was done the same day: `firecrawl-cli@1.25.2` installed into a scratch prefix,
 `--status`, `scrape --only-main-content --json` and `search --limit 3 --json` run once each
 with the key given per command (three credits), stdout and stderr kept apart. Read by the
-kit's own parsers (`research-kit/test/fixtures/*-1.25.2.*`, tests in
-`research-kit/test/transport.test.mjs`): stdout is one JSON value for scrape - the receipt,
+kit's own parsers (`fetchproof/test/fixtures/*-1.25.2.*`, tests in
+`fetchproof/test/transport.test.mjs`): stdout is one JSON value for scrape - the receipt,
 `Scrape ID: ...`, goes to stderr, so the trailing-receipt case in U-03 does not arise;
 search's `data.tools` is populated now (three Alexandria providers, no `url`) and none
 reaches a result; `--status` is the same text as 1.24.6's. Step 3 followed:
 `TESTED_CLI_VERSION` is 1.25.2 (kit 0.9.3). Step 4 was not needed.
-
-<!-- research-kit:brief-draft body=cb9e6cff9369cb68 inputs=329a6deb7d15dd62 gate=pass -->
+<!-- fetchproof:brief-draft body=39df3fe401b747f2 inputs=fa8225c9b47e2673 gate=pass -->

@@ -107,8 +107,8 @@ again or when Tavily publishes a tier or an agreement that says no training in w
    only document that could meet the trigger.
 3. If a second keyed search provider is wanted regardless of Tavily, that is a new decision
    project: its terms on training and retention first, then pricing, limits and schema.
-4. Hand this file to nobody: phase 2 does not start from it. Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+4. Hand this file to nobody: phase 2 does not start from it. Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=9e7b326373ca54e5 inputs=203bd211df01de0b gate=pass -->
+<!-- fetchproof:brief-draft body=9e7b326373ca54e5 inputs=203bd211df01de0b gate=pass -->

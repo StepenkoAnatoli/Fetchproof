@@ -1,0 +1,113 @@
+{
+  "packetVersion": "1.0.0",
+  "profile": "researcher-fi-schema-conformance-v1",
+  "schemaIds": {
+    "sidecar": "fetchproof/fi-signoff-sidecar-v1",
+    "manifest": "fetchproof/fi-evidence-manifest-v1"
+  },
+  "documents": {
+    "sidecar": {
+      "recordVersion": "1.0.0",
+      "fiId": "FI-01",
+      "workbookPath": "records/blank.xlsx",
+      "workbookSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "packetVersion": "1.0.0",
+      "packetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "matrixVersion": "1.0.0",
+      "matrixSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "identity": {
+        "releaseCandidateId": "synthetic-rc",
+        "disposableMachineId": "synthetic-machine",
+        "machineRole": "reviewer",
+        "reviewCwd": "C:/synthetic/review",
+        "rootRelativeCwd": "review",
+        "cwdContainmentProofEvidenceId": "FI-01-cwd",
+        "operatorPrincipalId": "operator-1",
+        "operatorStartedAt": "2026-09-17T00:00:00Z",
+        "operatorFinishedAt": "2026-09-17T00:01:00Z",
+        "independentReviewerPrincipalId": "verifier-1",
+        "independentReviewerAt": "2026-09-17T00:02:00Z"
+      },
+      "traceability": {
+        "artifactRows": "synthetic-row",
+        "repairPackage": "R1",
+        "migrationGate": "M1",
+        "releaseConsequence": "G1"
+      },
+      "expectedOutcomeCode": "REFUSE-FUTURE-SCHEMA",
+      "observedOutcomeCode": "REFUSE-FUTURE-SCHEMA",
+      "fields": [{
+        "label": "Observed status",
+        "entrySha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evidenceIds": ["FI-01-status"],
+        "evidenceHashes": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+      }],
+      "containment": {
+        "network": "NOT-ATTEMPTED",
+        "credentials": "NOT-ATTEMPTED",
+        "paidCredits": "NOT-ATTEMPTED",
+        "fixtureCreation": "NOT-ATTEMPTED",
+        "proofEvidenceIds": ["FI-01-containment"]
+      },
+      "status": "PASS",
+      "statusReasonSha256": null,
+      "rollback": {
+        "targetHash": null,
+        "receiptEvidenceId": null,
+        "descendantClosureHash": null
+      },
+      "signatures": {
+        "reviewer": {
+          "principalId": "reviewer-1",
+          "role": "fi-reviewer",
+          "signerKeyId": "key-1",
+          "signedAt": "2026-09-17T00:03:00Z",
+          "statementSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "independentVerifier": {
+          "principalId": "verifier-1",
+          "role": "fi-independent-verifier",
+          "signerKeyId": "key-2",
+          "signedAt": "2026-09-17T00:04:00Z",
+          "statementSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      }
+    },
+    "manifest": {
+      "manifestVersion": "1.0.0",
+      "root": "release-evidence",
+      "entries": [{
+        "evidenceId": "FI-01-status",
+        "fiId": "FI-01",
+        "fieldLabel": "Observed status",
+        "artifactId": "FI-01-record",
+        "path": "release-evidence/FI-01-status.json",
+        "profile": "researcher-benchmark-c14n-v1-json",
+        "byteLength": 0,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "predecessorEvidenceIds": []
+      }]
+    }
+  },
+  "vectors": [
+    { "vectorId": "FISC-01", "target": "sidecar", "base": "sidecar", "patches": [], "expectedCode": "PASS" },
+    { "vectorId": "FISC-02", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/untrusted", "value": true }], "expectedCode": "SCHEMA-ADDITIONAL" },
+    { "vectorId": "FISC-03", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "remove", "path": "/identity" }], "expectedCode": "SCHEMA-REQUIRED" },
+    { "vectorId": "FISC-04", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/expectedOutcomeCode", "value": "not-an-outcome" }], "expectedCode": "SCHEMA-ENUM" },
+    { "vectorId": "FISC-05", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/workbookSha256", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }], "expectedCode": "SCHEMA-PATTERN" },
+    { "vectorId": "FISC-06", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/status", "value": "ROLLED-BACK" }, { "op": "set", "path": "/rollback/targetHash", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, { "op": "set", "path": "/rollback/receiptEvidenceId", "value": "receipt-1" }, { "op": "set", "path": "/rollback/descendantClosureHash", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "expectedCode": "SCHEMA-ONE-OF" },
+    { "vectorId": "FISC-07", "target": "sidecar", "rawDocument": "{\"fiId\":\"FI-01\",\"fiId\":\"FI-02\"}", "expectedCode": "JSON-DUPLICATE-KEY" },
+    { "vectorId": "FISC-08", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/workbookSha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" }], "expectedCode": "SCHEMA-PATTERN" },
+    { "vectorId": "FISC-09", "target": "sidecar", "base": "sidecar", "patches": [{ "op": "set", "path": "/identity/operatorStartedAt", "value": "\u0662\u0660\u0662\u0666-09-17T00:00:00Z" }], "expectedCode": "SCHEMA-PATTERN" },
+    { "vectorId": "FIM-01", "target": "manifest", "base": "manifest", "patches": [], "expectedCode": "PASS" },
+    { "vectorId": "FIM-02", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/path", "value": "../escaped.json" }], "expectedCode": "SCHEMA-PATTERN" },
+    { "vectorId": "FIM-03", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/untrusted", "value": true }], "expectedCode": "SCHEMA-ADDITIONAL" },
+    { "vectorId": "FIM-04", "target": "manifest", "base": "manifest", "patches": [{ "op": "remove", "path": "/entries/0/sha256" }], "expectedCode": "SCHEMA-REQUIRED" },
+    { "vectorId": "FIM-05", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/profile", "value": "unknown-profile" }], "expectedCode": "SCHEMA-ENUM" },
+    { "vectorId": "FIM-06", "target": "manifest", "rawDocument": "{\"root\":\"one\",\"root\":\"two\"}", "expectedCode": "JSON-DUPLICATE-KEY" },
+    { "vectorId": "FIM-07", "target": "manifest", "base": "manifest", "patches": [{ "op": "set", "path": "/entries/0/byteLength", "value": 0.0 }], "expectedCode": "PASS" },
+    { "vectorId": "FIM-08", "target": "manifest", "rawDocument": "{\"byteLength\":1e400}", "expectedCode": "JSON-PARSE" }
+  ]
+}

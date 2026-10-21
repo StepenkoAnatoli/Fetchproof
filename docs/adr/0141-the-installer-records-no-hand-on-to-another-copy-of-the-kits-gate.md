@@ -7,11 +7,11 @@ freeze (ADR-0117): no new command, flag, key or check.
 
 ## Context
 
-The install records the `core.hooksPath` it replaced as `research-kit.previousHooksPath` in
-git's global config, where the sh hooks read it, and in `~/.agents/research-kit.install.json`,
+The install records the `core.hooksPath` it replaced as `fetchproof.previousHooksPath` in
+git's global config, where the sh hooks read it, and in `~/.agents/fetchproof.install.json`,
 where `removeCommitGate` reads it to restore the operator's setting on uninstall (ADR-0112,
 ADR-0113). When that folder holds another copy of this kit's gate, doctor warns and names the
-remedy `git config --global --unset research-kit.previousHooksPath` (ADR-0134).
+remedy `git config --global --unset fetchproof.previousHooksPath` (ADR-0134).
 
 On the operator's machine (2026-10-04) that remedy lasted one session. `installCommitGate`
 computes the folder it records as the first of the install state's `previousHooksPath` and

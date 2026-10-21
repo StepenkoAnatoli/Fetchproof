@@ -27,7 +27,7 @@ operator's choice at all.
 - **An internal URL the operator asked for is theirs.** When the requested URL is itself
   internal, redirects that lead to internal addresses are followed. This keeps an intranet
   page, a local test server and a self-hosted service working.
-- **`RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1`** lifts the check for a machine whose public
+- **`FETCHPROOF_ALLOW_INTERNAL_REDIRECTS=1`** lifts the check for a machine whose public
   pages legitimately redirect inward. Only the value `1` does.
 - **A name this machine cannot resolve is not judged.** Behind a proxy, the proxy resolves
   names, and a name that nothing here can resolve is not this machine's network.

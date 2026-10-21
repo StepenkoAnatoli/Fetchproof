@@ -8,7 +8,7 @@ run in three. Procedure: the break-test skill, pinned-branch setup.
 
 ## Overview
 
-- **Stack and gate.** Node ESM, no dependencies. Gate: `node research-kit/bin/selftest.mjs`
+- **Stack and gate.** Node ESM, no dependencies. Gate: `node fetchproof/bin/selftest.mjs`
   (1603 tests at the start, about 145 s here), `preflight.mjs` PASS, `handoff.mjs` exit 0,
   `doctor.mjs` READY. CI: seven jobs (ubuntu-latest, ubuntu-26.04, windows-latest on Node 22;
   Node 24 and 26; archive tree; aggregate), all green on `84df2c4`.
@@ -79,7 +79,7 @@ run in three. Procedure: the break-test skill, pinned-branch setup.
 
 | Commit | Finding | Files |
 |---|---|---|
-| `ba8c775` | F1 | `research-kit/lib/browser-transport.mjs`, `research-kit/test/browser-transport.test.mjs`, `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `research-kit/README.md` |
+| `ba8c775` | F1 | `fetchproof/lib/browser-transport.mjs`, `fetchproof/test/browser-transport.test.mjs`, `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `fetchproof/README.md` |
 
 ## Rejected fixes
 
@@ -109,13 +109,13 @@ None attempted and reverted.
 
 | # | Probe | Command (from the repository root unless noted) | Result |
 |---|---|---|---|
-| 1 | Clean clone, full suite x3 | `git clone <checkout> <scratch>/clone; node research-kit/bin/selftest.mjs` with `RESEARCH_KIT_RESULT_FILE` | 1603 passed x3, failure set empty, 145-148 s |
-| 2 | Slow-host, CPU 4:1 | burners `taskset -c 0 node -e 'for(;;){}'` x3; `taskset -c 0 node research-kit/bin/selftest.mjs browser-guard`; control without burners | 16 passed, 19.1 s; control 16 passed, 8.7 s |
+| 1 | Clean clone, full suite x3 | `git clone <checkout> <scratch>/clone; node fetchproof/bin/selftest.mjs` with `FETCHPROOF_RESULT_FILE` | 1603 passed x3, failure set empty, 145-148 s |
+| 2 | Slow-host, CPU 4:1 | burners `taskset -c 0 node -e 'for(;;){}'` x3; `taskset -c 0 node fetchproof/bin/selftest.mjs browser-guard`; control without burners | 16 passed, 19.1 s; control 16 passed, 8.7 s |
 | 3 | Slow-host, CPU 10:1 | nine burners; both browser groups on core 0 | guard 16 passed, 26.8 s; transport 33 passed, 35.9 s; null |
 | 4 | Launch inside allowance, render inside budget (F1 repro) | fake browser 13 s / 13.5 s / timeout 15 s, plus two controls | FAIL before the fix at 25.0 s; controls ok; ok after the fix at 26.7 s |
 | 5 | New nested project under `core.autocrlf=true` clone | `git clone -c core.autocrlf=true`; in `docs/decisions/2026-10-04-tavily-terms-reread`: `handoff.mjs`, `preflight.mjs` | handoff OK (5 entries, chain verifies), PASS; null |
 | 6 | Git-archive tree, no repository above | `git archive HEAD \| tar -x`; `GIT_CEILING_DIRECTORIES=<parent>`; handoff in the nested project and at the root, root preflight | all OK / PASS; null |
-| 7 | Declared Node >= 22 enforced | `/opt/node20/bin/node research-kit/bin/doctor.mjs`, `.../selftest.mjs`; node21 doctor | doctor: 1 blocker, "install Node 22+"; selftest exit 2; null |
+| 7 | Declared Node >= 22 enforced | `/opt/node20/bin/node fetchproof/bin/doctor.mjs`, `.../selftest.mjs`; node21 doctor | doctor: 1 blocker, "install Node 22+"; selftest exit 2; null |
 | 8 | Flakiness after the fix | both browser groups x5 in the clone | guard 16 passed x5 (7.0-7.5 s), transport 33 passed x5 (22.6-22.7 s), 0 failures in 10 runs |
 | 9 | Version invariants | `selftest.mjs repo-hygiene` on the release commit (earlier the same day) | 11 passed, incl. the one-kit-version test |
 

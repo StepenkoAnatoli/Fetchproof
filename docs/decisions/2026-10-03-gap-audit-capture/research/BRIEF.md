@@ -1,4 +1,4 @@
-# Brief - What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Research-Kit's captures
+# Brief - What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Fetchproof's captures
 
 _Auto-drafted 2026-10-03 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Benchmark Research-Kit's capture fidelity against the standards and tools below. A
+Benchmark Fetchproof's capture fidelity against the standards and tools below. A
 decision about this repository (ADR-0030), feeding the 2026-10-03 gap audit of the kit:
 the lead reads this brief as evidence for what a faithful (bytes and encoding), re-anchorable
 (a quotation that can be found again after the page changes) and current (revalidated
@@ -121,14 +121,13 @@ decides what, if anything, an ADR lifts the freeze for. In the order the evidenc
    decoding hole only for legacy pages reached keyless. A robots.txt reader is a legality
    decision first. Each is an ADR with a trigger, not a task.
 
-Out of scope: any change to `research-kit/`, any new check in preflight, and any claim that a
+Out of scope: any change to `fetchproof/`, any new check in preflight, and any claim that a
 Firecrawl scrape consulted robots.txt - the vendor's documentation does not say so for scrape.
 
 ## Next steps
 
 1. Reviewed: the Contradictions and Decision sections are the agent's; `Reviewed by: agent` above.
-2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=d0cf5f5d3dd60641 inputs=86f17a59d96896ed gate=pass -->
+<!-- fetchproof:brief-draft body=f50edf80f8de489d inputs=74a500f104d590e3 gate=pass -->

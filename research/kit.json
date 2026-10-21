@@ -1,6 +1,6 @@
 {
   "architecture": {
     "comment": "This repo's code paths for the architecture-map rule (ADR-0007/0008). hooks/ and githooks/ are the enforcement surfaces - they are map-guarded like lib and bin.",
-    "codePaths": ["research-kit/lib", "research-kit/bin", "research-kit/hooks", "research-kit/githooks"]
+    "codePaths": ["fetchproof/lib", "fetchproof/bin", "fetchproof/hooks", "fetchproof/githooks"]
   }
 }

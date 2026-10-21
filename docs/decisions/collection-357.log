@@ -1,5 +1,5 @@
-prior:     none registered. What do you expect to find? node C:\Users\PC\Desktop\gittoken\Research-Kit-issue-357\research-kit\bin\prior.mjs "..." - this is the last moment that answer counts
-transport: http-keyless - RESEARCH_KIT_TRANSPORT
+prior:     none registered. What do you expect to find? node C:\Users\PC\Desktop\gittoken\Fetchproof-issue-357\fetchproof\bin\prior.mjs "..." - this is the last moment that answer counts
+transport: http-keyless - FETCHPROOF_TRANSPORT
   collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/preflight.mjs - first capture
   collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/checks.mjs - first capture
   collected https://raw.githubusercontent.com/StepenkoAnatoli/Research-Kit/3fa03fa1749d591af9cd7197e1c09f66ffacd231/research-kit/lib/machine.mjs - first capture
@@ -21,4 +21,4 @@ topic      0.55 best of 11 topic terms, 2 capture(s) >= 0.50
 
 
 Next: rewrite each auto-extracted Finding cell into a real claim, then run
-  node C:\Users\PC\Desktop\gittoken\Research-Kit-issue-357\research-kit\bin\preflight.mjs
+  node C:\Users\PC\Desktop\gittoken\Fetchproof-issue-357\fetchproof\bin\preflight.mjs

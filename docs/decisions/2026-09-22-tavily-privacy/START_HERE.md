@@ -8,7 +8,7 @@ For me, the operator. Not for the AI.
 
 | What | Where |
 |---|---|
-| The kit itself | `~/.agents/research-kit` - installed once, never moves |
+| The kit itself | `~/.agents/fetchproof` - installed once, never moves |
 | Research for THIS project | `<project folder>\research\` - working files, leave alone |
 | My one pasteable file | `<project folder>\research\audits\` - named by topic + version + date |
 
@@ -22,12 +22,12 @@ Nothing gets copied between folders. Each project keeps its own research, inside
 2. **Say what I want researched.** The agent reads the skill automatically and starts.
 3. **When it's done, ask for the audit** - that's my one file:
    ```
-   node ~/.agents/research-kit\bin\audit.mjs
+   node ~/.agents/fetchproof\bin\audit.mjs
    ```
    Written to `research\audits\` in the project folder. One attachment instead of ten
    pastes:
    ```
-   node ~/.agents/research-kit\bin\audit.mjs --zip
+   node ~/.agents/fetchproof\bin\audit.mjs --zip
    ```
 
 If I'm ever unsure which folder I'm in, check before starting - the agent should ask if
@@ -40,8 +40,8 @@ it isn't sure, not go searching my disk.
 From inside the project folder:
 
 ```
-node ~/.agents/research-kit\bin\doctor.mjs
-node ~/.agents/research-kit\bin\preflight.mjs
+node ~/.agents/fetchproof\bin\doctor.mjs
+node ~/.agents/fetchproof\bin\preflight.mjs
 git log --oneline -5
 git status
 ```
@@ -54,7 +54,7 @@ are not spent again.
 ## If something looks broken
 
 ```
-node ~/.agents/research-kit\bin\doctor.mjs
+node ~/.agents/fetchproof\bin\doctor.mjs
 ```
 
 It names every problem and prints the exact fix. Run it, fix what it says, run it again.

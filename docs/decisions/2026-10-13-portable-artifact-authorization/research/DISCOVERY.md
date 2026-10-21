@@ -1,7 +1,7 @@
 # Discovery Contract - How should portable artifact authorization be derived without consumer policy and while preserving historical brief stamps?
 
 Started 2026-10-13. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

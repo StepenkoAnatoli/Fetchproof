@@ -2,8 +2,8 @@
 
 - **Date:** 2026-10-19
 - **Status:** accepted
-- **Area:** `research-kit/lib/quotes.mjs`, `research-kit/lib/checks.mjs` (`citations`),
-  `research-kit/lib/measure.mjs`. One more rule in a check that already owns two quote rules
+- **Area:** `fetchproof/lib/quotes.mjs`, `fetchproof/lib/checks.mjs` (`citations`),
+  `fetchproof/lib/measure.mjs`. One more rule in a check that already owns two quote rules
   (`quote-not-found`, `quote-too-short`); no command, flag, format or configuration key. A new
   finding under the feature freeze (ADR-0117), hence this record.
 - **Refines:** ADR-0087 (a `[quote: ...]` anchor must occur in the capture) and ADR-0162 (a

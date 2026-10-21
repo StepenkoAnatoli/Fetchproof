@@ -34,7 +34,7 @@ fail — it silently produces an unprotected one and the job runs straight past 
 that was supposed to guard it.
 
 So the environment must **prove it exists** before anything is spent:
-`vars.RESEARCH_KIT_COLLECTION_ENV` must equal `research-collection`. An auto-created
+`vars.FETCHPROOF_COLLECTION_ENV` must equal `research-collection`. An auto-created
 environment has no variables, so the marker is absent and the run stops.
 
 **The honest limit, stated in the file rather than implied.** GitHub does not tell a
@@ -249,7 +249,7 @@ vulnerability: the substitution happens before the validation can run.
 
 - The repository owner must create the `research-collection` environment, add required
   reviewers, add `FIRECRAWL_API_KEY` as an **environment** secret, and set
-  `RESEARCH_KIT_COLLECTION_ENV=research-collection` as an environment **variable**. The
+  `FETCHPROOF_COLLECTION_ENV=research-collection` as an environment **variable**. The
   workflow refuses to spend until all of that exists. Creating it is the owner's decision
   and is deliberately not automated.
 - `collect.yml` is `workflow_dispatch`-only: ordinary CI can never trigger a paid run, and
@@ -282,10 +282,10 @@ different approvers. The first ever dispatch of `live-collection.yml` (run 36275
 run stopped only at "FIRECRAWL_API_KEY is not set". It failed safely by luck of an empty
 environment, not by design: a key present at repository scope would have been read through it.
 
-`live-collection.yml` now requires `vars.RESEARCH_KIT_LIVE_ENV == live-collection` before it
+`live-collection.yml` now requires `vars.FETCHPROOF_LIVE_ENV == live-collection` before it
 reads the key or spends, on the metered route (the keyless route reads no credential). The
 same honest limit applies: a repository-level variable of that name defeats it, deliberately
-and visibly. Pinned by `architecture-map.test.mjs`. Setup: `research-kit/README.md`.
+and visibly. Pinned by `architecture-map.test.mjs`. Setup: `fetchproof/README.md`.
 
 **Found in the same pass, and worse: the workflow could never have passed.** Its scratch project
 is scaffolded from the template, whose plan has no queries and no URLs, and the step that edits

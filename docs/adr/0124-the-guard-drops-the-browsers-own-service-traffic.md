@@ -62,7 +62,7 @@ another port is the browser's again.
   request passes through, and its answer does not depend on the version.
 - **Preferring `chrome-headless-shell`.** It made no stray request, but it is a separate
   download most operators do not have, and the transport's flags did not render through it
-  here. If an operator points `RESEARCH_KIT_BROWSER` at one, the drop list is simply never
+  here. If an operator points `FETCHPROOF_BROWSER` at one, the drop list is simply never
   consulted.
 - **Refusing the traffic as the guard refuses an internal address.** A refusal is the
   page's doing and names the page's verdict; this traffic is the browser's, and recording

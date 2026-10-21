@@ -1,4 +1,4 @@
-# PRELIMINARY note — how Research-Kit should be delivered
+# PRELIMINARY note — how Fetchproof should be delivered
 
 **Question:** Actions-only collector, local Windows `.exe`, hybrid desktop-over-Actions, or
 REST/API seam only?

@@ -70,8 +70,8 @@ an amendment to ADR-0031. That amendment cites this file, which did not exist un
 ## Next steps
 
 1. Read the Decision above; it records what was already decided, and when.
-2. Hand this file to the builder (phase 2). Re-running `node /home/user/Research-Kit/research-kit/bin/brief.mjs`
+2. Hand this file to the builder (phase 2). Re-running `node /home/user/Fetchproof/fetchproof/bin/brief.mjs`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=c964967ac546cc94 inputs=8396e972c50be385 gate=pass -->
+<!-- fetchproof:brief-draft body=c964967ac546cc94 inputs=8396e972c50be385 gate=pass -->

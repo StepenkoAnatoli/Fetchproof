@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fetchproof/r28-r33-envelope-v1",
+  "allOf": [
+    {
+      "if": { "properties": { "package": { "enum": ["R28", "R29", "R30", "R31", "R32"] } } },
+      "then": { "properties": { "artifactId": { "enum": ["R28-01", "R28-02", "R28-03", "R28-04", "R29-01", "R29-02", "R29-03", "R29-04", "R29-05", "R29-06", "R30-01", "R30-02", "R30-03", "R30-04", "R30-05", "R31-01", "R31-02", "R31-03", "R31-04", "R31-05", "R32-01", "R32-02", "R32-03", "R32-04", "R32-05", "R32-06", "R32-07"] } } }
+    }
+  ],
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope", "payload"],
+      "properties": {
+        "envelope": { "$ref": "#/$defs/envelope" },
+        "payload": { "type": "object" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId", "schema", "benchmarkSpecVersion", "benchmarkSpecSha256",
+        "package", "recordId", "ownerRole", "ownerId", "roleRosterSha256",
+        "createdAt", "predecessorHashes", "payloadSha256", "state", "visibility", "payload"
+      ],
+      "properties": {
+        "artifactId": { "type": "string", "enum": ["R28-01", "R28-02", "R28-03", "R28-04", "R29-01", "R29-02", "R29-03", "R29-04", "R29-05", "R29-06", "R30-01", "R30-02", "R30-03", "R30-04", "R30-05", "R31-01", "R31-02", "R31-03", "R31-04", "R31-05", "R32-01", "R32-02", "R32-03", "R32-04", "R32-05", "R32-06", "R32-07", "R33-01", "R33-02", "R33-03"] },
+        "schema": { "type": "integer", "minimum": 1 },
+        "benchmarkSpecVersion": { "const": "1.0.0" },
+        "benchmarkSpecSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "package": { "type": "string", "enum": ["R28", "R29", "R30", "R31", "R32", "R33"] },
+        "recordId": { "type": "string", "minLength": 1 },
+        "ownerRole": { "type": "string", "minLength": 1 },
+        "ownerId": { "type": "string", "minLength": 1 },
+        "roleRosterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+        "predecessorHashes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+        "payloadSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": { "const": "sealed" },
+        "visibility": { "type": "string", "enum": ["candidate-visible", "grader-only"] },
+        "payload": { "type": "object" },
+        "pathAuthoritySnapshots": { "$ref": "#/$defs/pathAuthoritySnapshots" },
+        "promotion": { "type": "object" },
+        "pointerHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature": { "type": "string", "minLength": 1 },
+        "recordHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  ],
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId", "schema", "benchmarkSpecVersion", "benchmarkSpecSha256",
+        "package", "recordId", "ownerRole", "ownerId", "roleRosterSha256",
+        "createdAt", "predecessorHashes", "payloadSha256", "state", "visibility"
+      ],
+      "properties": {
+        "artifactId": { "type": "string", "enum": ["R28-01", "R28-02", "R28-03", "R28-04", "R29-01", "R29-02", "R29-03", "R29-04", "R29-05", "R29-06", "R30-01", "R30-02", "R30-03", "R30-04", "R30-05", "R31-01", "R31-02", "R31-03", "R31-04", "R31-05", "R32-01", "R32-02", "R32-03", "R32-04", "R32-05", "R32-06", "R32-07", "R33-01", "R33-02", "R33-03"] },
+        "schema": { "type": "integer", "minimum": 1 },
+        "benchmarkSpecVersion": { "const": "1.0.0" },
+        "benchmarkSpecSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "package": { "type": "string", "enum": ["R28", "R29", "R30", "R31", "R32", "R33"] },
+        "recordId": { "type": "string", "minLength": 1 },
+        "ownerRole": { "type": "string", "minLength": 1 },
+        "ownerId": { "type": "string", "minLength": 1 },
+        "roleRosterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+        "predecessorHashes": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+        "payloadSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": { "const": "sealed" },
+        "visibility": { "type": "string", "enum": ["candidate-visible", "grader-only"] },
+        "pathAuthoritySnapshots": { "$ref": "#/$defs/pathAuthoritySnapshots" },
+        "recordHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "promotion": { "type": "object" },
+        "pointerHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "snapshotRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshotId", "envelopeCanonicalSha256", "capturedAt", "status"],
+      "properties": {
+        "snapshotId": { "type": "string", "minLength": 1 },
+        "envelopeCanonicalSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "capturedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+        "status": { "const": "PASS" },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pathAuthoritySnapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "recovery"],
+      "properties": {
+        "before": { "$ref": "#/$defs/snapshotRef" },
+        "after": { "$ref": "#/$defs/snapshotRef" },
+        "recovery": { "$ref": "#/$defs/snapshotRef" }
+      }
+    }
+  }
+}

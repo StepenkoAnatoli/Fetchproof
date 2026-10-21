@@ -1,10 +1,10 @@
 {
   "topics": {
-    "the-research-kits-own-protocol-metered-primary": {
+    "fetchproofs-own-protocol-metered-primary-sourc": {
       "latest": "0.1",
       "versions": {
         "0.1": {
-          "file": "the-research-kits-own-protocol-metered-primary-v0.1-2026-09-14.md",
+          "file": "fetchproofs-own-protocol-metered-primary-sourc-v0.1-2026-09-14.md",
           "scope": "full",
           "at": "2026-09-14T20:30:57.908Z",
           "date": "2026-09-14",
@@ -19,7 +19,7 @@
         "d-1-access-model": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-1-access-model-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-1-access-model-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.909Z",
               "date": "2026-09-14",
@@ -37,7 +37,7 @@
         "d-2-auth-and-credentials": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-2-auth-and-credentials-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-2-auth-and-credentials-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.909Z",
               "date": "2026-09-14",
@@ -55,7 +55,7 @@
         "d-3-rate-limits-and-quotas": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-3-rate-limits-and-quotas-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-3-rate-limits-and-quotas-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.910Z",
               "date": "2026-09-14",
@@ -73,7 +73,7 @@
         "d-4-tos-licensing-legality-of": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-4-tos-licensing-legality-of-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-4-tos-licensing-legality-of-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.910Z",
               "date": "2026-09-14",
@@ -91,7 +91,7 @@
         "d-7-cost-at-expected-volume": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-7-cost-at-expected-volume-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-7-cost-at-expected-volume-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.911Z",
               "date": "2026-09-14",
@@ -109,7 +109,7 @@
         "d-8-runtime-and-platform-limits": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-8-runtime-and-platform-limits-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-8-runtime-and-platform-limits-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.911Z",
               "date": "2026-09-14",
@@ -127,7 +127,7 @@
         "d-9-output-obtainability": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--d-9-output-obtainability-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--d-9-output-obtainability-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.912Z",
               "date": "2026-09-14",
@@ -145,7 +145,7 @@
         "s-2-which-skill-root-the": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--s-2-which-skill-root-the-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--s-2-which-skill-root-the-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.912Z",
               "date": "2026-09-14",
@@ -163,7 +163,7 @@
         "s-3-whether-the-edit-time": {
           "versions": {
             "0.1": {
-              "file": "the-research-kits-own-protocol-metered-primary--s-3-whether-the-edit-time-v0.1-2026-09-14.md",
+              "file": "fetchproofs-own-protocol-metered-primary-sourc--s-3-whether-the-edit-time-v0.1-2026-09-14.md",
               "scope": "subtopic",
               "at": "2026-09-14T20:30:57.913Z",
               "date": "2026-09-14",

@@ -12,7 +12,7 @@ outside the ADR link check. The record of the received bundle is described in
 [ADR-0028](../adr/0028-the-bundle-is-a-received-state-not-a-live-constraint.md).
 
 For the current implementation, read the [architecture map](../ARCHITECTURE.md),
-[decision index](../adr/README.md) and [kit README](../../research-kit/README.md).
+[decision index](../adr/README.md) and [kit README](../../fetchproof/README.md).
 Later dated records, including the desktop-panel design, retain their own stated
 scope and status.
 

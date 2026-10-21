@@ -79,12 +79,12 @@ First accounting step: reproduce the accepted-query spoofing and truncated-log c
 
 Respect the integration's reported failing-suite stop until its failure is explained or fixed. For reporting, cite E-04/E-05 for the synchronous-copy contract and Windows permission limits; keep the original Linux observation and Windows CI failures distinct. Cite E-03/E-06 for a trusted-PEM certificate recommendation and its limits, and E-07 for the private-channel API and delivery boundaries. This research handoff introduces no ownership redesign, role/config mutation, paid fallback or TLS-verification bypass.
 
-Doctor verified collector eligibility and the intact corpus with RESEARCH_KIT_HOME selecting this checkout, and reported that the registered edit hook was outside that selected kit. This is a comparison with the checkout reference, not proof that the operator's deployed configuration is broken. No READY claim or machine-wide settings/hook repair is made here. Nested PASS and reviewed state validate this corpus under the isolated default pluralist policy; they do not establish deployed configuration health or certify product code.
+Doctor verified collector eligibility and the intact corpus with FETCHPROOF_HOME selecting this checkout, and reported that the registered edit hook was outside that selected kit. This is a comparison with the checkout reference, not proof that the operator's deployed configuration is broken. No READY claim or machine-wide settings/hook repair is made here. Nested PASS and reviewed state validate this corpus under the isolated default pluralist policy; they do not establish deployed configuration health or certify product code.
 
 ## Next steps
 
-1. From this nested project, run `node ../../../research-kit/bin/preflight.mjs`, `node ../../../research-kit/bin/handoff.mjs`, and `node ../../../research-kit/bin/brief.mjs --state` with the intended machine policy. A root-corpus verdict is not a substitute.
+1. From this nested project, run `node ../../../fetchproof/bin/preflight.mjs`, `node ../../../fetchproof/bin/handoff.mjs`, and `node ../../../fetchproof/bin/brief.mjs --state` with the intended machine policy. A root-corpus verdict is not a substitute.
 2. Review the Windows regressions and fake-child accounting cases separately before reporting the product repairs as verified. This brief provides facts and scope, not a successful product-test claim.
 3. Re-drafting an edited brief requires --force and retains a backup. Carry these judgments and current gate cautions forward after any corpus change.
 
-<!-- research-kit:brief-draft body=cb9ea1201f6d9241 inputs=3c8e6fcfc530d91c gate=pass -->
+<!-- fetchproof:brief-draft body=cb9ea1201f6d9241 inputs=3c8e6fcfc530d91c gate=pass -->

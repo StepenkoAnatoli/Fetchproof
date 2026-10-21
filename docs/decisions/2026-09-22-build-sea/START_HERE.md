@@ -21,7 +21,7 @@ read its stability markers correctly — nobody read the changelog entries.
 
 ## How it was collected
 
-Run [35689363486](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35689363486),
+Run [35689363486](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35689363486),
 dispatched through `bin/collect-remote.mjs` with an **opaque** `client_ref` (`job-0922a`) —
 the discipline `collect.yml` asks for, and which an earlier run of this project ignored.
 Three pages, three credits.
@@ -32,8 +32,8 @@ From **this** directory:
 
 ```
 cd docs/decisions/2026-09-22-build-sea
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-22: `PASS  0 blocking, 0 warning(s), 13 passing`, passes `--strict`, and

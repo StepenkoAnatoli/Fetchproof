@@ -51,7 +51,7 @@ Two things are worth knowing before reading it:
   before any assertion inside it had run — its failure arrived later as an unhandled
   rejection, and the runner's own `process.exit(0)` pre-empted even that. Reproduced: a
   fixture holding one failing async test printed `ok`, then `all tests passed`, then
-  **exited 0**. Each test is raced against a watchdog (`RESEARCH_KIT_TEST_TIMEOUT`, default
+  **exited 0**. Each test is raced against a watchdog (`FETCHPROOF_TEST_TIMEOUT`, default
   60s; the whole suite runs in 9s and the slowest single file in 3.2s, so the bound is ~19x
   the slowest file — chosen by measurement, not by guess), because an awaited test that
   never settles would hang the suite printing nothing, which is the trap the commit gate
@@ -79,7 +79,7 @@ Two things are worth knowing before reading it:
   checkout (`core.autocrlf=true`), so the whole corpus failed `body-unmodified` on arrival
   with nothing actually wrong with it. Pinned at both ends: `.gitattributes`
   (`research/raw/* text eol=lf`, `*.jsonl text eol=lf`) ships in the repository *and* in
-  `research-kit/template/`, so a scaffolded project cannot be born without it. And the
+  `fetchproof/template/`, so a scaffolded project cannot be born without it. And the
   failure is **classified, not guessed** — `isLineEndingRewrite` folds CRLF back and
   re-hashes, which either reproduces the recorded hash or does not; a genuinely tampered
   capture stays `kind: 'modified'` and still gets the push remedy. Rejected: one blanket

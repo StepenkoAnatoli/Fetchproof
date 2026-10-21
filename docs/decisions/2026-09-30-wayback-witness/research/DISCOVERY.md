@@ -1,7 +1,7 @@
 # Discovery Contract - Internet Archive Wayback Machine as a witness for captured pages: the Wayback Availability API, Save Page Now requests and their limits, what a saved capture makes public, and the terms of use
 
 Started 2026-09-30. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

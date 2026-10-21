@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Fetchproof</title>
+<link rel="stylesheet" href="/panel.css">
+<script src="/panel.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="topic">
+    <span class="label">Topic</span>
+    <h1 id="topic">-</h1>
+    <span id="project" class="muted"></span>
+  </div>
+  <div class="meta">
+    <span id="role" class="badge">role</span>
+    <span id="version" class="muted"></span>
+    <button id="connect" type="button" class="primary">Connect builder</button>
+  </div>
+</header>
+
+<p id="banner" class="banner" hidden></p>
+
+<main>
+  <section id="builder" class="card wide" hidden>
+    <h2>Connect builder</h2>
+    <p class="muted">This machine collects; a builder builds. The builder is any AI agent or a person, on its own machine, and it never collects. Check the gate, push the corpus, then paste the text below to the builder.</p>
+    <form id="project-form" class="row">
+      <label for="project-path">Project folder</label>
+      <input id="project-path" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Users\you\projects\my-research">
+      <button type="submit">Open</button>
+    </form>
+    <div class="row buttons">
+      <button type="button" data-run="preflight">Preflight</button>
+      <button type="button" data-run="handoff">Handoff</button>
+      <button type="button" data-run="doctor">Doctor</button>
+      <button type="button" id="brief">Open BRIEF.md</button>
+      <button type="button" id="copy-builder">Copy builder instructions</button>
+    </div>
+    <p class="muted" id="builder-note"></p>
+    <pre id="builder-text"></pre>
+  </section>
+
+  <section class="card wide" id="requests-card">
+    <h2>Builder requests</h2>
+    <p class="muted">The builder decides what is collected: it pushes one file per fact to <code id="requests-folder">research/requests/</code>. In Automatic, this machine pulls, collects each request with the same research.mjs, runs preflight, commits the corpus with its ledger and pushes. When credits run out it pauses and waits for you.</p>
+    <form id="auto-form" class="row">
+      <label for="auto-mode">Auto-collect</label>
+      <select id="auto-mode"><option value="off">Off</option><option value="auto">Automatic</option></select>
+      <label for="auto-per">pages a request</label>
+      <input id="auto-per" type="number" min="1" max="25" class="num">
+      <label for="auto-daily">pages a day</label>
+      <input id="auto-daily" type="number" min="0" max="1000" class="num">
+      <label for="auto-every">check every (min)</label>
+      <input id="auto-every" type="number" min="1" max="1440" class="num">
+      <label for="auto-topics">folder for new topics</label>
+      <input id="auto-topics" type="text" autocomplete="off" spellcheck="false" placeholder="empty: new topics wait">
+      <button type="submit">Save</button>
+    </form>
+    <div class="row buttons">
+      <button type="button" id="auto-check">Check now</button>
+      <button type="button" id="auto-resume">Resume</button>
+      <span id="auto-state" class="muted"></span>
+    </div>
+    <table id="requests"><thead><tr><th>Request</th><th>Status</th><th>Pages used or reserved</th><th>Fact</th><th>Detail</th></tr></thead><tbody></tbody></table>
+    <pre id="auto-notes"></pre>
+  </section>
+
+  <section class="card">
+    <h2>Keys</h2>
+    <form id="search-form" class="row">
+      <label for="search-key">SerpAPI key</label>
+      <input id="search-key" type="password" autocomplete="off" spellcheck="false" placeholder="paste the key, or leave empty to clear">
+      <button type="submit">Save</button>
+      <span id="search-state" class="muted"></span>
+    </form>
+    <p class="muted">Saved to the machine config (<span id="config-path"></span>), never into a repository, and never shown again.</p>
+    <p class="muted">Firecrawl: the Firecrawl CLI keeps its own key. Run <code>firecrawl login</code> once in a terminal, then press Doctor. <span id="firecrawl-state"></span></p>
+  </section>
+
+  <section class="card">
+    <h2>Doctor</h2>
+    <div class="row buttons">
+      <button type="button" data-run="doctor" class="primary">Run doctor</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Update</h2>
+    <p class="muted" id="update-note"></p>
+    <div class="row buttons">
+      <button type="button" data-run="update-preview">Preview</button>
+      <button type="button" data-run="update" id="update">Update</button>
+    </div>
+  </section>
+
+  <section class="card output">
+    <h2 id="output-title">Output</h2>
+    <pre id="output" tabindex="0"></pre>
+  </section>
+</main>
+</body>
+</html>

@@ -62,7 +62,7 @@ the code, which is what the three ADRs are.
 ## What I verified
 
 ```
-node research-kit/bin/selftest.mjs
+node fetchproof/bin/selftest.mjs
 326 passed, 0 failed in 54.7s (watchdog 60000ms/test)
 ```
 

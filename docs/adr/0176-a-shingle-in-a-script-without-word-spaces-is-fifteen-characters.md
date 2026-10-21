@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-19
 - **Status:** accepted
-- **Area:** `research-kit/lib/similarity.mjs`. How a page is cut into shingles, and how the floor
+- **Area:** `fetchproof/lib/similarity.mjs`. How a page is cut into shingles, and how the floor
   below which a page is unjudgeable is counted; no command, flag, format, configuration key or
   finding.
 - **Supersedes in part:** ADR-0163, in three places: its rejection of character n-grams "for

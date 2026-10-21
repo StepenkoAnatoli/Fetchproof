@@ -6,9 +6,9 @@
 
 ## Context
 
-A deploy mirrors: every file under `RESEARCH_KIT_HOME` that the kit does not ship is removed, so
+A deploy mirrors: every file under `FETCHPROOF_HOME` that the kit does not ship is removed, so
 a stale module from an earlier version cannot outlive an update. The mirror asked nothing of
-the folder first. `RESEARCH_KIT_HOME` naming a folder of somebody's own files - a typo, a
+the folder first. `FETCHPROOF_HOME` naming a folder of somebody's own files - a typo, a
 parent folder, a shared tools directory - had those files deleted, and `install` reported them
 as "retired" files. Confirmed 2026-10-01 (break-test PR #182: 3 of 4 files deleted; reproduced
 here with `notes.txt` reported as "pruned 1 retired file(s)").
@@ -21,7 +21,7 @@ here with `notes.txt` reported as "pruned 1 retired file(s)").
   the kit as deployed there.
 - **Any other folder is refused, and nothing in it is touched.** That covers the kit's own
   files and the skill roots too. The refusal names the folder and the first few of its files (it reads no further: a home
-  directory holds millions), and the way out: point `RESEARCH_KIT_HOME` at an empty or new
+  directory holds millions), and the way out: point `FETCHPROOF_HOME` at an empty or new
   folder, or unset it.
 - **`--dry-run` answers the same way.** A preview that said "would prune" over someone's files
   is what the operator would have read before running the real thing.

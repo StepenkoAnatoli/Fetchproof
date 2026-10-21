@@ -1,5 +1,5 @@
 {
-  "topic": "How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Research-Kit's corpus and gate",
+  "topic": "How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Fetchproof's corpus and gate",
   "notes": "Owner pages per unknown (U-1 GFM spec; U-2 Zotero knowledge base and schema.org; U-3 Brave and Tavily API docs; U-4 GPT Researcher and STORM; U-5 publicsuffix.org). Two targeted searches where the owner page may not carry the whole fact (Brave free-tier limits, GPT Researcher source curation), one scrape each. Depth deep so maxScrapes is the cap: 22 pages at most, per the lead's budget. Run 1 (2026-10-03): 19 collected, 1 failed - https://www.zotero.org/support/kb/field_list answered HTTP 404 and was dropped from the plan (item_types_and_fields carries the field descriptions). Run 2: the two pages marked 'second run', from a scratch plan so nothing cached was re-fetched. 22 of 22 scrapes spent.",
   "depth": "deep",
   "refreshDays": 30,

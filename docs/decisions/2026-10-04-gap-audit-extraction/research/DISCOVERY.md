@@ -1,12 +1,12 @@
-# Discovery Contract - How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Research-Kit's converter, completeness grade and capture acceptance
+# Discovery Contract - How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Fetchproof's converter, completeness grade and capture acceptance
 
 Started 2026-10-04. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Benchmark three of Research-Kit's capture mechanisms against the tools and specifications
+Benchmark three of Fetchproof's capture mechanisms against the tools and specifications
 that own the comparable behaviour. This is a decision about the repository (ADR-0030), read
 by the lead of a gap audit of the kit, and it is a documentation benchmark: nothing is built
 here. The three mechanisms are (1) the kit's HTML-to-markdown converter, benchmarked

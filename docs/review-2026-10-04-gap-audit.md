@@ -1,4 +1,4 @@
-# Gap audit of Research-Kit, 2026-10-04 (second audit)
+# Gap audit of Fetchproof, 2026-10-04 (second audit)
 
 Answer-only audit of the kit at `a4ae8f6` (kit 0.9.3, after ADR-0139 and ADR-0140), run with the
 lead-orchestrator posture: three explorers mapped the collection path, the gate and the consumer
@@ -12,7 +12,7 @@ changed: the only writes are the three research projects and this document.
 Evidence rows are cited as `P:E-nn` ([`decisions/2026-10-04-gap-audit-provenance`](decisions/2026-10-04-gap-audit-provenance/research/BRIEF.md)),
 `X:E-nn` ([`decisions/2026-10-04-gap-audit-extraction`](decisions/2026-10-04-gap-audit-extraction/research/BRIEF.md))
 and `C:E-nn` ([`decisions/2026-10-04-gap-audit-citation`](decisions/2026-10-04-gap-audit-citation/research/BRIEF.md)).
-File references are to `research-kit/`.
+File references are to `fetchproof/`.
 
 ## 1. Current state summary
 
@@ -167,7 +167,7 @@ builder is expected to verify against the audit snapshot would lower rank 1 to m
   Readable, GFM-incorrect; the quote anchor still matches. Rank 10 covers the dates it drops.
 - Re-fetch identity is the whole file including front matter (`lib/collect.mjs:137-143`): the same
   bytes through another transport produce a `.r2` capture and a new superseding row.
-- Documentation drift still open from 2026-10-03: `research-kit/README.md:119` names
+- Documentation drift still open from 2026-10-03: `fetchproof/README.md:119` names
   `start-research.yml` (no such workflow); `README.md:389` documents `property-replay --case
   <case-id>` while the flag takes a `.json` file; `researcher-release validate --genesis/
   --checkpoints` are accepted and dropped (`bin/researcher-release.mjs:71-72` vs
@@ -222,7 +222,7 @@ rests on a fetched page.
 | `doctor`'s committed-key scan read the nested projects' captures: its skip matched the relative path `research/raw`, so only the root's raw folder was outside it, and the F26 self-scan test went red on every CI leg of PR #238 when a Google page's source sibling (ADR-0140) carried Google's own public Maps keys | the archive-tree leg on 5c158a3; reproduced with `git archive HEAD` and the suite | fixed in this PR (9b177bd): the skip applies at any depth; a capture is page content wherever the project sits |
 | decompose's compound-topic split (ADR-0085) searched the fragment "How provenance" alone and spent three scrapes on secondary pages (a museum, the FAIR Cookbook, Springer); the researcher kept them as context rows, one was cited as context, and the RR-9 floor test then rejected it on every CI leg | provenance project E-01..E-03; `selftest search-seam` | the citation was dropped (fd779a2); the split is a kit defect candidate: a fragment of two common words is not a query, and the floor that guards scrapes at run time does not guard decompose's |
 | `brief.mjs --force` redrafts from scratch: the reviewed Contradictions, Known unknowns and Decision survive only in the `.bak`, and the ADR-0055 remedy text says "carry your judgements over" without saying that means by hand | redrafting the provenance brief after the contract changed | documented behaviour; a redraft that keeps answered judged sections under a fresh stamp would remove the hand step (optional idea) |
-| The suite judges the repository's own corpora (F26 self-scan, RR-9 floor), but the commit gate runs the suite only for commits that stage `research-kit/`; four docs-only corpus commits therefore passed the gate and turned CI red | PR #238's first head | a documentation note at least: a corpus commit in this repository is a suite-relevant change; whether the gate should run the suite for `docs/decisions/**/research/` is a decision for an ADR |
+| The suite judges the repository's own corpora (F26 self-scan, RR-9 floor), but the commit gate runs the suite only for commits that stage `fetchproof/`; four docs-only corpus commits therefore passed the gate and turned CI red | PR #238's first head | a documentation note at least: a corpus commit in this repository is a suite-relevant change; whether the gate should run the suite for `docs/decisions/**/research/` is a decision for an ADR |
 
 Credits spent by this audit: `doctor` read 1,020 before the first collection and 953 after the
 last, so 67 in all; the three ledgers record 43 scrapes (16, 13 and 14), two refused fetches

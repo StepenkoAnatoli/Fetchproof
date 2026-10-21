@@ -1,7 +1,0 @@
-#!/bin/sh
-# research-kit: hand this hook on to what git would have run without the kit (ADR-0112).
-# Every hook name git knows has a copy of this file; hand-on.sh beside it does the work.
-lib="$(dirname "$0")/hand-on.sh"
-[ -f "$lib" ] || exit 0
-. "$lib"
-hand_on "${0##*/}" "$@"

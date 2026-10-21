@@ -15,20 +15,20 @@ provides the scope and limitations; this review does not establish downstream er
 
 ## Verification record
 
-All commands below ran in `C:\Users\PC\Research-Kit` unless another cwd is stated.
+All commands below ran in `C:\Users\PC\Fetchproof` unless another cwd is stated.
 
 - **verified:** the new brief/audit regressions first produced 63 passed and 3 failed.
   Each failure reproduced a reported runtime defect. The red was reported before fixes.
-- **verified:** `node research-kit/bin/selftest.mjs brief audit artifact-producer mcp render`
+- **verified:** `node fetchproof/bin/selftest.mjs brief audit artifact-producer mcp render`
   produced 142 passed, 0 failed and 2 unsupported Windows symlink capabilities.
-  `RESEARCH_KIT_ALLOW_UNSUP=1` permits this local capability limitation; it is not a full
+  `FETCHPROOF_ALLOW_UNSUP=1` permits this local capability limitation; it is not a full
   capability pass.
 - **verified:** after strengthening historical-byte capture timing,
-  `node research-kit/bin/selftest.mjs brief audit` produced 66 passed and 0 failed.
+  `node fetchproof/bin/selftest.mjs brief audit` produced 66 passed and 0 failed.
 - **verified:** the root preflight passed with 28 passing checks, 0 blockers and its
   existing `hygiene/brief-unstamped` warning. Handoff verified 33 ledger entries and
   27 evidence rows.
-- **verified:** in cwd `C:\Users\PC\Research-Kit\docs\decisions\2026-10-05-agent-reliability`,
+- **verified:** in cwd `C:\Users\PC\Fetchproof\docs\decisions\2026-10-05-agent-reliability`,
   that project's own preflight passed with 12 passing checks, 0 blockers and 5 retained
   corroboration warnings. Its handoff verified 6 ledger entries and 6 evidence rows.
 - **verified:** independent package probing checked approved, reviewing, blocked,
@@ -43,7 +43,7 @@ All commands below ran in `C:\Users\PC\Research-Kit` unless another cwd is state
   The result totals 1,618 tests, matching the technical README. The same local capability
   waiver applies; this is not a full capability pass. Git's bundled Bash was available
   through the task's PATH, so its workflow checks ran rather than being unsupported.
-- **verified:** `node research-kit/bin/doctor.mjs` reported READY, collector role,
+- **verified:** `node fetchproof/bin/doctor.mjs` reported READY, collector role,
   kit 0.9.5, deployed copy matching this tree, root preflight PASS and no recorded
   overrides. No hook bypass was used. The optional guide was committed separately
   as `5f2e13a` after its final text review.
@@ -83,7 +83,7 @@ references.
   the full checkout suite reported 1,619 passed, 0 failed, 7 unsupported capabilities and
   exit 0. The result reports 863.6 seconds across 76 files on Node 24.20.0 / win32.
   Its total of 1,626 tests matches the integrated technical README. The explicit local
-  `RESEARCH_KIT_ALLOW_UNSUP=1` waiver still applies; this is not a full capability pass.
+  `FETCHPROOF_ALLOW_UNSUP=1` waiver still applies; this is not a full capability pass.
   The owned gate and suite processes both exited 0. No hook bypass was used.
 - **verified:** an earlier integrated commit attempt exited 1 without a completed suite
   result or diagnostic verdict. Publication stopped; the cause remains unknown. The

@@ -98,8 +98,8 @@ First build step: none. The next action on this question is the trigger above fi
 ## Next steps
 
 1. Review the **TODO** sections above (Contradictions, Decision) before handing off.
-2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=46e7fa12e19a1120 inputs=0ecc8c88115dc006 gate=pass -->
+<!-- fetchproof:brief-draft body=46e7fa12e19a1120 inputs=0ecc8c88115dc006 gate=pass -->

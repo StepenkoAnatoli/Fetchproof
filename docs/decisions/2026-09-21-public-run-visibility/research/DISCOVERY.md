@@ -71,7 +71,7 @@ made for U-6 of the delivery corpus and U-7 of the agent-interface one.
 ### One thing the probe found that nobody was looking for
 
 The anonymous artifact listing returns artifact **names**, and this repository's are
-`research-kit-corpus-v1-gap-sea-assets` and `research-kit-corpus-v1-gap-log-visibility`.
+`fetchproof-corpus-v1-gap-sea-assets` and `fetchproof-corpus-v1-gap-log-visibility`.
 
 ADR-0033 forbids putting the topic in a run, step or artifact name, and that rule was kept -
 no topic appears. But the name carries the **`client_ref`**, and the client_refs chosen were

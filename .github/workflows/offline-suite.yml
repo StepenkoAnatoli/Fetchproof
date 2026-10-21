@@ -99,11 +99,11 @@ jobs:
       - name: the commit hook is executable
         if: runner.os != 'Windows'
         run: |
-          mode=$(git ls-files -s research-kit/githooks/pre-commit | awk '{print $1}')
+          mode=$(git ls-files -s fetchproof/githooks/pre-commit | awk '{print $1}')
           if [ "$mode" != "100755" ]; then
-            echo "research-kit/githooks/pre-commit is mode $mode, not 100755"
+            echo "fetchproof/githooks/pre-commit is mode $mode, not 100755"
             echo "git silently SKIPS a non-executable hook, which ADR-0001 reports as a clean commit"
-            echo "fix: git update-index --chmod=+x research-kit/githooks/pre-commit"
+            echo "fix: git update-index --chmod=+x fetchproof/githooks/pre-commit"
             exit 1
           fi
           echo "pre-commit is 100755"
@@ -115,7 +115,7 @@ jobs:
       - name: the checkout is LF, even on Windows
         if: runner.os == 'Windows'
         run: |
-          if git ls-files --eol research-kit/conformance research-kit/schemas | grep -v 'w/lf'; then
+          if git ls-files --eol fetchproof/conformance fetchproof/schemas | grep -v 'w/lf'; then
             echo "the working tree has non-LF files despite .gitattributes eol=lf"
             exit 1
           fi
@@ -124,8 +124,8 @@ jobs:
       - name: selftest
         env:
           # Structured result, so the summary below reads DATA rather than scraping prose.
-          RESEARCH_KIT_RESULT_FILE: ${{ runner.temp }}/suite-result.json
-        run: node research-kit/bin/selftest.mjs
+          FETCHPROOF_RESULT_FILE: ${{ runner.temp }}/suite-result.json
+        run: node fetchproof/bin/selftest.mjs
 
       # Publish the count where a reviewer can read it WITHOUT running anything.
       #
@@ -154,10 +154,10 @@ jobs:
           echo "| ${{ matrix.os }} | \`$line\` |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: preflight
-        run: node research-kit/bin/preflight.mjs
+        run: node fetchproof/bin/preflight.mjs
 
       - name: release evidence examples
-        run: node research-kit/examples/release-evidence/run-example.mjs
+        run: node fetchproof/examples/release-evidence/run-example.mjs
 
       - name: cross-language conformance
         run: |
@@ -174,8 +174,8 @@ jobs:
             "property-vector-conformance.mjs:property_vector_conformance.py:property-graph-hash-vectors.json"
           do
             n="${pair%%:*}"; rest="${pair#*:}"; p="${rest%%:*}"; v="${rest##*:}"
-            node "research-kit/bin/$n" --vectors "research-kit/conformance/$v" --json > "$tmp/node.json"
-            "$py" "research-kit/bin/$p" --vectors "research-kit/conformance/$v" --json > "$tmp/py.json"
+            node "fetchproof/bin/$n" --vectors "fetchproof/conformance/$v" --json > "$tmp/node.json"
+            "$py" "fetchproof/bin/$p" --vectors "fetchproof/conformance/$v" --json > "$tmp/py.json"
             node -e '
               const fs = require("fs");
               const rows = (f) => {
@@ -194,9 +194,9 @@ jobs:
 
       - name: validator inputs are unchanged
         run: |
-          if ! git diff --quiet -- research-kit/conformance research-kit/schemas; then
+          if ! git diff --quiet -- fetchproof/conformance fetchproof/schemas; then
             echo "a validator mutated its own inputs"
-            git --no-pager diff --stat -- research-kit/conformance research-kit/schemas
+            git --no-pager diff --stat -- fetchproof/conformance fetchproof/schemas
             exit 1
           fi
           echo "conformance/ and schemas/ are byte-for-byte unchanged"
@@ -211,8 +211,8 @@ jobs:
       # below then fails if either changed a tracked file or left an untracked one.
       - name: the corpus's derived files regenerate to their committed bytes
         run: |
-          node research-kit/bin/timeline.mjs
-          node research-kit/bin/export-warc.mjs
+          node fetchproof/bin/timeline.mjs
+          node fetchproof/bin/export-warc.mjs
 
       - name: the suite left the working tree clean
         run: |
@@ -259,7 +259,7 @@ jobs:
         run: node --version
 
       - name: selftest
-        run: node research-kit/bin/selftest.mjs
+        run: node fetchproof/bin/selftest.mjs
 
   # The suite as a "Download ZIP" user runs it: from a tree with no .git. Every other leg runs
   # from a checkout, so a test that assumed one could not fail here - and one did (found
@@ -267,7 +267,7 @@ jobs:
   # git's exit 128 as "the ignore rule is missing"). `git archive` is what GitHub's ZIP is
   # built from. Linux and Node 22 only: the property is the missing .git, not the platform.
   #
-  # The folder's name has a SPACE in it, as "Downloads/Research-Kit main" and "C:\Users\John
+  # The folder's name has a SPACE in it, as "Downloads/Fetchproof main" and "C:\Users\John
   # Smith" do. Every other leg runs from a path without one, so a test that assumed a bare
   # kit path could not fail - and one did (found 2026-09-30, break-test: the audit test
   # matched `audit.mjs --zip`, while the kit correctly prints `".../audit.mjs" --zip`).
@@ -294,7 +294,7 @@ jobs:
           git archive HEAD | tar -x -C "$tree"
           if [ -e "$tree/.git" ]; then echo "the exported tree has a .git; it is not what a ZIP user gets"; exit 1; fi
           cd "$tree"
-          node research-kit/bin/selftest.mjs
+          node fetchproof/bin/selftest.mjs
 
   suite:
     name: suite

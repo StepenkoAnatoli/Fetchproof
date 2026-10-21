@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fetchproof/fi-evidence-manifest-v1",
+  "title": "FI-01-FI-30 evidence manifest",
+  "description": "Strict content-addressed evidence manifest for completed FI sidecars. Uniqueness and sidecar-to-entry ownership are semantic validator checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifestVersion", "root", "entries"],
+  "properties": {
+    "manifestVersion": { "const": "1.0.0" },
+    "root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\u0000)[^\\\\\\r\\n]+$"
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "fiId": {
+      "type": "string",
+      "enum": [
+        "FI-01", "FI-02", "FI-03", "FI-04", "FI-05", "FI-06", "FI-07", "FI-08", "FI-09", "FI-10",
+        "FI-11", "FI-12", "FI-13", "FI-14", "FI-15", "FI-16", "FI-17", "FI-18", "FI-19", "FI-20",
+        "FI-21", "FI-22", "FI-23", "FI-24", "FI-25", "FI-26", "FI-27", "FI-28", "FI-29", "FI-30"
+      ]
+    },
+    "relativePosixPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\u0000)[^\\\\\\r\\n]+$"
+    },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "researcher-benchmark-c14n-v1-json",
+        "researcher-benchmark-c14n-v1-text",
+        "researcher-benchmark-c14n-v1-jsonl",
+        "opaque-bytes"
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidenceId",
+        "fiId",
+        "fieldLabel",
+        "artifactId",
+        "path",
+        "profile",
+        "byteLength",
+        "sha256",
+        "predecessorEvidenceIds"
+      ],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/identifier" },
+        "fiId": { "$ref": "#/$defs/fiId" },
+        "fieldLabel": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "artifactId": { "$ref": "#/$defs/identifier" },
+        "path": { "$ref": "#/$defs/relativePosixPath" },
+        "profile": { "$ref": "#/$defs/profile" },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "predecessorEvidenceIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    }
+  }
+}

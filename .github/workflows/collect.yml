@@ -88,7 +88,7 @@ name: collect
 # names are the disclosure surface, and they are the part this workflow governs.
 #
 # Re-run the measurement instead of trusting this comment, which can go stale:
-#   node research-kit/bin/disclosure.mjs --repository OWNER/REPO --run <id> --topic "..."
+#   node fetchproof/bin/disclosure.mjs --repository OWNER/REPO --run <id> --topic "..."
 #
 # What the disclosure probe does NOT measure: the signed-in surface, because it is
 # unauthenticated by design. That was measured separately, and the answer is above - a
@@ -345,7 +345,7 @@ jobs:
       # or a deleted environment, silently removes the approval gate and this job would
       # otherwise run straight past it.
       #
-      # `RESEARCH_KIT_COLLECTION_ENV` is a VARIABLE set on the environment itself. An
+      # `FETCHPROOF_COLLECTION_ENV` is a VARIABLE set on the environment itself. An
       # auto-created environment has none, so an absent or wrong value means the gate that
       # was supposed to guard this run is not there - and the run stops before spending.
       #
@@ -359,19 +359,19 @@ jobs:
       # that matters is the environment's own protection rules rather than this step.
       - name: the protected environment is the one that approved this run
         env:
-          DECLARED_ENV: ${{ vars.RESEARCH_KIT_COLLECTION_ENV }}
+          DECLARED_ENV: ${{ vars.FETCHPROOF_COLLECTION_ENV }}
         run: |
           expected='research-collection'
           if [ -z "${DECLARED_ENV:-}" ]; then
-            echo "::error::the research-collection environment did not supply RESEARCH_KIT_COLLECTION_ENV"
+            echo "::error::the research-collection environment did not supply FETCHPROOF_COLLECTION_ENV"
             echo "Either the environment does not exist - in which case GitHub created an UNPROTECTED one"
             echo "with that name and there is no approval gate on this run - or its variables are unset."
             echo "Fix: Settings > Environments > research-collection > add variable"
-            echo "     RESEARCH_KIT_COLLECTION_ENV = research-collection, and add the required reviewers."
+            echo "     FETCHPROOF_COLLECTION_ENV = research-collection, and add the required reviewers."
             exit 1
           fi
           if [ "$DECLARED_ENV" != "$expected" ]; then
-            echo "::error::RESEARCH_KIT_COLLECTION_ENV is '$DECLARED_ENV', expected '$expected'"
+            echo "::error::FETCHPROOF_COLLECTION_ENV is '$DECLARED_ENV', expected '$expected'"
             exit 1
           fi
           echo "environment marker present"
@@ -398,18 +398,18 @@ jobs:
           # the package itself is a second place for it to be wrong, and that is exactly
           # how `firecrawl@1.23.3` survived here for weeks: the package is `firecrawl-cli`,
           # and `firecrawl` on npm is the SDK, which ships no binary at all.
-          spec=$(node -e 'import("./research-kit/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec()))')
+          spec=$(node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec()))')
           if ! npm install -g "$spec"; then
             echo "::error::could not install $spec - this is an INSTALLATION failure, not an incompatibility"
             exit 1
           fi
-          tested=$(node -e 'import("./research-kit/lib/firecrawl.mjs").then(m => process.stdout.write(m.TESTED_CLI_VERSION))')
+          tested=$(node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m => process.stdout.write(m.TESTED_CLI_VERSION))')
           echo "| CLI | \`$(firecrawl --version)\` (tested against \`$tested\`) |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: the CLI is a major this adapter supports
         run: |
           node -e '
-            import("./research-kit/lib/firecrawl.mjs").then((m) => {
+            import("./fetchproof/lib/firecrawl.mjs").then((m) => {
               const c = m.cliCompatibility();
               console.log(`${c.level}: ${c.detail}`);
               if (!c.supported) { console.error(`::error::${c.remedy}`); process.exit(1); }
@@ -428,12 +428,12 @@ jobs:
           set -e
           suffix="${CLIENT_REF:-run-$GITHUB_RUN_ID}"
           {
-            echo "KIT=$PWD/research-kit"
+            echo "KIT=$PWD/fetchproof"
             echo "SCRATCH=$RUNNER_TEMP/collect-project"
-            echo "ARTIFACT_NAME=research-kit-corpus-v1-$suffix"
-            echo "ARTIFACT_PATH=$RUNNER_TEMP/research-kit-corpus-v1-$suffix.zip"
+            echo "ARTIFACT_NAME=fetchproof-corpus-v1-$suffix"
+            echo "ARTIFACT_PATH=$RUNNER_TEMP/fetchproof-corpus-v1-$suffix.zip"
           } >> "$GITHUB_ENV"
-          echo "artifact will be named research-kit-corpus-v1-$suffix"
+          echo "artifact will be named fetchproof-corpus-v1-$suffix"
 
       - name: scaffold a scratch project, never this repository's corpus
         env:
@@ -454,7 +454,7 @@ jobs:
             // `--kit` with the DOCUMENTED install location, rather than the one this runner
             // resolved. The project inside the artifact gets read on another machine, where
             // a runner path means nothing. No apostrophes: this is a single-quoted shell string.
-            execFileSync(process.execPath, [`${process.env.KIT}/bin/new-project.mjs`, ".", "--topic", process.env.TOPIC, "--kit", "$HOME/.agents/research-kit"], { stdio: "inherit" });
+            execFileSync(process.execPath, [`${process.env.KIT}/bin/new-project.mjs`, ".", "--topic", process.env.TOPIC, "--kit", "$HOME/.agents/fetchproof"], { stdio: "inherit" });
           '
           node -e '
             const fs = require("node:fs");
@@ -567,7 +567,7 @@ jobs:
           # budget is for. Absent on a fork, collection degrades to the old behaviour rather
           # than failing, because the ladder's last rung is the fetch provider.
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-          RESEARCH_KIT_TRANSPORT: firecrawl-cli
+          FETCHPROOF_TRANSPORT: firecrawl-cli
           # NOT a ${{ cond && '' || value }} ternary. In GitHub Actions the empty string
           # is FALSY, so the true-branch collapses and the expression yields the third
           # operand - it passed the literal "auto", which is not a provider, and every
@@ -583,7 +583,7 @@ jobs:
           # 'auto' means "no explicit choice": leave the variable unset so the ladder
           # falls through to its own detection. Any other value pins the provider.
           if [ "${SEARCH_TRANSPORT_INPUT:-auto}" != "auto" ]; then
-            export RESEARCH_KIT_SEARCH_TRANSPORT="$SEARCH_TRANSPORT_INPUT"
+            export FETCHPROOF_SEARCH_TRANSPORT="$SEARCH_TRANSPORT_INPUT"
             echo "search side: pinned to $SEARCH_TRANSPORT_INPUT by dispatch input"
           fi
           # Which side won, recorded in the log before anything is spent. A run that

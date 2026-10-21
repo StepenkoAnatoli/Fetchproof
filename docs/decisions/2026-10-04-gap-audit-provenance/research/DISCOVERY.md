@@ -1,12 +1,12 @@
-# Discovery Contract - How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Research-Kit's hash-chained ledger
+# Discovery Contract - How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Fetchproof's hash-chained ledger
 
 Started 2026-10-04. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Benchmark Research-Kit's evidence ledger against the provenance, attestation and integrity
+Benchmark Fetchproof's evidence ledger against the provenance, attestation and integrity
 standards below. The ledger is `research/raw/.fetches.jsonl`: one entry per fetch with the
 URL, the sha256 of the capture, a link to the previous entry and the transport that ran, in
 a chain that the collector writes and that `preflight.mjs` verifies by recomputing the hashes.

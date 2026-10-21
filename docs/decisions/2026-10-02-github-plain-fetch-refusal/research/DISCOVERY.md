@@ -1,7 +1,7 @@
 # Discovery Contract - When and why GitHub answers 403 to unauthenticated non-browser fetches of github.com pages, and which routes GitHub documents for fetching a README or raw file without a browser session
 
 Started 2026-10-02. This file is the definition of "enough information to build".
-`node "/root/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "/root/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

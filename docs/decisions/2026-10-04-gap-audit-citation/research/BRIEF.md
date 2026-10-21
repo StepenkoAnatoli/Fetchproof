@@ -1,4 +1,4 @@
-# Brief - How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Research-Kit's evidence rows, corroboration and URL identity
+# Brief - How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Fetchproof's evidence rows, corroboration and URL identity
 
 _Auto-drafted 2026-10-04 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Benchmark Research-Kit's evidence rows, corroboration check and URL identity against the
+Benchmark Fetchproof's evidence rows, corroboration check and URL identity against the
 standards below. This is a decision about the repository (ADR-0030), read by the lead of a
 gap audit of the kit: it compares what the kit does - a claim is CLOSED on an evidence row
 (claim + URL + cached page, an optional `[quote: ...]` anchor checked byte for byte against
@@ -120,8 +120,7 @@ E-14 rests on that page's own description of citations, not on the how-it-works 
 ## Next steps
 
 1. The TODO sections are answered (Reviewed by: agent, ADR-0107). The lead adds this project's row to `docs/decisions/README.md` (ADR-0102) and commits the corpus with `git add -f research/raw/.fetches.jsonl`.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=18a34bc1b99b33b5 inputs=7a2ae3ac90b7453c gate=pass -->
+<!-- fetchproof:brief-draft body=55844c05eb7259eb inputs=19c97bb688972587 gate=pass -->

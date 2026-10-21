@@ -2,7 +2,7 @@
 
 ## Topic
 
-Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Research-Kit ship for builders and collectors?
+Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Fetchproof ship for builders and collectors?
 
 ## Subtopics
 

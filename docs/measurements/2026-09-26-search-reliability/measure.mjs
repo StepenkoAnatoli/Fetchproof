@@ -18,7 +18,7 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runJob, ENDPOINT } from '../../../research-kit/lib/serpapi.mjs';
+import { runJob, ENDPOINT } from '../../../fetchproof/lib/serpapi.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, 'results.jsonl');

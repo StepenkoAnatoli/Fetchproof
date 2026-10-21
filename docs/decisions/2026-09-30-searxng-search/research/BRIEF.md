@@ -74,8 +74,8 @@ body with a null-url row and a non-object row, and expects only the valid rows b
 ## Next steps
 
 1. Contradictions and Decision were reviewed by an agent on 2026-09-30.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=24b9f63c70667a3d inputs=80652f4b6b652f43 gate=pass -->
+<!-- fetchproof:brief-draft body=24b9f63c70667a3d inputs=80652f4b6b652f43 gate=pass -->

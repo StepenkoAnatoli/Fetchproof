@@ -1,12 +1,12 @@
-# Discovery Contract - How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Research-Kit's corpus and gate
+# Discovery Contract - How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Fetchproof's corpus and gate
 
 Started 2026-10-03. This file is the definition of "enough information to build".
-`node "/root/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "/root/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Benchmark Research-Kit's corpus parsing, source judgement and search merging against the
+Benchmark Fetchproof's corpus parsing, source judgement and search merging against the
 tools and specifications below. This is a decision about the repository (ADR-0030), read by
 the lead of a gap audit of the kit: it compares what the kit's table parser, evidence rows,
 search seam and source grading do with what the GitHub Flavored Markdown specification says

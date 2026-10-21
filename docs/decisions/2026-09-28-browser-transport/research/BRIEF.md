@@ -78,7 +78,7 @@ evidence:
     body text carrying a Chromium `ERR_` network error code, the kind that produced the
     identical 131,208-byte page for two URLs. A failure names the code.
 - **Finding the browser:** `browserPath` in the machine config, then
-  `RESEARCH_KIT_BROWSER`, then the usual install locations for the platform. Absent means
+  `FETCHPROOF_BROWSER`, then the usual install locations for the platform. Absent means
   the transport says so and is not selected.
 - **Scope:** fetch only, no search. Search stays with the selected search provider.
 - **Credits-exhausted fallback:** the fallback (ADR-0086) prefers `browser` when a
@@ -94,8 +94,8 @@ binary. Then do one real run here, and one comparison with keyless on the Discus
 ## Next steps
 
 1. Build the transport above, with its ADR, in the same commit.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=c593d7bdf893bebf inputs=d407c835cbe65e03 gate=pass -->
+<!-- fetchproof:brief-draft body=c593d7bdf893bebf inputs=d407c835cbe65e03 gate=pass -->

@@ -8,9 +8,9 @@ fixed under those conditions reported as a risk. The probing was delegated to a 
 the lead confirmed each reproduction before fixing. Nothing in the user's checkout was touched by
 a probe.
 
-**How the build is run.** `node research-kit/bin/selftest.mjs` (the full offline suite),
-`node research-kit/bin/preflight.mjs` (PASS on the root corpus), `node research-kit/bin/handoff.mjs`
-(exit 0), `node research-kit/bin/doctor.mjs` (READY). Node 22.22.2, Python 3.11.15, four cores.
+**How the build is run.** `node fetchproof/bin/selftest.mjs` (the full offline suite),
+`node fetchproof/bin/preflight.mjs` (PASS on the root corpus), `node fetchproof/bin/handoff.mjs`
+(exit 0), `node fetchproof/bin/doctor.mjs` (READY). Node 22.22.2, Python 3.11.15, four cores.
 CI runs the suite on ubuntu-latest, ubuntu-26.04 and windows-latest on Node 22, on Node 24 and 26
 on ubuntu, and from a `git archive` tree.
 
@@ -20,7 +20,7 @@ each; eight further full runs during the probes, no failure in any of them.
 ## What was probed, and what held
 
 - Fresh clone: full suite green; `git status --ignored` after a run shows only
-  `research-kit/bin/__pycache__/` (finding 1); `timeline.mjs`, `export-warc.mjs` and the example
+  `fetchproof/bin/__pycache__/` (finding 1); `timeline.mjs`, `export-warc.mjs` and the example
   run leave `git status --porcelain` empty, also under `TZ=Pacific/Kiritimati`,
   `TZ=America/St_Johns` and `LC_ALL=tr_TR.UTF-8`.
 - Read-only checkout as an unprivileged user: 1585/0, no file newer than the run's start.
@@ -28,7 +28,7 @@ each; eight further full runs during the probes, no failure in any of them.
   `preflight` on Node 20 still prints PASS and `doctor` names `fail node`; Python absent is
   `11 tests could not run`, exit 1, not a pass (ADR-0108).
 - Environment: twenty variants of TMPDIR, HOME, LANG, TZ, NO_COLOR, CI, FORCE_COLOR, a stray
-  `RESEARCH_KIT_*`, GIT_DIR and GIT_CONFIG_GLOBAL over four groups, all exit 0; the full suite
+  `FETCHPROOF_*`, GIT_DIR and GIT_CONFIG_GLOBAL over four groups, all exit 0; the full suite
   under `LC_ALL=tr_TR.UTF-8 TZ=Pacific/Kiritimati`: 1585/0.
 - Order and concurrency: all 76 groups individually green; the suite in reversed file order and
   two suites concurrently from two clones: green apart from `architecture-map` counting the
@@ -51,8 +51,8 @@ each; eight further full runs during the probes, no failure in any of them.
 **Repro**
 
 ```
-node research-kit/bin/selftest.mjs      # the conformance runners import conformance_common.py
-node research-kit/bin/doctor.mjs
+node fetchproof/bin/selftest.mjs      # the conformance runners import conformance_common.py
+node fetchproof/bin/doctor.mjs
 ```
 
 **Observed.** `warn deploy the deployed kit is NOT this one - kit: 1 stale (e.g.
@@ -74,7 +74,7 @@ checkout is neither deployed nor counted as drift`. **Status: applied** (b672926
 
 ```
 PATH=<a folder whose python3 prints "Python 3.8.10">:<a folder with no python> \
-  node research-kit/bin/selftest.mjs ledger-conformance
+  node fetchproof/bin/selftest.mjs ledger-conformance
 ```
 
 **Observed.** `PYTHON-NOT-FOUND ... no python or python3 on this host`, the same words for an
@@ -89,7 +89,7 @@ absence`. **Status: applied** (64fe5ac). Suite green.
 
 ### 3. The runner creates whatever path TMPDIR names, recursively, and leaves it
 
-**Repro.** `TMPDIR=/nonexistent/dir/xyz node research-kit/bin/selftest.mjs checks` (exit 0);
+**Repro.** `TMPDIR=/nonexistent/dir/xyz node fetchproof/bin/selftest.mjs checks` (exit 0);
 `TMPDIR=relative-tmp ...` from the repository root.
 
 **Observed.** The directory is created and left empty after the run; the relative one inside the

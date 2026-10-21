@@ -2,7 +2,7 @@
 
 ## Topic
 
-What a Firecrawl scrape and search and a SerpAPI search cost today, and whether the research kit's budget and credit assumptions still hold
+What a Firecrawl scrape and search and a SerpAPI search cost today, and whether Fetchproof's budget and credit assumptions still hold
 
 ## Subtopics
 

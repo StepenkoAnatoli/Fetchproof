@@ -2,7 +2,7 @@
 
 ## Topic
 
-How should Research-Kit be distributed and listed in the official MCP Registry?
+How should Fetchproof be distributed and listed in the official MCP Registry?
 
 ## Subtopics
 

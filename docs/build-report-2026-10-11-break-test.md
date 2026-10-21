@@ -1,6 +1,6 @@
 # Break-test pass 8 - 2026-10-11
 
-The break-test skill, run in a session pinned to the branch `arena/9aac6bbb-research-kit`
+The break-test skill, run in a session pinned to the branch `arena/9aac6bbb-fetchproof`
 at `195b2ca`. The pinned-branch rule applied: every probe ran in a throwaway clone under
 `/tmp/bt/`, never in the checkout. No code fix was applied (see F1), so the only commit is
 this report.
@@ -48,7 +48,7 @@ Repro (any gated project with a collected corpus, e.g. a fresh clone):
 
 ```
 cd <project>/research
-node "$HOME/.agents/research-kit/bin/handoff.mjs"      # exit 1
+node "$HOME/.agents/fetchproof/bin/handoff.mjs"      # exit 1
 ```
 
 Observed:
@@ -57,7 +57,7 @@ Observed:
 handoff: nothing to hand off yet - nothing has been collected in this project.
 
 Collect it here, then commit research/ including research/raw/ and its dotfiles:
-  .../research-kit/bin/research.mjs
+  .../fetchproof/bin/research.mjs
 ```
 
 The parent directory is the project root and holds a complete corpus - `handoff.mjs` run
@@ -122,7 +122,7 @@ is not a break-test decision to take.
   the probe was re-run in a namespace whose loopback was up: 1782 passed, 0 failed. The
   discarded run is not evidence about the kit.
 - One invocation was wrong by the operator, not the kit: `preflight.mjs` was invoked as
-  `node research-kit/bin/preflight.mjs` from a project folder that does not contain the kit
+  `node fetchproof/bin/preflight.mjs` from a project folder that does not contain the kit
   (the kit lives at its install path), which produced a `MODULE_NOT_FOUND` from Node.
   Re-run with the kit's absolute path, the verdict was the designed FAIL of an uncollected
   project (2 blocking) - the skill's step-1 reminder that the project is the cwd, not the
@@ -131,15 +131,15 @@ is not a break-test decision to take.
 ## Probes run
 
 Commands are from the root of a clone unless noted. Full-suite invocations used
-`RESEARCH_KIT_RESULT_FILE`; the unsupported count is reported rather than waived, because
+`FETCHPROOF_RESULT_FILE`; the unsupported count is reported rather than waived, because
 ADR-0108 treats an incomplete run as not-a-pass. The 27 rows below are an activity
 inventory, not 27 independent full-suite passes.
 
 | # | Probe | Command | Result |
 |---|---|---|---|
-| 1 | Baseline x3 | `node research-kit/bin/selftest.mjs` (real checkout) | 1782/0/4, exit 1, 166.1-176.9 s; failure set empty |
-| 2 | Root-in-userns control | `unshare -r node research-kit/bin/selftest.mjs` | 1782/0/4, 164.4 s - root changes nothing |
-| 3 | **Network off** | `unshare -rn sh -c 'ip link set lo up; node research-kit/bin/selftest.mjs'` | 1782/0/4, 162.5 s - the "runs offline" claim holds with no DNS and no sockets (pass 7's unreachable probe) |
+| 1 | Baseline x3 | `node fetchproof/bin/selftest.mjs` (real checkout) | 1782/0/4, exit 1, 166.1-176.9 s; failure set empty |
+| 2 | Root-in-userns control | `unshare -r node fetchproof/bin/selftest.mjs` | 1782/0/4, 164.4 s - root changes nothing |
+| 3 | **Network off** | `unshare -rn sh -c 'ip link set lo up; node fetchproof/bin/selftest.mjs'` | 1782/0/4, 162.5 s - the "runs offline" claim holds with no DNS and no sockets (pass 7's unreachable probe) |
 | 4 | Timezone | `TZ=Pacific/Kiritimati` full suite | 1782/0/4, 170.2 s |
 | 5 | Two suites at once | two clones, both full suites concurrently, 2 CPUs | both 1782/0/4, 175.9 s / 174.7 s |
 | 6 | Flakiness programme | 10x each: `concurrency`, `http-linear`, `proxy`, `large-response`, `panel`, `stdout-flush`, `browser-guard` | 0 FAIL in 70 runs; `browser-guard` exits 1 only because of its 4 UNSUP LIVE tests |
@@ -152,7 +152,7 @@ inventory, not 27 independent full-suite passes.
 | 13 | No git on PATH | `env PATH=<empty dir> node <abs>/doctor.mjs` | `fail git - git is not on PATH - the commit gate cannot install`, exit 1, fix printed; preflight still PASS |
 | 14 | Read-only project | `chmod -R a-w research/`, `preflight.mjs` | PASS - reads only |
 | 15 | Leaked git context | `GIT_DIR=<other repo>/.git` with preflight/handoff | correct verdicts (PASS / OK) - the CLIs are not redirected |
-| 16 | `RESEARCH_KIT_HOME` is a file | real `install.mjs` | exit 2, `could not write ... EEXIST`, target file untouched |
+| 16 | `FETCHPROOF_HOME` is a file | real `install.mjs` | exit 2, `could not write ... EEXIST`, target file untouched |
 | 17 | Read-only HOME | real `install.mjs`, `HOME` 0500 | exit 2, `could not write ... EACCES`; nothing left behind |
 | 18 | Hebrew + space project | `new-project.mjs "/tmp/bt/<hebrew> <space>" --topic "<hebrew>"`, `decompose.mjs`, `preflight.mjs` (kit by absolute path) | scaffold OK, decompose OK (MAP.md carries the Hebrew topic), preflight FAIL by design - 2 blocking on an uncollected project |
 | 19 | Long path | suite subset + handoff in a 272-character path | 10 passed / 0 failed; handoff OK |
@@ -179,7 +179,7 @@ inventory, not 27 independent full-suite passes.
   reaching paid services without consent; the collector ran keyless throughout.
 - **A real machine-wide install** (global `core.hooksPath`, `~/.claude/settings.json`).
   The skill forbids modifying the machine, so `install.mjs` ran with `HOME` or
-  `RESEARCH_KIT_HOME` pointed at scratch paths, and the pre-commit hook was not registered.
+  `FETCHPROOF_HOME` pointed at scratch paths, and the pre-commit hook was not registered.
 - **Node lines 24 and 26.** Only 22.22.3 is available locally; CI runs the other lines on
   every commit.
 - **Flakiness beyond the recorded programme.** 70 repeated subset runs and 7 full-suite

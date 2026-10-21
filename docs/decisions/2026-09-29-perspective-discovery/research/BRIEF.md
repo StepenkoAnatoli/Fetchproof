@@ -92,8 +92,8 @@ run with no captures.
 ## Next steps
 
 1. Build the outline section above, with its ADR, in the same commit.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=a4f22af0d767126e inputs=05e0810e0e099b8b gate=pass -->
+<!-- fetchproof:brief-draft body=a4f22af0d767126e inputs=05e0810e0e099b8b gate=pass -->

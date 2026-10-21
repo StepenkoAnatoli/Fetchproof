@@ -1,12 +1,12 @@
-# Discovery Contract - What a Firecrawl scrape and search and a SerpAPI search cost today, and whether the research kit's budget and credit assumptions still hold
+# Discovery Contract - What a Firecrawl scrape and search and a SerpAPI search cost today, and whether Fetchproof's budget and credit assumptions still hold
 
 Started 2026-09-28. This file is the definition of "enough information to build".
-`node "/root/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "/root/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-The research kit spends two metered services: Firecrawl (scrapes, and searches when no SerpAPI key is set) and SerpAPI (searches). Its budget code assumes what each call costs and what a free plan allows: the depth tiers in `lib/research-run.mjs` are "tuned for a ~1,000-credit free month", `lib/firecrawl.mjs` estimates a search at 2 credits per 10 results and names a 10-requests-a-minute free tier, and `lib/research-run.mjs` counts SerpAPI against a 50-an-hour, 250-a-month Free Plan. "Done" is a verdict per assumption - still true, changed (with the new value), or unverifiable - each resting on the vendor's own page, so a builder can change the constants (or leave them) without re-researching.
+Fetchproof spends two metered services: Firecrawl (scrapes, and searches when no SerpAPI key is set) and SerpAPI (searches). Its budget code assumes what each call costs and what a free plan allows: the depth tiers in `lib/research-run.mjs` are "tuned for a ~1,000-credit free month", `lib/firecrawl.mjs` estimates a search at 2 credits per 10 results and names a 10-requests-a-minute free tier, and `lib/research-run.mjs` counts SerpAPI against a 50-an-hour, 250-a-month Free Plan. "Done" is a verdict per assumption - still true, changed (with the new value), or unverifiable - each resting on the vendor's own page, so a builder can change the constants (or leave them) without re-researching.
 
 ## Unknowns
 

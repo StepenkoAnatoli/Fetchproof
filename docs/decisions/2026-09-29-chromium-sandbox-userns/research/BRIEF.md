@@ -91,8 +91,8 @@ denied.**
 ## Next steps
 
 1. Build the change above, with its ADR, in the same commit.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=b931f1d54e5bf79f inputs=04dcf063e8523a0c gate=pass -->
+<!-- fetchproof:brief-draft body=b931f1d54e5bf79f inputs=04dcf063e8523a0c gate=pass -->

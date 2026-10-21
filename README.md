@@ -1,15 +1,15 @@
-![Research-Kit workflow: frame the unknowns, collect primary sources, review claims, run the gate, and hand an authored brief to a builder.](docs/assets/research-overview.svg)
+![Fetchproof workflow: frame the unknowns, collect primary sources, review claims, run the gate, and hand an authored brief to a builder.](docs/assets/research-overview.svg)
 
-# Research-Kit
+# Fetchproof
 
-[![Tests and CI](https://img.shields.io/github/actions/workflow/status/StepenkoAnatoli/Research-Kit/offline-suite.yml?branch=main&label=tests%20%26%20CI&style=flat-square)](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml)
+[![Tests and CI](https://img.shields.io/github/actions/workflow/status/StepenkoAnatoli/Fetchproof/offline-suite.yml?branch=main&label=tests%20%26%20CI&style=flat-square)](https://github.com/StepenkoAnatoli/Fetchproof/actions/workflows/offline-suite.yml)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-2563eb?style=flat-square)](LICENSE)
-[![Last commit](https://img.shields.io/github/last-commit/StepenkoAnatoli/Research-Kit/main?style=flat-square&color=0d9488)](https://github.com/StepenkoAnatoli/Research-Kit/commits/main)
-[![GitHub stars](https://img.shields.io/github/stars/StepenkoAnatoli/Research-Kit?style=flat-square&color=f5b942)](https://github.com/StepenkoAnatoli/Research-Kit/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/StepenkoAnatoli/Fetchproof/main?style=flat-square&color=0d9488)](https://github.com/StepenkoAnatoli/Fetchproof/commits/main)
+[![GitHub stars](https://img.shields.io/github/stars/StepenkoAnatoli/Fetchproof?style=flat-square&color=f5b942)](https://github.com/StepenkoAnatoli/Fetchproof/stargazers)
 
-[Quickstart](QUICKSTART.md) · [Command reference](research-kit/README.md) · [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+[Quickstart](QUICKSTART.md) · [Command reference](fetchproof/README.md) · [Contributing](CONTRIBUTING.md) · [Good first issues](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
 
-**Research first, build second.** Research-Kit gives AI agents a workflow for collecting
+**Research first, build second.** Fetchproof gives AI agents a workflow for collecting
 sources, declaring blocking unknowns, and handing traceable research artifacts to a builder.
 It keeps cached pages and a tamper-evident fetch record. With the commit hook operating
 and no override in effect, a gated project's commit is blocked while preflight fails if
@@ -34,6 +34,11 @@ For daily research, coding and writing, see the optional
 
 **In a hurry?** [`QUICKSTART.md`](QUICKSTART.md) is the two-minute setup: the agent collects
 through GitHub with one token, and you only read the brief.
+
+**Formerly Research-Kit.** The kit was renamed Fetchproof
+([ADR-0186](docs/adr/0186-the-kit-is-renamed-fetchproof-with-a-clean-break.md)), and the old
+names are no longer read: a machine installed under the old name keeps running its old copy
+until it is migrated. See [Upgrading from Research-Kit](#upgrading-from-research-kit).
 
 ## Contents
 
@@ -128,15 +133,15 @@ Nothing is required beyond Node and Git to run the kit with the free keyless tra
 
 ## Install
 
-**1. Clone and deploy.** The kit is copied to `~/.agents/research-kit` once, and every
+**1. Clone and deploy.** The kit is copied to `~/.agents/fetchproof` once, and every
 project on the machine runs it from there.
 
 ```bash
-git clone https://github.com/StepenkoAnatoli/Research-Kit.git
-cd Research-Kit
-node research-kit/bin/install.mjs
-node research-kit/bin/install-hooks.mjs
-node research-kit/bin/doctor.mjs
+git clone https://github.com/StepenkoAnatoli/Fetchproof.git
+cd Fetchproof
+node fetchproof/bin/install.mjs
+node fetchproof/bin/install-hooks.mjs
+node fetchproof/bin/doctor.mjs
 ```
 
 `doctor` must end with `READY`. Anything else names the problem and prints its fix. Run it,
@@ -149,15 +154,15 @@ the machine to use the free route, and `doctor` stops asking for a key:
 { "transport": "http-keyless" }
 ```
 
-That file is `~/.agents/research-kit.config.json`. The other keys it takes are under
+That file is `~/.agents/fetchproof.config.json`. The other keys it takes are under
 [Machine configuration](#machine-configuration).
 
 **What the install touches**
 
 | Path | What it is |
 |---|---|
-| `~/.agents/research-kit/` | the deployed kit; `install.mjs` overwrites it on every run |
-| `~/.agents/research-kit.config.json` | this machine's settings: transport, role, evidence policy |
+| `~/.agents/fetchproof/` | the deployed kit; `install.mjs` overwrites it on every run |
+| `~/.agents/fetchproof.config.json` | this machine's settings: transport, role, evidence policy |
 | `~/.claude/skills/` | `research-first` and the shipped skill set, including `skill-router`, as siblings |
 | `~/.claude/settings.json` | the edit-time gate, a Claude Code hook |
 | git `core.hooksPath` | the commit gate, machine-wide, every agent and every human |
@@ -177,15 +182,24 @@ Each release is tagged `v<version>` and has its entry in [`CHANGELOG.md`](CHANGE
 
 ```bash
 git pull origin main
-node research-kit/bin/install.mjs
+node fetchproof/bin/install.mjs
 ```
 
-**Uninstall.** `node research-kit/bin/install-hooks.mjs --uninstall` restores the hooks
+**Uninstall.** `node fetchproof/bin/install-hooks.mjs --uninstall` restores the hooks
 and the git setting; the folder under `~/.agents` can then be deleted.
 
 **Windows.** The commands in this file work in PowerShell and Git Bash as written, with
 `$HOME` expanding to `C:\Users\<you>`. In `cmd.exe` write `%USERPROFILE%` instead. Windows
 PowerShell 5.1 does not accept `&&` between commands: run them one per line.
+
+### Upgrading from Research-Kit
+
+Pulling is not enough. The kit's folder, its deployed copy (`~/.agents/research-kit`), its
+files beside it and the `RESEARCH_KIT_*` variables were all renamed, and the new kit reads
+none of the old names. Follow the migration steps in [`CHANGELOG.md`](CHANGELOG.md#unreleased)
+once, in order. The first step removes the old gates with the old kit, before the new one
+is installed. A clone made under the old name can point at the new address with
+`git remote set-url origin https://github.com/StepenkoAnatoli/Fetchproof.git`.
 
 ## Try it in five minutes
 
@@ -196,7 +210,7 @@ and get a verdict from the gate.
 mkdir try-it
 cd try-it
 git init -q
-node "$HOME/.agents/research-kit/bin/new-project.mjs" . --topic "Is fetch a global in Node.js?"
+node "$HOME/.agents/fetchproof/bin/new-project.mjs" . --topic "Is fetch a global in Node.js?"
 ```
 
 **Name the page to read.** Open `research/plan.json` and set its `urls`:
@@ -209,13 +223,13 @@ node "$HOME/.agents/research-kit/bin/new-project.mjs" . --topic "Is fetch a glob
 `research/EVIDENCE.md`, and an entry in the ledger that proves it was fetched.
 
 ```bash
-node "$HOME/.agents/research-kit/bin/research.mjs" --transport http-keyless
+node "$HOME/.agents/fetchproof/bin/research.mjs" --transport http-keyless
 ```
 
 **Ask the gate.**
 
 ```bash
-node "$HOME/.agents/research-kit/bin/preflight.mjs"
+node "$HOME/.agents/fetchproof/bin/preflight.mjs"
 ```
 
 It prints `FAIL` with `discovery-contract/no-unknowns`: the contract does not yet say what
@@ -239,12 +253,12 @@ project argument. `cd` into the project first, every time.
 **1. Scaffold.** From inside the project folder (a git repository):
 
 ```bash
-node "$HOME/.agents/research-kit/bin/new-project.mjs" . --topic "<what is being researched>"
+node "$HOME/.agents/fetchproof/bin/new-project.mjs" . --topic "<what is being researched>"
 ```
 
 This writes `AGENTS.md` (the rules every agent follows here), `START_HERE.md` (notes for
 you), `research/` with the contract, plan and evidence files, and `docs/ARCHITECTURE.md`.
-If the project will be read on another machine, add `--kit '$HOME/.agents/research-kit'`
+If the project will be read on another machine, add `--kit '$HOME/.agents/fetchproof'`
 so its files spell the kit's location portably, single-quoted so your shell leaves it alone.
 
 **2. Decompose the topic.** The map is seeded with nine universal dimensions: access model,
@@ -252,7 +266,7 @@ auth, rate limits, terms and legality, schema stability, freshness, cost at volu
 limits, and whether the output can be obtained at all.
 
 ```bash
-node "$HOME/.agents/research-kit/bin/decompose.mjs"
+node "$HOME/.agents/fetchproof/bin/decompose.mjs"
 ```
 
 Then open `research/MAP.md` and mark every row `COVERED` (naming the unknowns that cover
@@ -275,8 +289,8 @@ docs, the repository, the pricing page, the statute.
 **4. Collect.** The only step that spends credits. Preview first.
 
 ```bash
-node "$HOME/.agents/research-kit/bin/research.mjs" --dry-run
-node "$HOME/.agents/research-kit/bin/research.mjs"
+node "$HOME/.agents/fetchproof/bin/research.mjs" --dry-run
+node "$HOME/.agents/fetchproof/bin/research.mjs"
 ```
 
 A page already in the cache is never fetched twice, so re-running a finished project costs
@@ -291,7 +305,7 @@ is really in the capture. A fact that is genuinely unreachable gets the status
 **6. Ask the gate.**
 
 ```bash
-node "$HOME/.agents/research-kit/bin/preflight.mjs"
+node "$HOME/.agents/fetchproof/bin/preflight.mjs"
 ```
 
 `PASS` means the configured checks passed for the declared research contract. Read any
@@ -301,7 +315,7 @@ remedy. Do not build before `PASS`.
 **7. Write the brief and commit.**
 
 ```bash
-node "$HOME/.agents/research-kit/bin/brief.mjs"
+node "$HOME/.agents/fetchproof/bin/brief.mjs"
 git add research/
 git add -f research/raw/.fetches.jsonl
 git commit -m "research: <topic>"
@@ -365,7 +379,7 @@ If the machine should only build from a corpus someone else collected, declare i
 builder, and collection refuses there by design:
 
 ```bash
-node "$HOME/.agents/research-kit/bin/install-hooks.mjs" --role builder
+node "$HOME/.agents/fetchproof/bin/install-hooks.mjs" --role builder
 ```
 
 ### Codex, Cursor and others
@@ -382,7 +396,7 @@ Gemini:
 
 ```bash
 cd MoonAliza
-node "$HOME/.agents/research-kit/bin/new-project.mjs" docs/research/2026-10-03-payment-provider --topic "Which payment provider fits MoonAliza's checkout" --kit '$HOME/.agents/research-kit'
+node "$HOME/.agents/fetchproof/bin/new-project.mjs" docs/research/2026-10-03-payment-provider --topic "Which payment provider fits MoonAliza's checkout" --kit '$HOME/.agents/fetchproof'
 cd docs/research/2026-10-03-payment-provider
 gemini
 ```
@@ -409,17 +423,17 @@ in the project; Gemini CLI from `mcpServers` in `~/.gemini/settings.json`.
 ```json
 {
   "mcpServers": {
-    "research-kit": {
+    "fetchproof": {
       "command": "node",
-      "args": ["/home/you/.agents/research-kit/bin/mcp-server.mjs"],
-      "env": { "RESEARCH_KIT_GITHUB_TOKEN": "github_pat_..." }
+      "args": ["/home/you/.agents/fetchproof/bin/mcp-server.mjs"],
+      "env": { "FETCHPROOF_GITHUB_TOKEN": "github_pat_..." }
     }
   }
 }
 ```
 
-Write the absolute path of the deployed kit: `~/.agents/research-kit` on Linux and macOS,
-`C:\\Users\\you\\.agents\\research-kit` inside JSON on Windows. MCP clients do not expand
+Write the absolute path of the deployed kit: `~/.agents/fetchproof` on Linux and macOS,
+`C:\\Users\\you\\.agents\\fetchproof` inside JSON on Windows. MCP clients do not expand
 `~` or `$HOME` in `args`. Two tools: `collect` starts a run and returns its id,
 `fetch_corpus` returns a link to the validated package. The token is described in the
 GitHub section.
@@ -443,7 +457,7 @@ machine config, default `collector`).
 The corpus travels through git. The builder's first command, inside the project:
 
 ```bash
-node "$HOME/.agents/research-kit/bin/handoff.mjs"
+node "$HOME/.agents/fetchproof/bin/handoff.mjs"
 ```
 
 It checks that the ledger is present, that `research/EVIDENCE.md` is there with its table,
@@ -470,7 +484,7 @@ review and re-packaging of a received package still follows ADR-0052 (ADR-0150).
 ## Keys and cost
 
 **No credentials ship with this repository, and none ever will.** The kit reads a key from
-the environment or from `~/.agents/research-kit.config.json`, never from a project, and
+the environment or from `~/.agents/fetchproof.config.json`, never from a project, and
 `doctor` scans every project it runs in for a committed key.
 
 **Transports**
@@ -535,7 +549,7 @@ website, for a person who installs nothing.
 2. **Get a Firecrawl key** at [firecrawl.dev](https://www.firecrawl.dev).
 3. **Put the key where only the collector can read it.** In the fork: **Settings** →
    **Environments** → **New environment** named `research-collection`. Add the secret
-   `FIRECRAWL_API_KEY` and the variable `RESEARCH_KIT_COLLECTION_ENV` with the value
+   `FIRECRAWL_API_KEY` and the variable `FETCHPROOF_COLLECTION_ENV` with the value
    `research-collection`. Both are needed: the variable proves the environment exists,
    because GitHub silently creates an unprotected one when a workflow names a missing name.
    Do not put the key under repository secrets, where every workflow can read it; the
@@ -555,8 +569,8 @@ write**. It can then start a collection and read the result, and nothing else. S
 the environment, never on a command line:
 
 ```bash
-export RESEARCH_KIT_GITHUB_TOKEN=github_pat_...
-node "$HOME/.agents/research-kit/bin/collect-remote.mjs" --repository OWNER/REPO --topic "<topic>" --max-pages 5 --json
+export FETCHPROOF_GITHUB_TOKEN=github_pat_...
+node "$HOME/.agents/fetchproof/bin/collect-remote.mjs" --repository OWNER/REPO --topic "<topic>" --max-pages 5 --json
 ```
 
 | Exit | Meaning |
@@ -571,7 +585,7 @@ node "$HOME/.agents/research-kit/bin/collect-remote.mjs" --repository OWNER/REPO
 the job log, which anyone signed in to GitHub can read on a public repository. To research
 something you would not publish, use a private repository or collect locally. The details,
 measured rather than assumed, are in the
-[kit reference](research-kit/README.md#collecting-from-github-actions).
+[kit reference](fetchproof/README.md#collecting-from-github-actions).
 
 ## Command reference
 
@@ -597,7 +611,7 @@ Every command runs from inside the project folder. The main ones:
 | `selftest.mjs` | the whole suite, offline |
 
 The full table, including the release-evidence validators and the artifact format, is in
-[`research-kit/README.md`](research-kit/README.md#every-command).
+[`fetchproof/README.md`](fetchproof/README.md#every-command).
 
 **Reading a verdict.** Every validating command maps its status to an exit code.
 
@@ -610,7 +624,7 @@ The full table, including the release-evidence validators and the artifact forma
 
 ## Machine configuration
 
-`~/.agents/research-kit.config.json`, read by every command. Every key is optional.
+`~/.agents/fetchproof.config.json`, read by every command. Every key is optional.
 
 | Key | Values | Default | What it decides |
 |---|---|---|---|
@@ -620,21 +634,21 @@ The full table, including the release-evidence validators and the artifact forma
 | `evidencePolicy` | `pluralist`, `strict` | `pluralist` | whether a keyless or partial capture passes the gate with a warning or fails it |
 | `serpapiKey` | a key | none | SerpAPI search; the environment variable `SERPAPI_API_KEY` works too |
 | `searxngUrl` | a URL | none | a SearXNG instance for search |
-| `browserPath` | a path | the usual install paths | the Chromium or Chrome the `browser` transport runs; read before `RESEARCH_KIT_BROWSER` (ADR-0088) |
+| `browserPath` | a path | the usual install paths | the Chromium or Chrome the `browser` transport runs; read before `FETCHPROOF_BROWSER` (ADR-0088) |
 | `failOpen` | `true`, `false` | `true` | what the gate does when it cannot run at all |
 | `editGate.mode` | `ask`, `hard-block`, `off` | `ask` | the Claude Code edit-time gate; `install-hooks.mjs --mode` sets it |
 | `editGate.settingsPath` | a path | `~/.claude/settings.json` | where the edit-time gate is registered |
 | `skillRoots` | a list of paths | `~/.claude/skills` | where the skill is installed |
 
-Environment variables take precedence where one exists: `RESEARCH_KIT_TRANSPORT`,
-`SERPAPI_API_KEY`, `SEARXNG_URL`, `RESEARCH_KIT_HOME` (where the kit is deployed).
+Environment variables take precedence where one exists: `FETCHPROOF_TRANSPORT`,
+`SERPAPI_API_KEY`, `SEARXNG_URL`, `FETCHPROOF_HOME` (where the kit is deployed).
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `doctor` reports problems about files or a corpus you do not recognise | it describes the folder it runs in, and that folder is not the project | `cd` into the project, run it again |
-| `Cannot find module '...\research-kit\bin\...'` | a relative path from the wrong folder | use the full path: `node "$HOME/.agents/research-kit/bin/doctor.mjs"` |
+| `Cannot find module '...\fetchproof\bin\...'` | a relative path from the wrong folder | use the full path: `node "$HOME/.agents/fetchproof/bin/doctor.mjs"` |
 | `fatal: not a git repository` | the project folder is not a repository, or the prompt is outside it | `git init` the project, `cd` into it |
 | PowerShell: `The token '&&' is not a valid statement separator` | Windows PowerShell 5.1 has no `&&` | one command per line |
 | `preflight` fails with `discovery-contract/no-unknowns` | the contract lists no unknowns yet | add `U-` rows to `research/DISCOVERY.md` |
@@ -670,7 +684,7 @@ need Node 22.21+ or 24+; `doctor` says so when yours cannot do either.
 ## Repository layout
 
 ```
-research-kit/            the kit: what install.mjs deploys
+fetchproof/              the kit: what install.mjs deploys
   bin/                   every command
   lib/                   the modules behind them
   hooks/, githooks/      the edit-time gate and the commit gate
@@ -709,7 +723,7 @@ BUNDLE_INDEX.md, RESEARCH_REPORT.md      the archive this repository was receive
   agent collects on GitHub and you hand over one token.
 - [`docs/README.md`](docs/README.md): the reading map, which document to read for what,
   and in what order.
-- [`research-kit/README.md`](research-kit/README.md): the reference for every command,
+- [`fetchproof/README.md`](fetchproof/README.md): the reference for every command,
   the portable artifact, the GitHub collector, and the test suite.
 - [`AGENTS.md`](AGENTS.md): the rules an agent follows, and the standing protocol for
   changes to the kit.
@@ -728,7 +742,7 @@ BUNDLE_INDEX.md, RESEARCH_REPORT.md      the archive this repository was receive
 
 Bug fixes, documentation, regression tests and vendor compatibility updates are welcome.
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification, commit reports and
-PR guidance. Browse the [good first issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+PR guidance. Browse the [good first issues](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
 and check for an existing fix PR before starting.
 
 ## License

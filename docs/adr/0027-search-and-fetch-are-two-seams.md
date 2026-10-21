@@ -161,8 +161,8 @@ Two runs of the same collector, before and after wiring it:
 
 | | run | `search:` line |
 |---|---|---|
-| before | [35689363486](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35689363486) | **none** — when search *is* the fetch provider the selection reports `sameAsFetch` and prints nothing |
-| after | [35691439943](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35691439943) | `search:    serpapi - a SerpAPI key is configured - searching on its own meter, leaving the fetch budget for pages` |
+| before | [35689363486](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35689363486) | **none** — when search *is* the fetch provider the selection reports `sameAsFetch` and prints nothing |
+| after | [35691439943](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35691439943) | `search:    serpapi - a SerpAPI key is configured - searching on its own meter, leaving the fetch budget for pages` |
 
 The second run also logs the choice **before spending**, and the credential appears as
 `SERPAPI_API_KEY: ***` — redacted by the runner, never in argv.
@@ -173,7 +173,7 @@ The section that follows says the saving was "consistent with, not proven", beca
 first verification run performed **no search at all** (`searches 0`): SerpAPI was selected
 and never exercised. A third run fixed that by giving the plan room to search.
 
-Run [35692202192](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35692202192),
+Run [35692202192](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35692202192),
 depth `quick`, both credentials present and redacted as `***`:
 
     search:    serpapi - a SerpAPI key is configured

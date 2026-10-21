@@ -224,13 +224,13 @@ different things:
   opt-in — not a reason for it not to exist.
 
 `test/live-collect.test.mjs` drives `bin/research.mjs` through a real collecting run
-against both real providers. It is gated on `RESEARCH_KIT_LIVE=1` **and** a key being
+against both real providers. It is gated on `FETCHPROOF_LIVE=1` **and** a key being
 present; with the gate shut it registers one test that asserts the gate is shut, for the
 right reasons, including that a truthy-looking value like `yes` does not open it. So the
 file is never dead code and the opt-in mechanism is itself covered.
 
 ```bash
-RESEARCH_KIT_LIVE=1 SERPAPI_API_KEY=... node research-kit/bin/selftest.mjs
+FETCHPROOF_LIVE=1 SERPAPI_API_KEY=... node fetchproof/bin/selftest.mjs
 ```
 
 It scaffolds a temp project, so a live run never touches this repository's corpus — and a

@@ -1,5 +1,5 @@
 {
-  "topic": "Measuring the research kit: citation accuracy metrics from deep research benchmarks",
+  "topic": "Measuring Fetchproof: citation accuracy metrics from deep research benchmarks",
   "notes": "Phase 0 dry-run only (credits); owning pages named directly.",
   "depth": "normal", "refreshDays": 30, "limit": 5, "perQuery": 2, "maxScrapes": 4, "prefer": [], "queries": [],
   "urls": [

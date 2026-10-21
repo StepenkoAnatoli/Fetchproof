@@ -1,4 +1,4 @@
-# Discovery Contract - Can Research-Kit ship as a Windows .exe yet?
+# Discovery Contract - Can Fetchproof ship as a Windows .exe yet?
 
 Started 2026-09-21.
 
@@ -35,7 +35,7 @@ repository:
 - `lib/decompose.mjs` reads from `RECIPE_DIR`
 - `lib/artifact-validator.mjs` reads `schemas/artifact-manifest.schema.json`
 
-Three sets of non-JavaScript assets, all read at runtime. So the premise that a Research-Kit
+Three sets of non-JavaScript assets, all read at runtime. So the premise that a Fetchproof
 `.exe` needs bundled assets is sound. The premise that it needs `useVfs` is what U-1 tests,
 and that one genuinely required collection.
 

@@ -1,12 +1,12 @@
 # Discovery Contract - Which MCP protocol revisions the kit's stdio server should serve on 2026-09-27: what changed between 2025-06-18 and 2025-11-25 for a tools-only server, and what version negotiation requires
 
 Started 2026-09-27. This file is the definition of "enough information to build".
-`node research-kit/bin/preflight.mjs` reads it and blocks the build until every unknown
+`node fetchproof/bin/preflight.mjs` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-The kit's MCP server (`research-kit/bin/mcp-server.mjs`, ADR-0034) serves protocol revisions
+The kit's MCP server (`fetchproof/bin/mcp-server.mjs`, ADR-0034) serves protocol revisions
 `2026-07-28` and `2025-11-25`. On the legacy `initialize` handshake it echoes a requested revision
 it serves, and answers anything else with `2025-11-25`. On 2026-09-27 a round trip from a cloud
 container asked for `2025-06-18` and got `2025-11-25` back. A client whose newest revision is

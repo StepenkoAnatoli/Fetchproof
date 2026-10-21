@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fetchproof/artifact-registry-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "benchmarkSpecVersion", "benchmarkSpecSha256", "roleRosterSha256", "artifacts"],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "benchmarkSpecVersion": { "const": "1.0.0" },
+    "benchmarkSpecSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "roleRosterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "externalRoots": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" } },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifactId", "package", "path", "schema", "ownerRoles", "visibility", "predecessors"],
+        "properties": {
+          "artifactId": { "type": "string", "enum": ["R28-01", "R28-02", "R28-03", "R28-04", "R29-01", "R29-02", "R29-03", "R29-04", "R29-05", "R29-06", "R30-01", "R30-02", "R30-03", "R30-04", "R30-05", "R31-01", "R31-02", "R31-03", "R31-04", "R31-05", "R32-01", "R32-02", "R32-03", "R32-04", "R32-05", "R32-06", "R32-07", "R33-01", "R33-02", "R33-03"] },
+          "package": { "type": "string", "enum": ["R28", "R29", "R30", "R31", "R32", "R33"] },
+          "path": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)[^\\\\]*$" },
+          "schema": { "type": "integer", "minimum": 1 },
+          "ownerRoles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "visibility": { "type": "string", "enum": ["candidate-visible", "grader-only"] },
+          "predecessors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "properties": {
+                "kind": { "type": "string", "enum": ["external", "artifact"] },
+                "id": { "type": "string", "minLength": 1 },
+                "artifactId": { "type": "string", "minLength": 1 },
+                "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              }
+            }
+          },
+          "pointer": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

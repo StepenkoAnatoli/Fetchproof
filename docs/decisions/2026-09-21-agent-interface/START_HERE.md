@@ -13,7 +13,7 @@ right interface?
 This is the first corpus collected **end to end by the Actions collector** and then taken
 through the three human review steps by an AI rather than by hand.
 
-1. `collect.yml` run [35600656154](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35600656154)
+1. `collect.yml` run [35600656154](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35600656154)
    on `windows-latest`, depth `quick`, one query. Three pages, all `full`.
 2. The package came back `HUMAN_REVIEW_REQUIRED`, `buildAuthorized: false`.
 3. Review: every map row judged, every Finding rewritten from the cached page, the
@@ -33,8 +33,8 @@ and says nothing about this one:
 
 ```
 cd docs/decisions/2026-09-21-agent-interface
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-21: `PASS  0 blocking, 2 warning(s), 17 passing` and

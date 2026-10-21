@@ -27,8 +27,8 @@ An authored unstamped brief keeps the existing approval path, with currency unkn
 
 Those phases usually run on **two machines**, and this kit knows which one it is on. The
 role is machine config - `role: "collector" | "builder"` in
-`~/.agents/research-kit.config.json`, default `collector`; declare it with
-`node research-kit/bin/install-hooks.mjs --role builder`.
+`~/.agents/fetchproof.config.json`, default `collector`; declare it with
+`node fetchproof/bin/install-hooks.mjs --role builder`.
 
 | | **collector machine** (the operator's PC) | **builder machine** (a sandbox, a CI box, a laptop) |
 |---|---|---|
@@ -52,7 +52,7 @@ git filters drop dotfiles; this repository lost its ledger exactly that way once
 builder's first command is:
 
 ```
-node research-kit/bin/handoff.mjs
+node fetchproof/bin/handoff.mjs
 ```
 
 It checks that the ledger is present and non-empty, that `research/EVIDENCE.md` is there with
@@ -76,7 +76,7 @@ machine:
 This repository ships that `.gitattributes` at its root, so the second case should not
 arise; `handoff.mjs` distinguishes the two anyway, because a project scaffolded before it
 did, or one cloned onto a machine with a hostile `core.autocrlf`, still can.
-`node research-kit/bin/doctor.mjs` reports the same thing on a builder, as a blocker.
+`node fetchproof/bin/doctor.mjs` reports the same thing on a builder, as a blocker.
 
 For Git builder requests (ADR-0148), a `collected` result delivers captures, not completed
 review. The builder reads and judges them and reports review-only gaps in prose; the
@@ -125,7 +125,7 @@ would leave one corpus asserting two unrelated sets of claims with `unknown-clos
 **Scaffold a nested project instead** (ADR-0030):
 
 ```
-node research-kit/bin/new-project.mjs docs/decisions/<date>-<decision-name> --topic "<question>"
+node fetchproof/bin/new-project.mjs docs/decisions/<date>-<decision-name> --topic "<question>"
 cd docs/decisions/<date>-<decision-name>
 ```
 
@@ -171,14 +171,14 @@ Before you propose a design or write code, the blocking unknowns must be closed 
 The sequence is decompose -> contract -> collect -> gate -> brief.
 
 0. Decompose the topic first (**collector machine** - phase 0 gathers material with
-   Firecrawl, so a builder machine refuses it): `node research-kit/bin/decompose.mjs` (the project's own topic, from `research/plan.json`; `--topic "<what is being researched>"` only while the project is untitled - a different topic is refused, ADR-0056) drafts `research/MAP.md` with the gathered material and the subtopic table SEEDED with the universal checklist (`research-kit/lib/dimensions.mjs`: access model, auth, rate limits, ToS/legality, schema stability, freshness, cost at volume, runtime limits, and output obtainability - the load-bearing one: if the data your "done" depends on cannot be obtained, the project dies in phase 1, not phase 2). The tool contains no judgment: it hands over a checklist with statuses blank, never an answer. A `--recipe` ADDS domain dimensions on top of the universal set - it never replaces it (a recipe that silently dropped legality would be worse than no recipe). Mark every row COVERED (cite the U-## rows that cover it), DISMISSED (reason required - dismissing is fine, omitting is not), or GAP, and add topic-specific subtopics where the checklist is not enough. A fact blocks the build when a wrong guess changes the design - API limits and pricing, auth model, data schemas, rate limits, licensing/ToS, platform behavior, current library versions, competitor pricing, data availability.
+   Firecrawl, so a builder machine refuses it): `node fetchproof/bin/decompose.mjs` (the project's own topic, from `research/plan.json`; `--topic "<what is being researched>"` only while the project is untitled - a different topic is refused, ADR-0056) drafts `research/MAP.md` with the gathered material and the subtopic table SEEDED with the universal checklist (`fetchproof/lib/dimensions.mjs`: access model, auth, rate limits, ToS/legality, schema stability, freshness, cost at volume, runtime limits, and output obtainability - the load-bearing one: if the data your "done" depends on cannot be obtained, the project dies in phase 1, not phase 2). The tool contains no judgment: it hands over a checklist with statuses blank, never an answer. A `--recipe` ADDS domain dimensions on top of the universal set - it never replaces it (a recipe that silently dropped legality would be worse than no recipe). Mark every row COVERED (cite the U-## rows that cover it), DISMISSED (reason required - dismissing is fine, omitting is not), or GAP, and add topic-specific subtopics where the checklist is not enough. A fact blocks the build when a wrong guess changes the design - API limits and pricing, auth model, data schemas, rate limits, licensing/ToS, platform behavior, current library versions, competitor pricing, data availability.
 1. Write the intent in `research/DISCOVERY.md` under `## Build intent`, and enumerate the blocking unknowns FROM the map - each unknown should trace back to a subtopic.
 
    A contract written without a map is allowed, but it makes no coverage claim, and the gate will say so: preflight prints one warn - "no coverage claim" - because it cannot tell a thorough contract from a shallow one. `subtopic-coverage` fails a GAP row, a reasonless DISMISSED row, and a COVERED row citing unknowns that do not exist.
 3. Collect primary evidence:
 
    ```
-   node research-kit/bin/research.mjs --plan research/plan.json
+   node fetchproof/bin/research.mjs --plan research/plan.json
    ```
 
    Prefer the page that *owns* the fact (official docs, repo, pricing page, statute) over any write-up about it. Raw page text is cached under `research/raw/`; rows are appended to `research/EVIDENCE.md`.
@@ -186,7 +186,7 @@ The sequence is decompose -> contract -> collect -> gate -> brief.
 5. Run the gate:
 
    ```
-   node research-kit/bin/preflight.mjs
+   node fetchproof/bin/preflight.mjs
    ```
 
    **Do not start building until it prints PASS.** A failed check names exactly which unknown is unproven.
@@ -211,7 +211,7 @@ The sequence is decompose -> contract -> collect -> gate -> brief.
    gate for exactly that reason). The last two are recorded in
    `research/overrides.log` - a local log on the machine that took the
    override, never committed (ADR-0081) - and
-   `node research-kit/bin/doctor.mjs`
+   `node fetchproof/bin/doctor.mjs`
    reports how many times each has been used; `--no-verify` skips the hook, and
    a hook git did not run records nothing, so that one is accounted for by your
    reply alone. If you take an override, say so in
@@ -275,7 +275,7 @@ Plan the queries in `research/plan.json` before collecting, reuse the cache
 (`--refresh-days`), and check the budget with:
 
 ```
-node research-kit/bin/research.mjs --status
+node fetchproof/bin/research.mjs --status
 ```
 
 When the account runs out mid-run, the run stops and exits 2 with what is left (ADR-0129).
@@ -376,7 +376,7 @@ review and by the record these rules produce.
    summary.
 
    In the kit's own repository this rule is enforced (ADR-0120): the commit gate runs
-   the suite for any commit that stages something under `research-kit/`, and blocks
+   the suite for any commit that stages something under `fetchproof/`, and blocks
    while it is red. A docs-only commit owes nothing, an unsupported test is not red, and
    `git commit --no-verify` still goes through, and records nothing. Projects built on the kit carry
    this rule as prose, because the check does not apply to them.
@@ -391,12 +391,12 @@ reviews under `docs/`, and the terms the rules are named in, in
 For an agent that plans and delegates work on this repository (recorded 2026-10-03; correct
 what has gone stale).
 
-- **Gate.** `node research-kit/bin/selftest.mjs` (the offline suite, about 150 s on CI and 25 to
-  30 minutes on the operator's Windows PC - 1409 to 1825 s measured, ADR-0142; a group by file name, e.g. `selftest.mjs checks transport`), `node research-kit/bin/preflight.mjs`
-  (the research gate on the root corpus: PASS), `node research-kit/bin/handoff.mjs` (exit 0),
-  `node research-kit/bin/doctor.mjs` (READY). The commit gate runs the suite for any commit
-  that stages `research-kit/` and refuses a stale "N tests, offline" line in
-  `research-kit/README.md` and a missing `docs/ARCHITECTURE.md` beside a `lib/`, `bin/`,
+- **Gate.** `node fetchproof/bin/selftest.mjs` (the offline suite, about 150 s on CI and 25 to
+  30 minutes on the operator's Windows PC - 1409 to 1825 s measured, ADR-0142; a group by file name, e.g. `selftest.mjs checks transport`), `node fetchproof/bin/preflight.mjs`
+  (the research gate on the root corpus: PASS), `node fetchproof/bin/handoff.mjs` (exit 0),
+  `node fetchproof/bin/doctor.mjs` (READY). The commit gate runs the suite for any commit
+  that stages `fetchproof/` and refuses a stale "N tests, offline" line in
+  `fetchproof/README.md` and a missing `docs/ARCHITECTURE.md` beside a `lib/`, `bin/`,
   `hooks/` or `githooks/` change. CI runs the same suite on ubuntu, ubuntu-26.04 and windows,
   on Node 24 and 26, plus an archive-tree check: seven jobs, all required.
 - **Baseline.** `main` is green on all seven jobs. One intermittent failure is on record: on
@@ -416,7 +416,7 @@ what has gone stale).
   a package's `buildAuthorized` is derived, never supplied; captures are written only by the
   collector; no key is ever written into the repository; the root corpus and every project
   under `docs/decisions/` keep a passing gate.
-- **Research-Kit.** This repository is the kit; record `doctor`'s actual verdict and chosen
+- **Fetchproof.** This repository is the kit; record `doctor`'s actual verdict and chosen
   transport for the intended machine. ADR-0095 permits a chosen keyless collector;
   readiness is not inferred from key presence. A decision about the kit itself is a
   nested project under `docs/decisions/<date>-<slug>/research/` (ADR-0030), committed with

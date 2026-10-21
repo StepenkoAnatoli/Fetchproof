@@ -9,7 +9,7 @@ This generated file is the navigation and integrity index for this ZIP. The othe
 > being broken. A hash file rewritten whenever it disagrees with reality records nothing.
 >
 > To see how far this repository has moved from the archive, and whether each change was
-> expected: `node research-kit/bin/bundle.mjs`
+> expected: `node fetchproof/bin/bundle.mjs`
 
 ## Exact authoritative reading order
 
@@ -41,7 +41,7 @@ This generated file is the navigation and integrity index for this ZIP. The othe
 
 ## Inclusion boundary
 
-The bundle contains the same 79 source paths as its predecessor plus this generated index. Source bytes are unchanged. Deliberately absent: `research/raw/**`, `research/audits/**`, `research-kit/**`, `node_modules/**`, implementation code, schemas, dependencies, rendered outputs, blank worksheets, sign-off forms, roll-up sheets, execution/evidence packets, recovery templates, credentials, and secret-bearing files.
+The bundle contains the same 79 source paths as its predecessor plus this generated index. Source bytes are unchanged. Deliberately absent: `research/raw/**`, `research/audits/**`, `fetchproof/**`, `node_modules/**`, implementation code, schemas, dependencies, rendered outputs, blank worksheets, sign-off forms, roll-up sheets, execution/evidence packets, recovery templates, credentials, and secret-bearing files.
 
 ## Unresolved-reference classification
 
@@ -78,6 +78,8 @@ These targets exist in the checkout but are outside this planning-only archive.
 - `docs/superpowers/specs/2026-09-16-researcher-v3-schema-drift-policy.md` -> `docs/superpowers/specs/2026-09-16-researcher-v3-schema-drift-signoff-form.md` [occurrences: 1]
 
 #### Implementation, schema, or test artifacts (11 pairs)
+
+The documents name the kit folder `research-kit/`, which ADR-0186 renamed `fetchproof/`; the pairs keep the documents' spelling, as their bytes are kept.
 
 - `docs/researcher-review-2026-09-16.md` -> `docs/audit-2026-09-16-probes.mjs` [occurrences: 1]
 - `docs/superpowers/specs/2026-09-16-researcher-benchmark-gold-lock-migration-gate.md` -> `research-kit/schemas/trap-register.schema.json` [occurrences: 2]

@@ -9,7 +9,7 @@
 Phase 0 made four searches: the topic, then the topic followed by "documentation",
 "pricing limits" and "terms of service". On 2026-09-28 the kit mapped MoonAliza's open gaps
 under the topic "MoonAliza open gaps: accurate context accounting across providers, native
-SQLite in the packaged Electron app, Research Kit redistribution rights". Searched whole,
+SQLite in the packaged Electron app, Fetchproof redistribution rights". Searched whole,
 the three unrelated questions matched nothing together. The map's candidates were forum
 threads, magazine PDFs and a coffee-scale blog, and the plan had to name every page by
 hand.

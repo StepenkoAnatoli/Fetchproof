@@ -1,4 +1,4 @@
-# Brief - Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Research-Kit ship for builders and collectors?
+# Brief - Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Fetchproof ship for builders and collectors?
 
 _Auto-drafted 2026-10-06 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -24,7 +24,7 @@ preflight after edits; this list is not a fresh evaluation of the resulting docu
 - **transport-provenance/transport-not-metered** (E-06): E-06 was collected by "http-keyless", not the metered Firecrawl CLI
 - **transport-provenance/transport-not-metered** (E-07): E-07 was collected by "http-keyless", not the metered Firecrawl CLI
 - **transport-provenance/transport-not-metered** (E-08): E-08 was collected by "http-keyless", not the metered Firecrawl CLI
-- **gate-integrity/local-hooks-path**: this repository sets core.hooksPath=/home/runner/work/Research-Kit/Research-Kit/.git/copilot-hooks, which displaces the machine-wide commit gate
+- **gate-integrity/local-hooks-path**: this repository sets core.hooksPath=/home/runner/work/Fetchproof/Fetchproof/.git/copilot-hooks, which displaces the machine-wide commit gate
 - **collection-attempts/unknown-attempted** (U-07): U-07 is KNOWN-UNKNOWN with no recorded fetch attempt - an unreachable fact should have been reached for
 - **corroboration/single-source** (U-01): U-01 rests on E-01 alone - one reading, so a correct source and a lucky one look the same
 - **corroboration/single-source** (U-02): U-02 rests on E-02 alone - one reading, so a correct source and a lucky one look the same
@@ -49,7 +49,7 @@ prior that was recorded in advance is worth more than a right one remembered aft
 
 ## Intent
 
-Research-Kit ships a skill set beside `research-first`: the owner's skills from
+Fetchproof ships a skill set beside `research-first`: the owner's skills from
 StepenkoAnatoli/SkillsMDs (pinned at commit 3f2d2fc6627d63ea93ff97d4d33845a753db16cc),
 a set of kit-authored phase skills, and a `skill-router` that sends an agent to a skill by
 the machine's role and the project's gate state - never a builder to a skill that
@@ -69,9 +69,9 @@ own build; this project only decides what to ship and why.
 | Clients discover skills by scanning each skills root for subdirectories that contain a file named exactly SKILL.md; a skill nested inside another skill's directory is not a sibling and is not the documented shape. The `.agents/skills/` path is described as a widely adopted cross-client convention - a contradiction with ADR-0006's 2026-09-13 finding, recorded in the brief. [quote: Within each skills directory, look for **subdirectories containing a file named exactly `SKILL.md`**:] | E-03 `raw.githubusercontent.com` (U-03) | P |
 | lead-orchestrator is the routing skill: it chooses the model per sub-agent (most capable by default, a faster one only where capability cannot affect correctness), keeps builders from re-researching, and forbids gate bypass. It names two bundled references, references/research-kit.md and references/agent-briefs.md, that are not under those names at the pinned commit. [quote: - Never bypass a gate: no `--no-verify`, no gate-off files, no hand-written evidence.] | E-04 `raw.githubusercontent.com` (U-04, U-05, U-06) | P |
 | auto-build routes between skills rather than models: it composes lead-orchestrator, brainstorming, break-test, gap-audit and four-dimension-audit, and lists --no-verify among the things it never does. Its frontmatter name `auto-build` matches its directory. [quote: Composes lead-orchestrator, brainstorming, break-test, gap-audit and four-dimension-audit; never replaces them.] | E-06 `raw.githubusercontent.com` (U-04, U-05, U-08) | P |
-| break-test closes external facts through Research-Kit and, when the kit is not deployed, runs it from the checkout with the keyless transport - a collection step, which a builder machine refuses (exit 2). [quote: `RESEARCH_KIT_TRANSPORT=http-keyless`) and say so in the report] | E-07 `raw.githubusercontent.com` (U-04, U-08) | P |
+| break-test closes external facts through Fetchproof and, when the kit is not deployed, runs it from the checkout with the keyless transport - a collection step, which a builder machine refuses (exit 2). [quote: `RESEARCH_KIT_TRANSPORT=http-keyless`) and say so in the report] | E-07 `raw.githubusercontent.com` (U-04, U-08) | P |
 | agent-briefsv2.md is the brief-template file lead-orchestrator calls references/agent-briefs.md: its preamble defers model choice to that skill's rule. Vendoring must rename it to the path the skill names. [quote: the lead selects the model for the agent according to the rule in SKILL.md ("Model selection] | E-05 `raw.githubusercontent.com` (U-05, U-06) | P |
-| break-test's Research-Kit reference describes scaffolding, decomposing and collecting a nested project during a break test - phase-1 work that belongs to a collector, so a router must not send a builder there. [quote: export RESEARCH_KIT_TRANSPORT=http-keyless] | E-08 `raw.githubusercontent.com` (U-08) | P |
+| break-test's Fetchproof reference describes scaffolding, decomposing and collecting a nested project during a break test - phase-1 work that belongs to a collector, so a router must not send a builder there. [quote: export RESEARCH_KIT_TRANSPORT=http-keyless] | E-08 `raw.githubusercontent.com` (U-08) | P |
 
 ## Contradictions and how they were resolved
 
@@ -104,7 +104,7 @@ own build; this project only decides what to ship and why.
 
 ## Decision
 
-Ship, under `research-kit/skills/<name>/` (sibling directories, E-03 - not inside
+Ship, under `fetchproof/skills/<name>/` (sibling directories, E-03 - not inside
 `research-first`, which deploys to its own directory):
 
 1. **The SkillsMDs skills, vendored as received**, Apache-2.0 (E-01) with
@@ -138,8 +138,7 @@ anchored skill root (see Contradictions).
 ## Next steps
 
 1. Review the **TODO** sections above (Contradictions, Decision) before handing off.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=ae2be03631733176 inputs=ea2a7120f0659b35 gate=pass -->
+<!-- fetchproof:brief-draft body=60bb8b0121b2bafc inputs=e2de9fa723fb2121 gate=pass -->
