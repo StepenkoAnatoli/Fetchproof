@@ -8,7 +8,7 @@
 
 ## Context
 
-The 2026-10-10 audit measured the kit's size - at its head, `research-kit/**/*.mjs` excluding
+The 2026-10-10 audit measured the kit's size - at its head, `fetchproof/**/*.mjs` excluding
 `test` and `examples` path components was 93 files and 25,565 physical lines (blanks and
 comments included), and there were 150 numbered ADRs - and observed that scope makes
 adoption harder. It sketched a boundary: keep the collection plan, cached captures and ledger,

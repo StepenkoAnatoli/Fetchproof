@@ -2,7 +2,7 @@
 
 ## Topic
 
-Measuring the research kit: citation accuracy metrics from deep research benchmarks
+Measuring Fetchproof: citation accuracy metrics from deep research benchmarks
 
 ## Subtopics
 

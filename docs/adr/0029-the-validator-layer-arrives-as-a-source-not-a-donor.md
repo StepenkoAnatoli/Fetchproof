@@ -13,7 +13,7 @@ defined against sealed records, signed promotion pointers, gold worksheets and e
 packets that this archive excludes by policy". That was true of the archive.
 
 It is not true of the machine. An inventory on 2026-09-20 found the layer **built** at
-`FreeBuff/Deep-Research-Agent-main/research-kit`:
+`FreeBuff/Deep-Research-Agent-main/fetchproof`:
 
 | | |
 |---|---|
@@ -95,7 +95,7 @@ gave was that the artifacts were unavailable, and they are on this machine.
   tests use that this harness lacks. They are five and three lines.
 - The ported tests do not call `describe()`; each gains one, so the runner attributes them
   to the right file instead of to whichever file ran last.
-- `research-kit/README.md` stops saying the layer is unbuilt, when it stops being true —
+- `fetchproof/README.md` stops saying the layer is unbuilt, when it stops being true —
   and not before.
 - ADR-0022 keeps its decision about *everything else* it deferred. This discharges it only
   for the four modules named above.

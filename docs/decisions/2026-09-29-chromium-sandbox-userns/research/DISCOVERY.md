@@ -1,7 +1,7 @@
 # Discovery Contract - Chromium's sandbox on Ubuntu 23.10+: why it fails under AppArmor's unprivileged user namespace restriction, and the supported ways to run headless Chromium there
 
 Started 2026-09-29. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

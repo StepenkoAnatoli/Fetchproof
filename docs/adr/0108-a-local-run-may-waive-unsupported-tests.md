@@ -17,15 +17,15 @@ cross-language runners. The operator asked for an opt-in.
 
 ## Decision
 
-- **`RESEARCH_KIT_ALLOW_UNSUP=1`** lets a run exit 0 when its only blockers are unsupported
+- **`FETCHPROOF_ALLOW_UNSUP=1`** lets a run exit 0 when its only blockers are unsupported
   tests. A failed test is never waived.
 - **It says so.** Each unsupported test is still listed, the last line reads
   `NOT a full pass: ... could not run on this host` instead of `all tests passed`, and the
   result file carries `unsupportedWaived: true`.
 - **CI ignores it.** When `CI` is set (and not `false`), the opt-in has no effect and the run
-  says `RESEARCH_KIT_ALLOW_UNSUP is ignored in CI`, so the merge check still blocks on a
+  says `FETCHPROOF_ALLOW_UNSUP is ignored in CI`, so the merge check still blocks on a
   missing interpreter.
-- **Tested on every platform** with a harness-only switch, `RESEARCH_KIT_TEST_NO_PYTHON=1`,
+- **Tested on every platform** with a harness-only switch, `FETCHPROOF_TEST_NO_PYTHON=1`,
   which makes `findPython` report none. It lives in test code, not in the kit.
 
 ## Rejected alternatives

@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-17
 - **Status:** accepted
-- **Area:** `research-kit/lib/warc.mjs`, `research-kit/bin/export-warc.mjs` (ADR-0090). A fix
+- **Area:** `fetchproof/lib/warc.mjs`, `fetchproof/bin/export-warc.mjs` (ADR-0090). A fix
   to the export's own integrity, not a new capability: it adds no command, flag, transport,
   provider, configuration key or check.
 - **Freeze:** lifts the feature freeze (ADR-0117) for the one `metadata` field

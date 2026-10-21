@@ -2,7 +2,7 @@
 
 ## Topic
 
-How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Research-Kit's evidence rows, corroboration and URL identity
+How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Fetchproof's evidence rows, corroboration and URL identity
 
 ## Subtopics
 

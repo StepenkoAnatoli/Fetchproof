@@ -1,12 +1,12 @@
 # Discovery Contract - Does the kit measurably beat a strongly prompted agent with the same tools and budget?
 
 Started 2026-10-06. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Answer, for the owner, whether Research-Kit measurably beats a strongly prompted agent
+Answer, for the owner, whether Fetchproof measurably beats a strongly prompted agent
 given the same browsing, file, and testing tools, the same models, and the same total
 budget (ADR-0145). The deliverable is the evaluation itself: a frozen protocol and
 per-task grading rubrics committed before any trial (`research/PROTOCOL.md`), then

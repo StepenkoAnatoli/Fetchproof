@@ -192,7 +192,7 @@ now call the same `fetchCorpus`.
   reliably reads before calling, and a test asserts the warning is present.
 - `new-project.mjs` gains `--kit`, and `collect.yml` passes the documented install location
   rather than the runner's resolved one. Found by reading a real returned corpus: every
-  package the collector produced carried `C:\Users\runneradmin\.agents\research-kit`, a
+  package the collector produced carried `C:\Users\runneradmin\.agents\fetchproof`, a
   path that existed on nothing but that runner, for the ten minutes it lived.
 
 ## What this ADR does not claim

@@ -1,5 +1,5 @@
 {
-  "topic": "Which licence should Research-Kit publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it",
+  "topic": "Which licence should Fetchproof publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it",
   "notes": "Phase 0's searches found Apple's ResearchKit and Google's cached-page operator; its three scrapes carry nothing. These are the owner pages, named by hand: GitHub's terms and licensing docs, the licence texts themselves, the content licences of the most-cached hosts, the statute and the archives' terms.",
   "depth": "deep",
   "refreshDays": 30,

@@ -11,7 +11,7 @@
 
 ADR-0155 repaired how an explicit refusal of this machine's network is applied and left one
 policy question open, with a named trigger: whether direct internal access by default should
-require the explicit opt-in `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=1` - that is, whether a
+require the explicit opt-in `FETCHPROOF_ALLOW_INTERNAL_REDIRECTS=1` - that is, whether a
 planned or searched URL that is itself internal (`http://10.0.0.5/`, `http://localhost:8080/`)
 should still be read as the operator's statement and fetched, as ADR-0110 decided. The
 2026-10-10 audit raised the same question as the fourth of its repair questions for the URL

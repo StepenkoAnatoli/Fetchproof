@@ -30,7 +30,7 @@ became a repository, which was the point of unpacking it.
 
 **The trade was backwards.** ADR-0022 said the exception protected a checkable property
 against an unverifiable one. The opposite is true, and it is measurable: *nothing in this
-kit has ever read `BUNDLE_INDEX.md`* — `grep -rn BUNDLE_INDEX research-kit/` returns
+kit has ever read `BUNDLE_INDEX.md`* — `grep -rn BUNDLE_INDEX fetchproof/` returns
 nothing, so those digests had never once been verified by anything. Meanwhile the
 same-commit map rule **is** checked, mechanically, on every commit, by the gate this
 project ships. The exception suspended the property that was being enforced in order to
@@ -75,7 +75,7 @@ thing the manifest is good for. A hash file that is rewritten whenever it disagr
 reality records nothing — it can never fail, so it can never tell you anything. Frozen,
 it answers a real question: what did we actually receive?
 
-**Drop `research-kit/lib` from the gate's guarded paths.** This was the other way to stop
+**Drop `fetchproof/lib` from the gate's guarded paths.** This was the other way to stop
 the blocking, and it is the worse one by exactly the evidence above: the rule caught four
 genuine documentation errors in three days. Removing a working check to avoid an
 inconvenient exception is how a gate becomes decoration.

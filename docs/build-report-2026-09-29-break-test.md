@@ -22,7 +22,7 @@ the *previous* implementation, and the string of break-tests recorded in the ADR
 **How the build is run.** One command, offline, no key and no network:
 
 ```
-node research-kit/bin/selftest.mjs
+node fetchproof/bin/selftest.mjs
 ```
 
 CI adds `preflight`, the release-evidence examples, the Node/Python cross-language
@@ -77,7 +77,7 @@ single-byte edit and every reordered or duplicated line was caught**.
 **Repro**
 
 ```
-node -e 'import("./research-kit/lib/firecrawl.mjs").then(m =>
+node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m =>
   m.normalizeSearch(String.raw`{"data":{"web":[{"url":"https://a.invalid"},null]}}`))'
 TypeError: Cannot read properties of null (reading 'url')
 ```
@@ -104,12 +104,12 @@ the whole search with it, and the collector reports a failed search rather than 
 **Repro**
 
 ```
-echo '{"cwd": 42, "tool_name": "Edit"}' | node research-kit/hooks/edit-gate.mjs
+echo '{"cwd": 42, "tool_name": "Edit"}' | node fetchproof/hooks/edit-gate.mjs
 TypeError [ERR_INVALID_ARG_TYPE]: The "paths[0]" argument must be of type string...
 exit 1, raw stack trace
 ```
 
-Also `echo 'null' | node research-kit/hooks/edit-gate.mjs` — `payload.cwd` and then
+Also `echo 'null' | node fetchproof/hooks/edit-gate.mjs` — `payload.cwd` and then
 `payload.tool_input` both threw on the literal null.
 
 **Root cause.** The payload is the *runtime's*, so its shape is not the kit's to guarantee,
@@ -132,7 +132,7 @@ path. Both guards, one line each, at the point of the read.
 **Repro**
 
 ```
-node research-kit/bin/selftest.mjs &     # Ctrl-C after ~10s
+node fetchproof/bin/selftest.mjs &     # Ctrl-C after ~10s
 110 scratch directories left in /tmp; 58 MB after an afternoon of interrupted runs
 ```
 
@@ -156,7 +156,7 @@ send it there.
 **Repro**
 
 ```
-HOME=/tmp/fresh-home node research-kit/bin/install.mjs --dry-run
+HOME=/tmp/fresh-home node fetchproof/bin/install.mjs --dry-run
 would prune: hooks/claude-pretooluse.mjs, hooks/claude-gate.mjs, lib/cli.mjs
 ```
 
@@ -177,7 +177,7 @@ running it).
 **Repro**
 
 ```
-node research-kit/bin/collect-remote.mjs --repository o/r --topic t --max-pages 8o
+node fetchproof/bin/collect-remote.mjs --repository o/r --topic t --max-pages 8o
 # reaches collect.yml as a string; the workflow's own guard refuses it there,
 # after the dispatch, as a failed run rather than as an answer
 ```

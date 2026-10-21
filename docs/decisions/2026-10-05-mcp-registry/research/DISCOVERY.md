@@ -1,12 +1,12 @@
-# Discovery Contract - How should Research-Kit be distributed and listed in the official MCP Registry?
+# Discovery Contract - How should Fetchproof be distributed and listed in the official MCP Registry?
 
 Started 2026-10-05. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Determine a supported way to list Research-Kit's existing stdio MCP server in the
+Determine a supported way to list Fetchproof's existing stdio MCP server in the
 official MCP Registry (registry.modelcontextprotocol.io), so developers using Claude
 Code, Cursor and VS Code can find it. The research deliverable is an evidence-backed
 decision and builder handoff covering distribution, Registry publication and client
@@ -16,8 +16,8 @@ or authorize a packaging design. Expected volume is one manually reviewed initia
 listing, not an aggregator or scheduled publication system.
 
 Starting assumptions supplied by the operator, not collected evidence: the Registry
-requires a server.json pointing to a published package; Research-Kit is not published;
-`npm view research-kit` returned 404 on 2026-10-05. Verify these against primary sources
+requires a server.json pointing to a published package; Fetchproof is not published;
+`npm view fetchproof` returned 404 on 2026-10-05. Verify these against primary sources
 during research rather than treating them as closed unknowns or choosing npm upfront.
 
 ## Unknowns
@@ -62,5 +62,5 @@ Locked decisions for this project. Do not revisit these without the human.
 - The feature freeze in ADR-0117 remains in force. Any implementation that requires
   lifting it needs an explicit ADR for that item after research, not an implicit
   exception in this scaffold.
-- Use the existing MCP server at `research-kit/bin/mcp-server.mjs` as the starting
+- Use the existing MCP server at `fetchproof/bin/mcp-server.mjs` as the starting
   point; do not include credentials in committed research or package metadata.

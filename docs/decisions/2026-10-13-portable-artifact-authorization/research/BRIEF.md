@@ -49,4 +49,4 @@ Extract the shared approval derivation to a module usable by producer and valida
 2. Add red-first forged-approval regressions and shared portable derivation with literal-profile checks; preserve the producer API and declared false package result.
 3. Run focused validator/producer/CLI tests, the required full commit gate and the supported CI matrix. Open a separate fix PR without merging.
 
-<!-- research-kit:brief-draft body=c8367a8dbc327ac8 inputs=50bf283cc764893e gate=pass -->
+<!-- fetchproof:brief-draft body=c8367a8dbc327ac8 inputs=50bf283cc764893e gate=pass -->

@@ -29,7 +29,7 @@ exist to obtain it without damaging the provenance guarantees the corpus rests o
 | FR-3 | A **fetch provider** implements the existing capture-producing contract (`scrape`, `runScrape`, `map`, `status`, `command`, `name`). Unchanged from today. | ADR-0005 |
 | FR-4 | `lib/serpapi.mjs` implements the search contract against SerpAPI's Google Search endpoint. | E-07, E-09 |
 | FR-5 | With no SerpAPI credential present, the search provider auto-resolves to the fetch provider, and behaviour is identical to today's. | [judgment] — an opt-in that changes the default is not an opt-in |
-| FR-6 | `--search-transport <name>` on `bin/research.mjs` and `bin/decompose.mjs` overrides selection; `RESEARCH_KIT_SEARCH_TRANSPORT` and a `searchTransport` machine-config key sit below it in precedence. | mirrors the existing `--transport` ladder |
+| FR-6 | `--search-transport <name>` on `bin/research.mjs` and `bin/decompose.mjs` overrides selection; `FETCHPROOF_SEARCH_TRANSPORT` and a `searchTransport` machine-config key sit below it in precedence. | mirrors the existing `--transport` ladder |
 | FR-7 | `doctor` reports the search provider as its own line: name, why it was chosen, and whether it is credentialled. | [judgment] — an unreported provider is an unaudited one |
 | FR-8 | `research.mjs --status` and `--dry-run` name both providers before spending anything. | E-07 (a free tier with a monthly cap deserves a preview) |
 | FR-9 | A search result carries which provider produced it, through to the `from:` field of any source it promotes. | [judgment] — see DR-2 |
@@ -90,7 +90,7 @@ exist to obtain it without damaging the provenance guarantees the corpus rests o
 
 | ID | Requirement | Trace |
 |---|---|---|
-| SR-1 | The API key is read from `SERPAPI_API_KEY` or the machine config at `~/.agents/research-kit.config.json`. It is **never** written into this repository, never into a capture, never into a log, never into `plan.json`. | Project Rule 6 |
+| SR-1 | The API key is read from `SERPAPI_API_KEY` or the machine config at `~/.agents/fetchproof.config.json`. It is **never** written into this repository, never into a capture, never into a log, never into `plan.json`. | Project Rule 6 |
 | SR-2 | The key travels in the POST-equivalent position the vendor requires — a query parameter — and therefore **must not** be echoed. Every rendering of the request for humans (`--dry-run`, the `cmd` annotation, error text) redacts it. | SR-1 |
 | SR-3 | A failed request's error text is scrubbed of the key before it reaches a log or the terminal. Vendors echo request URLs in errors. | SR-2 |
 | SR-4 | `doctor`'s secret scan continues to pass over the whole repo with no new exclusion. A fixture that needs a key-shaped string assembles it at runtime. | existing hardening decision |
@@ -123,7 +123,7 @@ exist to obtain it without damaging the provenance guarantees the corpus rests o
 
 | ID | Criterion | Verified by |
 |---|---|---|
-| AC-1 | `node research-kit/bin/selftest.mjs` passes with the new tests, and the existing 348 still pass. | Phase C |
+| AC-1 | `node fetchproof/bin/selftest.mjs` passes with the new tests, and the existing 348 still pass. | Phase C |
 | AC-2 | With no key: `doctor` reports one provider doing both jobs, and a dry run is unchanged. | TR-8 |
 | AC-3 | With a key: `doctor` reports two providers, and a real run spends SerpAPI searches and Firecrawl scrapes — confirmed against both meters, before and after. | live run, Phase C |
 | AC-4 | `preflight` still PASSes and the ledger chain still verifies after a two-provider run. | DR-3 |

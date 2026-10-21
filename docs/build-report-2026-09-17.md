@@ -7,7 +7,7 @@ still be able to read it.
 
 ## What changed
 
-`research-kit/` was built from nothing — this checkout was the planning bundle, and
+`fetchproof/` was built from nothing — this checkout was the planning bundle, and
 `BUNDLE_INDEX.md` states that implementation code is outside its inclusion boundary.
 
 **26 modules under `lib/`** (24 modules plus the two compatibility shims):
@@ -67,7 +67,7 @@ markers, and which module owns which decision.
 
 ## What it touched
 
-- **New files:** everything under `research-kit/`, plus `.gitattributes` and
+- **New files:** everything under `fetchproof/`, plus `.gitattributes` and
   `research/kit.json` at the repository root.
 - **ADR owed and written:** [ADR-0022](adr/0022-build-the-protocol-kit-first-defer-the-release-evidence-validators.md)
   — the release-evidence validator layer (R28–R33, the FI workbook join, path-authority
@@ -92,7 +92,7 @@ markers, and which module owns which decision.
 ## What I verified
 
 ```
-node research-kit/bin/selftest.mjs
+node fetchproof/bin/selftest.mjs
 265 passed, 0 failed in 30.1s (watchdog 60000ms/test)
 ```
 

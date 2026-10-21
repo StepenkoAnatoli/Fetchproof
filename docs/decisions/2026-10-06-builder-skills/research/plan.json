@@ -1,5 +1,5 @@
 {
-  "topic": "Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Research-Kit ship for builders and collectors?",
+  "topic": "Which skills from StepenkoAnatoli/SkillsMDs, plus a role-aware router, should Fetchproof ship for builders and collectors?",
   "notes": "Primary owners only: the SkillsMDs repository pinned at commit 3f2d2fc6627d63ea93ff97d4d33845a753db16cc, and the Agent Skills specification repository. No search: every page is named. The .skill files are zip archives and are attempted once (careful-coding.skill) to record whether a text transport can read one; see U-07.",
   "depth": "normal",
   "refreshDays": 30,
@@ -38,7 +38,7 @@
     },
     {
       "url": "https://raw.githubusercontent.com/StepenkoAnatoli/SkillsMDs/3f2d2fc6627d63ea93ff97d4d33845a753db16cc/break-test-20261006T054659Z-1-001/break-test/SKILL.md",
-      "why": "U-04 break-test's Research-Kit binding"
+      "why": "U-04 break-test's Fetchproof binding"
     },
     {
       "url": "https://raw.githubusercontent.com/StepenkoAnatoli/SkillsMDs/3f2d2fc6627d63ea93ff97d4d33845a753db16cc/break-test-20261006T054659Z-1-001/break-test/references/research-kit.md",

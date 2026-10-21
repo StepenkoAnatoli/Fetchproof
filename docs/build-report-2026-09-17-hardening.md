@@ -14,7 +14,7 @@ test contract for the core kit that the first pass had not read either.
 
 Eleven of the review's twenty-seven confirmed findings were **reproduced by execution**
 in the new build. All eleven are now fixed, each pinned by a test in the new
-`research-kit/test/hardening.test.mjs` (30 tests, named by F-number).
+`fetchproof/test/hardening.test.mjs` (30 tests, named by F-number).
 
 | Finding | What it was | What it is now |
 |---|---|---|
@@ -32,7 +32,7 @@ in the new build. All eleven are now fixed, each pinned by a test in the new
 
 Also fixed, from the path-precedence contract and from the suite itself:
 
-- **`RESEARCH_KIT_HOME`** is now honoured by `lib/machine.mjs` (`kitHome`, `agentsHome`),
+- **`FETCHPROOF_HOME`** is now honoured by `lib/machine.mjs` (`kitHome`, `agentsHome`),
   not only by the shell hook — the two no longer disagree about where the kit lives.
 - **An explicit argument** outranks the environment variable in `configPath`.
 - **A secret scan** in `doctor` (8 credential patterns, **dotfiles included**), reporting
@@ -82,7 +82,7 @@ defect as intended behaviour*. Finding the review is what made a second pass wor
 ## What I verified
 
 ```
-node research-kit/bin/selftest.mjs
+node fetchproof/bin/selftest.mjs
 300 passed, 0 failed in 24.4s (watchdog 60000ms/test)
 ```
 
@@ -97,7 +97,7 @@ F10 FIXED  refused: resolves outside            F20a FIXED  NaN budget refused, 
 F15 FIXED  refused; v0.1 intact                 F20b FIXED  failed searches recorded: 4, gathered=false
 F22 FIXED  URL cell holds the URL               F04  FIXED  graded partial, omitted named
 F06 FIXED  bumped to v0.2                       F24  FIXED  type="S"
-F27 FIXED  no destructive command               PP-1 FIXED  kitHome honours RESEARCH_KIT_HOME
+F27 FIXED  no destructive command               PP-1 FIXED  kitHome honours FETCHPROOF_HOME
 ```
 
 End to end afterwards: `preflight` PASS (11 checks), `brief` states the gate verdict,

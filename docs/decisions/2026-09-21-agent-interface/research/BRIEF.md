@@ -16,7 +16,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Decide whether Research-Kit should expose its collector as a **Model Context Protocol
+Decide whether Fetchproof should expose its collector as a **Model Context Protocol
 server**, and if so on which transport, or whether the REST-and-CLI seam that already
 exists (`bin/collect-remote.mjs`, `lib/dispatch.mjs`) is the right interface for an agent.
 

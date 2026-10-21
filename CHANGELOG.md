@@ -1,10 +1,58 @@
 # Changelog
 
-Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
-`research-kit/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
+Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
+`fetchproof/lib/core.mjs`; a release is tagged `v<version>` (ADR-0116).
 
 ## Unreleased
 
+- **Breaking: the kit is renamed Fetchproof** (ADR-0186). The folder `research-kit/` is now
+  `fetchproof/`, so every command is `node fetchproof/bin/<script>`; the deployed kit lives in
+  `~/.agents/fetchproof`, its machine configuration in `~/.agents/fetchproof.config.json`, and every
+  `RESEARCH_KIT_*` environment variable is `FETCHPROOF_*`. Packages declare the format
+  `fetchproof-artifact`, the accounting packet is `fetchproof-accounting`, the MCP server is named
+  `fetchproof`, and the collector's artifacts are `fetchproof-corpus-v1-*`. The old names are not
+  read as fallbacks. To migrate a machine, in this order:
+  1. Remove the old gates with the old kit, before installing the new one:
+     `node "$HOME/.agents/research-kit/bin/install-hooks.mjs" --uninstall`. The new installer knows
+     its own earlier gate by the header `fetchproof commit gate`; the old hook's header says
+     `research-kit`, so installing over it records the old gate as a foreign hook folder and runs
+     it after the new one on every commit.
+  2. Rename the three files the old kit kept beside it: `~/.agents/research-kit.config.json` to
+     `~/.agents/fetchproof.config.json`, `~/.agents/research-kit.install.json` to
+     `~/.agents/fetchproof.install.json` (it records the skills and projects the kit installed into;
+     without it the new install leaves the old copies of those skills as somebody else's), and
+     `~/.agents/research-kit.autocollect.json` to `~/.agents/fetchproof.autocollect.json` (the
+     auto-collect settings and daily meter); each file is there only if the old kit wrote it. Rename
+     any `RESEARCH_KIT_*` variable you set to `FETCHPROOF_*`.
+  3. Clone `https://github.com/StepenkoAnatoli/Fetchproof` and run `node fetchproof/bin/install.mjs`,
+     then `node fetchproof/bin/install-hooks.mjs`, then `node fetchproof/bin/doctor.mjs` until it
+     says `READY`. Delete `~/.agents/research-kit`, and `~/.agents/research-kit.config.json.last-good`
+     if it is there: it is the old kit's copy of its configuration, and the new kit keeps its own.
+  4. In an MCP client's configuration, point the server at `~/.agents/fetchproof/bin/mcp-server.mjs`,
+     and rename any `RESEARCH_KIT_*` key in its `env` block to `FETCHPROOF_*`: the server reads its
+     token from `FETCHPROOF_GITHUB_TOKEN` or `GITHUB_TOKEN`, not `RESEARCH_KIT_GITHUB_TOKEN`.
+  5. In each project an older kit scaffolded, change the kit's folder in the path the scaffold
+     wrote, `.agents/research-kit`, to `.agents/fetchproof`. On Windows the path is spelled
+     `.agents\research-kit`, and `.agents\\research-kit` inside `research/kit.json`; a project made
+     with `--kit` holds the spelling it was given. The path is in `research/kit.json` (`kitPath`),
+     `AGENTS.md`, `START_HERE.md`, `research/DISCOVERY.md`, `research/MAP.md` and
+     `research/TIMELINE.md`; none of those lines is an input of a brief's stamp. In
+     `research/BRIEF.md`, replace `research-kit:brief` with `fetchproof:brief`; the hashes in a
+     draft stamp cover the text above it, so the stamp stays valid. A drafted brief's next steps
+     keep the old command until the brief is drafted again; editing them by hand marks the brief
+     edited. Leave `research/raw/` as it is.
+  6. In a repository that runs `collect.yml`, rename the GitHub environment variable
+     `RESEARCH_KIT_COLLECTION_ENV` to `FETCHPROOF_COLLECTION_ENV` (and `RESEARCH_KIT_LIVE_ENV` to
+     `FETCHPROOF_LIVE_ENV` for `live-collection.yml`).
+  A `research-kit-commit-*` folder in the system temp folder is a checkout copy the old gate left
+  when a commit was interrupted; the new gate sweeps only its own `fetchproof-commit-*` folders, so
+  delete old ones by hand. The kit's other temporary folders now start with `fp-` (`fp-render-*`
+  for a render); an `rk-render-*` or `rk-netlog-*` folder there was left by an older kit and can
+  be deleted by hand.
+  A package written by an older kit declares `research-kit-artifact` and is refused; package the
+  corpus again with the new kit. A package's ID starts with `FP-` (was `RK-`). The schemas' identifiers are `fetchproof/<name>-v1`, and an FI
+  sidecar conformance packet must name `fetchproof/fi-signoff-sidecar-v1` and
+  `fetchproof/fi-evidence-manifest-v1`.
 - Moving the top level's project below it - `git mv research packages/x/research`, turning a
   one-project repository into the nested layout - commits again. The gate counted the top level as
   always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
@@ -46,14 +94,14 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
 - A browser render no longer leaves its profile or its net log in the temp folder. Chromium
   ran without `--user-data-dir`, so each render left a `HeadlessChrome*` profile there - killed
   or not, on the operator's PC - and a guard child the transport killed at its allowance never
-  removed its `rk-netlog-*` folder: 1841 profiles (656 MB) and 72 net-log folders had built up
-  in `%TEMP%` there. Each render now has one `rk-render-` folder, made by the transport,
+  removed its `fp-netlog-*` folder: 1841 profiles (656 MB) and 72 net-log folders had built up
+  in `%TEMP%` there. Each render now has one `fp-render-` folder, made by the transport,
   holding the profile (`--user-data-dir`) and the net log; the guard child removes it, and the
   transport removes it again once the child is gone, however it ended. A removal Windows holds
   is retried for about 1.6 s, and a folder that will not go is left without changing the
   render's result (ADR-0185, break-test of the 2026-10-19 review, B1). Folders already in the
   temp folder stay; remove them while no headless Chrome is running, e.g.
-  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/rk-netlog-*` on Windows.
+  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/fp-netlog-*` on Windows.
 - A commit that removes a project's `research/` is judged by #312's rule again. `rm -rf research
   && git add -A` at the top level left no gate marker, so the gate answered not-gated and the
   commit took the corpus and turned the gate off with no record; `git rm -r research`, with the
@@ -354,7 +402,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   and either one without `--ledger` is refused as INCOMPLETE instead of ignored.
 
 - Under an explicit refusal of this machine's network (`allowInternalRedirects: false`,
-  or `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
+  or `FETCHPROOF_ALLOW_INTERNAL_REDIRECTS=0`) a name asked for is now judged by what it
   resolves to - at the browser guard even when it is the page's own host, and before any
   fetch or browser launch - so a resolver cannot turn the page asked for into this
   machine's network (ADR-0155). A literal address the caller spelled out, and the default
@@ -410,7 +458,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   URL fragment guard every request. `transport.mjs` exposes `SEARCH_KEY` so the vendor stays
   named only in the registry.
 - The kit ships a skill set and a role-aware router (ADR-0146, lifting the freeze for that
-  one item): `research-kit/skills/<name>/`, deployed by `install.mjs` to every skill root
+  one item): `fetchproof/skills/<name>/`, deployed by `install.mjs` to every skill root
   beside research-first and `--into` a project. Ten skill directories are vendored from
   StepenkoAnatoli/SkillsMDs (Apache-2.0); thirteen are the kit's own (build-from-brief,
   fact-request, cite-in-code, day-one-tasks, contract-tests, commit-report, map-classifier,
@@ -424,7 +472,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   and corrects the remaining summaries (ADR-0146 decision 3). Each modification is
   marked; the Mandate waits, and merge requires the owner's completed-head reply.
   Researched in `docs/decisions/2026-10-06-builder-skills/`.
-- Auto-build runs the kit's way (ADR-0146): `skills/auto-build/references/research-kit.md`
+- Auto-build runs the kit's way (ADR-0146): `skills/auto-build/references/fetchproof.md`
   starts every run from the router, replaces the research stage on a builder with
   handoff, build-from-brief and fact-request, ties requirements, the Mandate, code
   constants and tests to `E-##` rows, and tightens merging - the commit gate, a green suite
@@ -460,11 +508,11 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   or newer Git's `safe.bareRepository=explicit` refusal; both must avoid printing an unusable
   checkout command.
 - The commit gate's suite budget in the kit's own checkout is 65 minutes, twice the slowest honest
-  run measured on a supported host, and `RESEARCH_KIT_GATE_TIMEOUT` now governs it as well as the
+  run measured on a supported host, and `FETCHPROOF_GATE_TIMEOUT` now governs it as well as the
   hook's watchdog: the suite gets the watchdog less 120 s, never more than half a short one, and the
   hook's widened watchdog is the budget plus 120 s (4020 s), so the gate stops an overrunning suite
   and blocks before the watchdog fires (ADR-0142). On the operator's Windows PC the green suite takes
-  about 1825 s, and the 20-minute budget blocked every commit touching `research-kit/`, leaving
+  about 1825 s, and the 20-minute budget blocked every commit touching `fetchproof/`, leaving
   `--no-verify` as the only way through; the variable reached only the watchdog, and set below the
   budget it let the watchdog kill the gate first, so a fail-open machine allowed a commit whose suite
   never reported (reproduced here with a hung runner, 2026-10-05). A suite stopped at its budget now
@@ -479,7 +527,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   alive past its budget on POSIX (review of the change, the same day).
 - The installer records no hand-on to another copy of the kit's gate, on a first install or a
   re-install (ADR-0141): doctor's remedy for that hand-on, `git config --global --unset
-  research-kit.previousHooksPath` (ADR-0134), lasted one session on the operator's machine
+  fetchproof.previousHooksPath` (ADR-0134), lasted one session on the operator's machine
   (2026-10-04), because `installCommitGate` kept the folder in the install state as well and the
   next `install-hooks` run - every kit update runs one - wrote it back into git config, so the
   previous implementation's gate blocked commits again on its outdated checks. `handOnState`
@@ -618,7 +666,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   2, instead of previewing searches on it and exiting 0; `decompose --dry-run` also refuses an
   unknown search provider or transport name, as its real run does (#311).
 - A failed search on a provider chosen explicitly (`--search-transport`,
-  `RESEARCH_KIT_SEARCH_TRANSPORT` or `searchTransport` in the machine config) is a failed
+  `FETCHPROOF_SEARCH_TRANSPORT` or `searchTransport` in the machine config) is a failed
   search, counted on that provider and logged as "not degraded"; it is no longer sent to the
   fetch provider's own search - for SearXNG on the keyless route, lite.duckduckgo.com. An
   automatically selected provider still degrades once (RR-1) (#317).
@@ -728,7 +776,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   another non-object is unreadable (held from the snapshot, or fail-closed with role unknown)
   instead of an empty config reported readable, and doctor says it is not a JSON object rather
   than that it does not parse (#310).
-- A relative `RESEARCH_KIT_CONFIG` is resolved against the repository's top level, where git
+- A relative `FETCHPROOF_CONFIG` is resolved against the repository's top level, where git
   runs the commit hook, or the working directory outside a repository, so every folder of a
   repository reads one file: a declared builder no longer becomes the collector default one
   directory down. A trailing `/` or `\` no longer reads as an absent config, in the module or
@@ -770,7 +818,7 @@ Each release of Research-Kit, newest first. The version is `KIT_VERSION` in
   flag off - it had read as true, so `new-project --force=false` overwrote files - and a value
   other than those or true/1/yes/on is refused. `prior --file x extra` and `evidence-context U-1
   --all` name the flag the argument conflicts with instead of saying to change directory.
-- `RESEARCH_KIT_ALLOW_INTERNAL_REDIRECTS` with any value but exactly `1` or `0` resolves to the
+- `FETCHPROOF_ALLOW_INTERNAL_REDIRECTS` with any value but exactly `1` or `0` resolves to the
   refusal (`0`), and `doctor` names it as `config-ill-typed`; `=false`, `=no` or `= 0` had read
   as unset, which fetches an internal URL the plan names; `research` and `decompose` print the
   same line as a warning when they start (#290).
@@ -802,7 +850,7 @@ remedies, with the decisions they produced recorded as ADR-0133 to ADR-0140; one
 ADR-0135, and the run's exhaustion policy in `lib/credits.mjs`). The suite is 1603 tests,
 offline.
 
-- The suite's machine-readable result (`RESEARCH_KIT_RESULT_FILE`) names the failing tests beside their
+- The suite's machine-readable result (`FETCHPROOF_RESULT_FILE`) names the failing tests beside their
   count, so two runs compare as sets: a count alone cannot show one test starting to fail while another
   starts to pass (break-test pass 5, 2026-10-04).
 - When git refuses to read a repository that is there (`fatal: detected dubious ownership`), the
@@ -995,7 +1043,7 @@ offline.
 - The tested Firecrawl CLI is 1.25.3 (from 1.25.2): the release is one fix, `--objective`
   optional for alexandria feedback (firecrawl/cli#301), with nothing on scrape, search or
   `--status`; its output was captured from the real CLI anyway (three credits) and is read
-  unchanged by the adapter's parsers (`research-kit/test/fixtures/*-1.25.3.*`). `doctor`, the
+  unchanged by the adapter's parsers (`fetchproof/test/fixtures/*-1.25.3.*`). `doctor`, the
   install line and the workflows' install spec name 1.25.3.
 - Internal: one search session (`lib/search-session.mjs`, ADR-0135) owns how a query is put to
   the search providers - the merge, the one degrade to the fetch provider, the rate-limit
@@ -1109,7 +1157,7 @@ the first release cut by the rule again.
   install, the five-minute try, a real project step by step, working with Claude Code,
   Gemini CLI and other agents (with a MoonAliza example), the builder handoff, keys and
   cost, the GitHub collector, a command reference, the machine configuration, and a
-  troubleshooting table. The kit reference (`research-kit/README.md`) is unchanged apart
+  troubleshooting table. The kit reference (`fetchproof/README.md`) is unchanged apart
   from the links into it.
 - A local run stops when Firecrawl reports its credits exhausted (ADR-0129, superseding the
   default of ADR-0086): the remaining searches and pages are reported `uncollected`, never
@@ -1189,7 +1237,7 @@ is added.
   sketching pages it had already indexed (break-test pass 3, 2026-10-02).
 - The tested Firecrawl CLI is 1.25.2 (from 1.24.6): its `--status`, search and scrape output
   were captured from the real CLI and read unchanged by the adapter's parsers before the move
-  (`research-kit/test/fixtures/*-1.25.2.*`; `docs/decisions/2026-10-02-firecrawl-cli-1-25`).
+  (`fetchproof/test/fixtures/*-1.25.2.*`; `docs/decisions/2026-10-02-firecrawl-cli-1-25`).
   The scrape receipt the 1.25.0 changelog introduced goes to stderr, stdout stays one JSON
   value; search's `data.tools` is now populated and reaches no result. `doctor`, the install
   line and the workflows' install spec name 1.25.2.
@@ -1226,7 +1274,7 @@ same thing on all of them.
 - The browser guard drops every request made before the page asked for has been requested
   (ADR-0125): CI's Chrome stable preconnected to `www.gstatic.com` before the page, a host real
   pages use too, so the service-host list could not settle it; the order can.
-- A `RESEARCH_KIT_RESULT_FILE` that cannot be written makes a green `selftest.mjs` run exit 2, where
+- A `FETCHPROOF_RESULT_FILE` that cannot be written makes a green `selftest.mjs` run exit 2, where
   it exited 0 and left CI's summary reading "crashed before reporting" beside a green step.
 - `selftest.mjs` refuses below the Node floor before any test runs (exit 2, naming the floor), where
   on Node 20 it ran and reported 28 red tests each saying "this kit needs 22 or newer".
@@ -1242,7 +1290,7 @@ same thing on all of them.
   is exempt by host and port. Flags and profile preferences were measured first and left most
   of the traffic.
 - `selftest.mjs` describes the kit, not the machine (ADR-0123): the run gets a scratch home and
-  loses every `RESEARCH_KIT_*` variable but the ones that describe the host or the run, and
+  loses every `FETCHPROOF_*` variable but the ones that describe the host or the run, and
   the vendor keys. The tests that spawn kit commands read the operator's machine config, deployed kit and
   Firecrawl login, so a `strict` posture config turned 18 tests red, `role: builder` 7, and a
   Firecrawl CLI installed and not logged in turned two `cli` tests red that a `transport:
@@ -1253,7 +1301,7 @@ same thing on all of them.
 - `selftest.mjs` no longer calls a run with zero failures a red suite. When every blocker is a
   test the host could not run (no Chromium, no Python), it ends "No test failed. N tests could
   not run on this host, and an incomplete run is not a pass (ADR-0108) - this is not a red
-  suite", names `RESEARCH_KIT_ALLOW_UNSUP=1` for a local run, and still exits 1. "A red suite
+  suite", names `FETCHPROOF_ALLOW_UNSUP=1` for a local run, and still exits 1. "A red suite
   stops work" is the standing protocol's stop-the-line sentence, and an agent that read it
   over "0 failed, 2 unsupported" stopped a whole break-test at its baseline (2026-10-02).
 - The collector refuses to spend on a ledger whose chain is broken (ADR-0122). A ledger that
@@ -1321,7 +1369,7 @@ same thing on all of them.
   repository's corpus already holds, took 15 s in `firstFinding`, which the collector runs over
   every page. The same row now costs milliseconds, and the rewrite is pinned against the old
   pattern over 4,000 generated rows (break-test 2026-10-01, PR #193, redone on main).
-- In the kit's own checkout a commit staging anything under `research-kit/` is allowed
+- In the kit's own checkout a commit staging anything under `fetchproof/` is allowed
   only when the suite is green (ADR-0120, which lifts the freeze for this one check). The
   commit gate runs `bin/selftest.mjs` and reads its result file: an unsupported test is
   not red, a runner that produced no result is a block, and a docs-only commit owes
@@ -1360,7 +1408,7 @@ same thing on all of them.
 
 ## 0.9.0 — 2026-10-01
 
-The first tagged release. Research-Kit is feature-frozen from here: changes are bug fixes,
+The first tagged release. Fetchproof is feature-frozen from here: changes are bug fixes,
 until a new ADR lifts the freeze for a named item (ADR-0117).
 
 **What it is.** A zero-dependency Node toolkit that makes research a blocking phase before

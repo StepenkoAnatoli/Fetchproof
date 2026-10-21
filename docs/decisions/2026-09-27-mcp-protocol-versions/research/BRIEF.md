@@ -24,7 +24,7 @@ prior that was recorded in advance is worth more than a right one remembered aft
 
 ## Intent
 
-The kit's MCP server (`research-kit/bin/mcp-server.mjs`, ADR-0034) serves protocol revisions
+The kit's MCP server (`fetchproof/bin/mcp-server.mjs`, ADR-0034) serves protocol revisions
 `2026-07-28` and `2025-11-25`. On the legacy `initialize` handshake it echoes a requested revision
 it serves, and answers anything else with `2025-11-25`. On 2026-09-27 a round trip from a cloud
 container asked for `2025-06-18` and got `2025-11-25` back. A client whose newest revision is
@@ -81,7 +81,7 @@ None. Every blocking unknown was closed with primary-source evidence.
 
 ## Decision
 
-**Serve 2025-06-18.** `SUPPORTED_VERSIONS` in `research-kit/lib/mcp.mjs` becomes `2026-07-28,
+**Serve 2025-06-18.** `SUPPORTED_VERSIONS` in `fetchproof/lib/mcp.mjs` becomes `2026-07-28,
 2025-11-25, 2025-06-18`. The echo rule already in `initialize` then answers a 2025-06-18 client
 with 2025-06-18, as E-03 requires of a server that supports it. That server already follows
 2025-06-18's rules (U-1). The fallback for anything else stays 2025-11-25 (ADR-0034).

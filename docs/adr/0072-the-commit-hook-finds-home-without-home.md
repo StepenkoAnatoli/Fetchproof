@@ -6,8 +6,8 @@
 
 ## Context
 
-The hook runs under `set -u` and spells its defaults as `$HOME/.agents/research-kit` and
-`$HOME/.agents/research-kit.config.json`. A break-test on 2026-09-27 ran it with HOME unset,
+The hook runs under `set -u` and spells its defaults as `$HOME/.agents/fetchproof` and
+`$HOME/.agents/fetchproof.config.json`. A break-test on 2026-09-27 ran it with HOME unset,
 which is what a cron job, a systemd unit or some CI agents get. The hook stopped at that line
 with "HOME: parameter not set" and exit 2. So every commit was refused by a shell error,
 which breaks the hook's first property: fail open, loudly, when the gate cannot run. Seven

@@ -1,6 +1,6 @@
 # Break-test pass 7 - 2026-10-07
 
-The seventh adversarial pass over the build and the suite, run on `arena/b5352aeb-research-kit`
+The seventh adversarial pass over the build and the suite, run on `arena/b5352aeb-fetchproof`
 at `9325f85` (kit 0.9.5). Procedure: the break-test skill, pinned-branch setup - this session is
 fixed to one branch, so every probe and fix attempt ran in a throwaway clone under `/tmp/bt/`
 and the checkout saw only the verified fix, as its own commit. Focus of this pass: the commit
@@ -13,7 +13,7 @@ request, to land it as its own commit, which is what the branch holds.
 
 Two notes on the procedure itself. The attached skill file never appeared in the workspace
 (`/home/user/uploads/` does not exist and a filesystem search found no copy), so the procedure
-used was the kit's shipped `research-kit/skills/break-test/SKILL.md`, vendored in the
+used was the kit's shipped `fetchproof/skills/break-test/SKILL.md`, vendored in the
 repository under test; identity with the unavailable attachment was not verified. The nested
 research project lives at
 `docs/decisions/2026-10-07-break-test-external-facts/`, which is this repository's convention
@@ -27,7 +27,7 @@ historical suite counts below are not counts for current `main` or the repaired 
 ## Overview
 
 - **Stack and gate.** Node ESM, no dependencies and no `package.json`. Gate:
-  `node research-kit/bin/selftest.mjs` (1692 passed, 0 failed, 4 unsupported at the baseline;
+  `node fetchproof/bin/selftest.mjs` (1692 passed, 0 failed, 4 unsupported at the baseline;
   1693 with the fix, the new test; the README declares the four UNSUP counted), `preflight.mjs`
   PASS (0 blocking, 1 warning: `hygiene/brief-unstamped` on the kit's own corpus), `handoff.mjs`
   exit 0 (33 ledger entries, 27 evidence rows, chain verifies), `doctor.mjs` READY (kit 0.9.5)
@@ -51,7 +51,7 @@ historical suite counts below are not counts for current `main` or the repaired 
 - **Isolation.** Throwaway clones under `/tmp/bt/`: `c1` (probe target), `c2` (concurrency),
   `c4`/`c5` (gate), `c6` (repo-local `core.hooksPath`), `c7` (the file-mode control), `c8` (the
   fix). Nothing was installed into the machine: `doctor`, `install.mjs` and
-  `install-hooks.mjs` ran with `RESEARCH_KIT_HOME`/`HOME` pointed at the checkout and scratch
+  `install-hooks.mjs` ran with `FETCHPROOF_HOME`/`HOME` pointed at the checkout and scratch
   homes, and the pre-commit hook was executed directly instead of being registered.
 - **Baseline.** Two unchanged full-suite runs are recorded, in the clone and then the real
   checkout: 1692 passed, 0 failed, 4 unsupported (waived), `blocking 0`, exit 0,
@@ -60,9 +60,9 @@ historical suite counts below are not counts for current `main` or the repaired 
   replace it. The reported baseline failure set is empty. The four UNSUP are
   `browser-transport`/`browser-guard` LIVE tests that need Chromium; the waiver permits a
   local exit 0, not a full pass, and never waives a failing test.
-- **Fix commits.** On `arena/b5352aeb-research-kit`: the corpus `9939ce0`, F1 `4619922`, this
+- **Fix commits.** On `arena/b5352aeb-fetchproof`: the corpus `9939ce0`, F1 `4619922`, this
   report the commit that adds it. The fix commit stages `docs/ARCHITECTURE.md` with the
-  `research-kit/` change, as the repository's own gate requires. CI on the pull
+  `fetchproof/` change, as the repository's own gate requires. CI on the pull
   request's first push (run 37621450447): `archive tree`, `node (24)`, `node (26)`,
   `platform (ubuntu-latest)` and `platform (ubuntu-26.04)` passed; `platform (windows-latest)`
   failed in the `selftest` step after about 390 s - the Windows read-only redeploy failure
@@ -90,9 +90,9 @@ historical suite counts below are not counts for current `main` or the repaired 
 > the next deploy died `EACCES` on its own output** (Medium, Possible)
 > Repro (from the repository root of a clone, a kit source tree whose files are 0444; the unit
 > form, which is also the regression test):
-> `node research-kit/bin/selftest.mjs skill-set` - before the fix:
+> `node fetchproof/bin/selftest.mjs skill-set` - before the fix:
 > `FAIL  skill-set > a second deploy over its own output survives a read-only source tree`
-> `        EACCES: permission denied, copyfile '<from>/README.md' -> '<home>/research-kit/README.md'`
+> `        EACCES: permission denied, copyfile '<from>/README.md' -> '<home>/fetchproof/README.md'`
 > `13 passed, 1 failed in 1.1s`
 > Observed end to end as well: a full suite run from a clone whose tree had been made
 > read-only reported `1688 passed, 4 failed`, the four `skill-set` tests named in `failed`;
@@ -107,12 +107,12 @@ historical suite counts below are not counts for current `main` or the repaired 
 > is measured here
 > (0444 -> 0444, 644 -> 644, 600 -> 600 under umask 0022), not promised, so the fix sets the
 > mode explicitly instead of relying on it.
-> Action: Fixed, commit `4619922`. `research-kit/lib/installer.mjs` (a destination whose source
+> Action: Fixed, commit `4619922`. `fetchproof/lib/installer.mjs` (a destination whose source
 > file lacks the owner-write bit gets it; when that current source is read-only, a destination
 > an earlier deploy left read-only is made writable before copying; `githooks` keeps
 > `HOOK_MODE`; the source's other bits are
-> kept), `research-kit/test/skill-set.test.mjs` (the regression test: first deploy, second
-> deploy, and a pre-existing 0444 destination), `research-kit/README.md` (the test count the
+> kept), `fetchproof/test/skill-set.test.mjs` (the regression test: first deploy, second
+> deploy, and a pre-existing 0444 destination), `fetchproof/README.md` (the test count the
 > suite itself checks, 1696 -> 1697), `docs/ARCHITECTURE.md` (one clause in the `installer.mjs`
 > row, staged with the change as the repository's gate requires). The mode half is POSIX-scoped,
 > matching the kit's existing mode handling - `HOOK_MODE` is POSIX-only for the same reason - so
@@ -131,7 +131,7 @@ historical suite counts below are not counts for current `main` or the repaired 
 
 | Commit | Finding | Files |
 |---|---|---|
-| `4619922` | F1 | `research-kit/lib/installer.mjs`, `research-kit/test/skill-set.test.mjs`, `research-kit/README.md`, `docs/ARCHITECTURE.md` |
+| `4619922` | F1 | `fetchproof/lib/installer.mjs`, `fetchproof/test/skill-set.test.mjs`, `fetchproof/README.md`, `docs/ARCHITECTURE.md` |
 
 ## Rejected fixes
 
@@ -169,7 +169,7 @@ and verification are recorded separately below.
    egress is
    TLS-inspected - this sandbox is one - the keyless transport reports
    `fetch failed (unable to verify the first certificate)`. The message names the cause (a
-   2026-09-30 fix, ADR-0047) but not the remedy, and neither `research-kit/README.md` nor
+   2026-09-30 fix, ADR-0047) but not the remedy, and neither `fetchproof/README.md` nor
    `QUICKSTART.md` mentions the variable, which the runtime documents as extending the
    well-known roots and being read only when the process is first launched (E-03). Decision
    needed: add one line naming it where the collector reports the failure, or in the README.
@@ -197,7 +197,7 @@ and verification are recorded separately below.
   At `7d88760`, Windows job `112799422378` reported `1697 passed, 0 failed in 341.9s` with
   that reduced scope. The read-only Windows scenario was therefore reproduced by CI and
   remained an open product defect at that head, not merely an unsupported probe.
-- **`minimal-env` (A).** `env -i` dropped `RESEARCH_KIT_ALLOW_UNSUP=1`, so the run exited 1
+- **`minimal-env` (A).** `env -i` dropped `FETCHPROOF_ALLOW_UNSUP=1`, so the run exited 1
   with 0 failures - the suite's documented "every test passed and the runner still exited N"
   case. Read from the result file, not reported as a product failure.
 - **`python-absent` / `python-absent-control` (B).** The "control" set the same python-less
@@ -205,7 +205,7 @@ and verification are recorded separately below.
   real control is the same subset on the normal `PATH`: 37 passed, 0 failed in 4.2 s. A
   Python-less machine is UNSUP by design, not red.
 - **`epipe` (B).** The full suite piped to `head -5` exited 1 with empty stderr. The probe
-  omitted `RESEARCH_KIT_ALLOW_UNSUP=1`; the discriminator (`probes/epipe-disc.meta`, with the
+  omitted `FETCHPROOF_ALLOW_UNSUP=1`; the discriminator (`probes/epipe-disc.meta`, with the
   variable set and a result file) was reported as `suite_exit=0`, `pipeline_exit=0`, 1692/0/4 waived,
   129 s - a closed stdout is handled (EPIPE tolerance landed 2026-09-28/2026-10-01) and no
   failure was hidden. The first discriminator script also recorded nothing because an
@@ -215,14 +215,14 @@ and verification are recorded separately below.
   clean control (`c7`: file modes only, no directory `chmod`) reproduces the same four, and the
   regression test reproduces the copy error exactly. The probe's exit 1 is not reported as a
   product failure.
-- **`builder-refusal` (D).** The probe set `RESEARCH_KIT_ROLE=builder`, an environment variable
+- **`builder-refusal` (D).** The probe set `FETCHPROOF_ROLE=builder`, an environment variable
   the kit does not have (the role lives in the machine config, written by
   `install-hooks.mjs --role`). Both its commands exited 0, and a real collect on that machine
   fetched normally. Corrected twice - first the variable, then the config path, since with
-  `RESEARCH_KIT_HOME` set the config is looked up beside the kit home, so `RESEARCH_KIT_CONFIG`
+  `FETCHPROOF_HOME` set the config is looked up beside the kit home, so `FETCHPROOF_CONFIG`
   must name the file. The refusal is designed and does fire, exit 2, before any fetch:
   `refused: this machine is declared role=builder, which does not collect.`
-- **`gate-edit` (C).** The probe expected a block for a staged path under `research-kit/lib/`.
+- **`gate-edit` (C).** The probe expected a block for a staged path under `fetchproof/lib/`.
   The edit gate applies no architecture-map rule by design (`lib/gate.mjs`: the map breach is
   computed only when `gate === 'commit'`); its job is phase-1 edit blocking. A null result,
   not a kit defect.
@@ -230,14 +230,14 @@ and verification are recorded separately below.
 ## Probes run
 
 Commands are from the repository root of a clone unless noted. Normal and corrected full
-suite invocations used `RESEARCH_KIT_RESULT_FILE` and `RESEARCH_KIT_ALLOW_UNSUP=1`; the
+suite invocations used `FETCHPROOF_RESULT_FILE` and `FETCHPROOF_ALLOW_UNSUP=1`; the
 original `minimal-env` and EPIPE invocations omitted the waiver, as disclosed above. These
 34 rows are an activity inventory: some group several runs, some run subsets or diagnostics,
 and some deliberately produce red results. They are not 34 independent full-suite passes.
 
 | # | Probe | Command | Result |
 |---|---|---|---|
-| 1 | Baseline x2 | `node research-kit/bin/selftest.mjs` (clone, then the real checkout) | 1692/0/4, exit 0, 124.6-131.4 s; failure set empty |
+| 1 | Baseline x2 | `node fetchproof/bin/selftest.mjs` (clone, then the real checkout) | 1692/0/4, exit 0, 124.6-131.4 s; failure set empty |
 | 2 | Timezone | `TZ=Pacific/Kiritimati` / `TZ=Etc/GMT+12` | 1692/0/4, 130.9 s / 128.4 s |
 | 3 | Locale | `LC_ALL=C LANG=C` | 1692/0/4, 131.3 s |
 | 4 | Git config contexts | `GIT_CONFIG_GLOBAL=<branch / gpgsign config>`, `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null` | 1692/0/4 x3, 125.7-128.9 s |
@@ -246,24 +246,24 @@ and some deliberately produce red results. They are not 34 independent full-suit
 | 7 | TMPDIR with a space | `TMPDIR='/tmp/bt/tmp dir'` | 1692/0/4, 131.4 s |
 | 8 | Unusable TMPDIR | `TMPDIR=/nonexistent-tmp` | exit 1, 725/871 in 32.4 s, the designed one-cause diagnostic (EACCES) - null |
 | 9 | Derived files | `timeline.mjs && export-warc.mjs && git status --porcelain` | `TIMELINE.md (60 events)`, `55 records (27 captures)`, porcelain unchanged |
-| 10 | Leftovers | `git status --porcelain --ignored` before/after a full run | 2 before, 2 after, both ignored (`research-corpus.warc.gz`, `research-kit/bin/__pycache__/`) |
+| 10 | Leftovers | `git status --porcelain --ignored` before/after a full run | 2 before, 2 after, both ignored (`research-corpus.warc.gz`, `fetchproof/bin/__pycache__/`) |
 | 11 | Path with a space | `cp -a <clone> '/tmp/bt/path with space'`, suite there | 1692/0/4, 131.6 s |
 | 12 | Symlinked cwd | `cd /tmp/bt/link1` (symlink to the clone) | 1692/0/4, 130.1 s |
 | 13 | Two suites at once | two suites in one clone | `exits 0 0`, 138.9 s / 139.1 s |
 | 14 | Kill mid-run | SIGKILL mid-suite, then rerun | leftovers only the ignored `__pycache__`; rerun exit 0 |
-| 15 | Unwritable result file | `RESEARCH_KIT_RESULT_FILE=/nonexistent-dir/x.json` | exit 2, the documented warning (the suite result is authoritative) |
+| 15 | Unwritable result file | `FETCHPROOF_RESULT_FILE=/nonexistent-dir/x.json` | exit 2, the documented warning (the suite result is authoritative) |
 | 16 | Python absent | `PATH=<no python> ... selftest.mjs conformance canonical-float` | 19/0/18 waived - UNSUP, not red |
 | 17 | Python control | the same subset on the normal `PATH` | 37 passed, 0 failed, 4.2 s |
 | 18 | Closed stdout | full suite `\| head -5` | probe defect (missing `ALLOW_UNSUP`); corrected: suite exit 0, 129 s |
-| 19 | Gate, docs only | `sh research-kit/githooks/pre-commit` with only `docs/.probe-note` staged | `research gate: allow - the gate passes`, hook exit 0, instant (no suite) |
-| 20 | Gate, suite owed | same hook, `research-kit/README.md` staged index-only | stderr announces the suite runs (ADR-0120); 129 s; allow; hook exit 0 |
+| 19 | Gate, docs only | `sh fetchproof/githooks/pre-commit` with only `docs/.probe-note` staged | `research gate: allow - the gate passes`, hook exit 0, instant (no suite) |
+| 20 | Gate, suite owed | same hook, `fetchproof/README.md` staged index-only | stderr announces the suite runs (ADR-0120); 129 s; allow; hook exit 0 |
 | 21 | Gate, red control | same hook with a staged failing test | hook exit 1; stderr names the rule and both overrides |
-| 22 | Gate posture | `gate.mjs --posture`; `--staged research-kit/README.md --json` | `fail-open (config absent)` exit 0; `verdict pass`, allow true (the suite ran, 136 s) |
-| 23 | Edit gate | `gate.mjs --gate edit --staged research-kit/lib/core.mjs` | allow - by design (see probe defects) |
+| 22 | Gate posture | `gate.mjs --posture`; `--staged fetchproof/README.md --json` | `fail-open (config absent)` exit 0; `verdict pass`, allow true (the suite ran, 136 s) |
+| 23 | Edit gate | `gate.mjs --gate edit --staged fetchproof/lib/core.mjs` | allow - by design (see probe defects) |
 | 24 | Repo-local hooksPath | clone with `core.hooksPath=/tmp/bt/nohooks`, doctor | reported: `gate-local-override ... displaces the machine-wide gate (husky, lefthook, simple-git-hooks and pre-commit all do this)` |
 | 25 | Doctor, keyless | `HOME=<scratch with http-keyless>` `doctor.mjs` | `READY [role=collector, kit 0.9.5]`, exit 0 |
 | 26 | Doctor, default HOME | `doctor.mjs` | exit 1: the by-design `firecrawl-cli` blocker for a collector that chose nothing |
-| 27 | Builder machine | corrected: machine config `{"role":"builder"}` via `RESEARCH_KIT_CONFIG`, then a real collect | `refused: this machine is declared role=builder, which does not collect.` exit 2, no fetch |
+| 27 | Builder machine | corrected: machine config `{"role":"builder"}` via `FETCHPROOF_CONFIG`, then a real collect | `refused: this machine is declared role=builder, which does not collect.` exit 2, no fetch |
 | 28 | Install dry run | `install.mjs --dry-run` into a scratch home | `would prune: (nothing)`, exit 0, wrote nothing |
 | 29 | First run of a project | `new-project.mjs . && decompose.mjs && preflight.mjs` in a scratch dir | 13 written / 0 kept / 0 repaired; preflight FAIL as designed (no evidence yet) |
 | 30 | Docs index | links in `docs/README.md`; dated reports present but unindexed | `missing links: 0`; 6 unindexed at the baseline, plus this report afterward (see risk 4) |
@@ -288,15 +288,15 @@ recipes, not additional recorded runs:
 
 ```sh
 probe_results="$(mktemp -d)"
-RESEARCH_KIT_RESULT_FILE="$probe_results/timezone-plus14.json" RESEARCH_KIT_ALLOW_UNSUP=1 TZ=Pacific/Kiritimati node research-kit/bin/selftest.mjs
-RESEARCH_KIT_RESULT_FILE="$probe_results/timezone-minus12.json" RESEARCH_KIT_ALLOW_UNSUP=1 TZ=Etc/GMT+12 node research-kit/bin/selftest.mjs
-RESEARCH_KIT_RESULT_FILE="$probe_results/locale-c.json" RESEARCH_KIT_ALLOW_UNSUP=1 LC_ALL=C LANG=C node research-kit/bin/selftest.mjs
+FETCHPROOF_RESULT_FILE="$probe_results/timezone-plus14.json" FETCHPROOF_ALLOW_UNSUP=1 TZ=Pacific/Kiritimati node fetchproof/bin/selftest.mjs
+FETCHPROOF_RESULT_FILE="$probe_results/timezone-minus12.json" FETCHPROOF_ALLOW_UNSUP=1 TZ=Etc/GMT+12 node fetchproof/bin/selftest.mjs
+FETCHPROOF_RESULT_FILE="$probe_results/locale-c.json" FETCHPROOF_ALLOW_UNSUP=1 LC_ALL=C LANG=C node fetchproof/bin/selftest.mjs
 ```
 
 Each result file reports failed identifiers and unsupported capabilities. A waived exit 0
 remains incomplete. Keep the result directory for review; it is outside the disposable clone.
 The committed `skill-set` regression supplies the F1 fixture; running
-`node research-kit/bin/selftest.mjs skill-set` on a historical version requires pairing the
+`node fetchproof/bin/selftest.mjs skill-set` on a historical version requires pairing the
 test with the installer version being compared. The original scratch-only controls, exact
 Git-context files, kill timing and Python-less PATH cannot be rerun exactly from this report.
 
@@ -319,7 +319,7 @@ Git-context files, kill timing and Python-less PATH cannot be rerun exactly from
   The vendor's failure text is covered by the kit's own tests.
 - **A real machine-wide install** (global `core.hooksPath`, `~/.claude/settings.json`). The
   skill forbids modifying the machine, so `install`/`install-hooks` ran with `HOME`,
-  `RESEARCH_KIT_HOME` and `RESEARCH_KIT_CONFIG` pointed at scratch paths, and the hook itself
+  `FETCHPROOF_HOME` and `FETCHPROOF_CONFIG` pointed at scratch paths, and the hook itself
   was executed directly.
 - **CRLF-corrected corpora and `core.autocrlf`.** Probed in pass 6 and untouched by anything
   this pass changed; not re-run.
@@ -362,7 +362,7 @@ delivered with all seven CI jobs green). Each unit was taken from its frozen, in
 reviewed package, previewed source-only against the then-current head, applied, exercised by
 a focused run of its own test files, then committed through the installed commit gate, which
 runs the full offline suite on this Windows host (Node 24.20.0) for any commit under
-`research-kit/`. Each commit was pushed only after an independent publication check and was
+`fetchproof/`. Each commit was pushed only after an independent publication check and was
 accepted only when all seven exact-head CI jobs succeeded.
 
 | Commit | Unit | Local full suite at that commit |
@@ -380,7 +380,7 @@ accepted only when all seven exact-head CI jobs succeeded.
 
 The twelve unsupported tests are the host's: two need a file symlink this Windows host
 refuses to create, the rest need a live Chromium or a live provider; the local waiver
-(`RESEARCH_KIT_ALLOW_UNSUP=1`) permits exit 0 and never waives a failing test, so
+(`FETCHPROOF_ALLOW_UNSUP=1`) permits exit 0 and never waives a failing test, so
 "unsupported" is reported as such and not counted as passing. The suite inventory the kit
 README states moved from 1751 to 1777 across these commits, each increment being the actual
 registration delta of its commit.

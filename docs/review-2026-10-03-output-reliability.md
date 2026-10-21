@@ -1,6 +1,6 @@
 # Output-reliability audit - 2026-10-03
 
-Research-Kit has a strong evidence-integrity foundation, but this audit retained eight
+Fetchproof has a strong evidence-integrity foundation, but this audit retained eight
 material gaps between source capture and build authorization. The most consequential
 reproductions let a requirement disappear from validation, authorize a brief without its
 required review sections, or delete technical conditions while converting source HTML.
@@ -12,7 +12,7 @@ handoff before a builder relies on the research.
 
 ## 1. Current state and evidence boundaries
 
-- **Audited source:** [`74c0791e1054e48d31c113eb269e58f09a5c2bb1`](https://github.com/StepenkoAnatoli/Research-Kit/tree/74c0791e1054e48d31c113eb269e58f09a5c2bb1).
+- **Audited source:** [`74c0791e1054e48d31c113eb269e58f09a5c2bb1`](https://github.com/StepenkoAnatoli/Fetchproof/tree/74c0791e1054e48d31c113eb269e58f09a5c2bb1).
 - **Local suite revision:** `4e12f689fdb2e94f6ef501251b7f46003b99f32b`, on Windows with
   Node v24.20.0. The eight intervening commits were inspected. Final targeted probes
   loaded the changed library modules from the audited revision in memory, alongside the
@@ -35,14 +35,14 @@ Evidence labels used below:
 | State | Meaning in this report |
 |---|---|
 | VERIFIED | Directly inspected in project code and, for the ranked mechanisms, reproduced with targeted probes. This does not measure production incidence. |
-| WELL-SUPPORTED | Official external documentation was fetched, but the comparison confidence is capped because no Research-Kit ledger-backed capture was created. |
+| WELL-SUPPORTED | Official external documentation was fetched, but the comparison confidence is capped because no Fetchproof ledger-backed capture was created. |
 | INFERRED | A consequence, priority, estimate, or recommendation derived from the observed mechanism. |
 | UNKNOWN | Not established by the available inspection or execution. |
 
 The audit ran the following local suite selection from the clean review checkout:
 
 ```text
-node research-kit/bin/selftest.mjs checks corpus quotes provenance brief handoff transport
+node fetchproof/bin/selftest.mjs checks corpus quotes provenance brief handoff transport
 ```
 
 **Recorded result: 267 passed, 0 failed, 1 unsupported, in 82.6 seconds.** The unsupported
@@ -77,9 +77,9 @@ user corpora remains unknown.
 
 ### G1 - Brief approval survives missing review sections and stale inputs
 
-**Evidence:** [`brief.mjs:64`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/brief.mjs#L64),
-[`artifact.mjs:227`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/artifact.mjs#L227),
-and [`checks.mjs:705`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L705).
+**Evidence:** [`brief.mjs:64`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/brief.mjs#L64),
+[`artifact.mjs:227`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/artifact.mjs#L227),
+and [`checks.mjs:705`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L705).
 
 `briefState` checks whether judged sections contain `**TODO**`. A missing section returns
 empty text, so it contains no TODO. With the auto-draft marker present, that is enough to
@@ -101,7 +101,7 @@ current approval boundary permits both missing required review and stale review 
 
 ### G2 - Malformed identifiers silently remove requirements
 
-**Evidence:** [`corpus.mjs:527`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/corpus.mjs#L527).
+**Evidence:** [`corpus.mjs:527`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/corpus.mjs#L527).
 
 `readCorpus` filters unknown IDs through `/^U-\d+$/i` without recording a problem for
 discarded data rows. Evidence and map rows have analogous filters. Downstream checks
@@ -119,9 +119,9 @@ therefore remove a blocking question instead of reporting that it needs correcti
 
 ### G3 - HTML conversion deletes comparison expressions
 
-**Evidence:** [`http-transport.mjs:308`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/http-transport.mjs#L308)
+**Evidence:** [`http-transport.mjs:308`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/http-transport.mjs#L308)
 and the browser's use of the same converter at
-[`browser-transport.mjs:241`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/browser-transport.mjs#L241).
+[`browser-transport.mjs:241`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/browser-transport.mjs#L241).
 
 Some inner-element conversions decode entities before an outer pass strips markup. The
 outer pass can then interpret decoded comparison operators as a tag. Direct calls to
@@ -139,9 +139,9 @@ verify the damaged capture without detecting what the converter removed.
 
 ### G4 - Supersession disagrees with actual fetch order
 
-**Evidence:** [`checks.mjs:561`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L561)
+**Evidence:** [`checks.mjs:561`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L561)
 and the collector's reuse of standing evidence rows at
-[`collect.mjs:299`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/collect.mjs#L299).
+[`collect.mjs:299`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/collect.mjs#L299).
 
 `supersededRows` groups exact URLs and sorts by `retrieved`. Same-day ties retain table
 order; it does not consult the fetch ledger. The collector can legitimately reuse the
@@ -155,8 +155,8 @@ changing the fetches. The recent cache-ordering fixes do not change this separat
 
 ### G5 - Browser capture cannot enforce the collector's origin-status rule
 
-**Evidence:** [`browser-transport.mjs:237`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/browser-transport.mjs#L237)
-and [`collect.mjs:240`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/collect.mjs#L240).
+**Evidence:** [`browser-transport.mjs:237`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/browser-transport.mjs#L237)
+and [`collect.mjs:240`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/collect.mjs#L240).
 
 The browser transport recognizes Chromium's own error pages, but accepted DOM output
 carries `statusCode: ''` and the requested URL. It does not carry the final navigation
@@ -170,8 +170,8 @@ synthetic DOM probe, not a live browser request to an HTTP 403 endpoint.
 
 ### G6 - URL keys conflate resources without observed equivalence
 
-**Evidence:** [`core.mjs:994`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/core.mjs#L994)
-and [`cacheDecision` in corpus.mjs](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/corpus.mjs).
+**Evidence:** [`core.mjs:994`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/core.mjs#L994)
+and [`cacheDecision` in corpus.mjs](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/corpus.mjs).
 
 `urlKey` drops scheme, `www.`, and trailing path slashes. Each of the following becomes
 `//example.com/api`:
@@ -194,9 +194,9 @@ assumed for arbitrary resources. External-source confidence: WELL-SUPPORTED, unl
 
 ### G7 - Declared page encodings are ignored
 
-**Evidence:** [`runtime.mjs:128`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/runtime.mjs#L128)
+**Evidence:** [`runtime.mjs:128`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/runtime.mjs#L128)
 and the HTTP fetch path in
-[`http-transport.mjs`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/http-transport.mjs#L704).
+[`http-transport.mjs`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/http-transport.mjs#L704).
 
 `boundedText` uses `new TextDecoder()` without the page's charset. Reproduction: pass a
 Response declaring `Content-Type: text/plain; charset=windows-1252`, containing ASCII
@@ -206,8 +206,8 @@ justify changing the encoding of JSON API responses.
 
 ### G8 - Table dates can change freshness without a supporting fetch
 
-**Evidence:** [`checks.mjs:301`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L301)
-and [`checks.mjs:722`](https://github.com/StepenkoAnatoli/Research-Kit/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L722).
+**Evidence:** [`checks.mjs:301`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L301)
+and [`checks.mjs:722`](https://github.com/StepenkoAnatoli/Fetchproof/blob/74c0791e1054e48d31c113eb269e58f09a5c2bb1/research-kit/lib/checks.mjs#L722).
 
 Freshness reads `row.retrieved`; it is not reconciled with the capture's supporting fetch.
 Reproduction on October 3: run `runChecks(corpus, { maxAgeDays: 1 })`, then change only
@@ -254,8 +254,8 @@ blanket guarantees about every input:
   provenance, capture completeness, supersession, corroboration, and corpus hygiene.
   The tests exercise missing citations, invalid statuses, uncovered map dimensions,
   duplicate identifiers, and malformed inputs. The unmodified corpus had no warnings
-  or failures in the baseline probe. See [`checks.test.mjs`](../research-kit/test/checks.test.mjs).
-- [`provenance.mjs`](../research-kit/lib/provenance.mjs) checks chain structure and capture
+  or failures in the baseline probe. See [`checks.test.mjs`](../fetchproof/test/checks.test.mjs).
+- [`provenance.mjs`](../fetchproof/lib/provenance.mjs) checks chain structure and capture
   hashes and refuses appending to a damaged chain. This detects inconsistent stored
   evidence; the documented boundary is self-attestation, not independent publisher
   authentication or proof of semantic truth.
@@ -324,7 +324,7 @@ None proposed. The evidence supports the targeted corrections without a broader 
 ## 8. Source audit
 
 All sources below were fetched from official primary documentation. Every comparison
-claim is capped at **WELL-SUPPORTED** because its fetch is **unledgered**. **Research-Kit
+claim is capped at **WELL-SUPPORTED** because its fetch is **unledgered**. **Fetchproof
 evidence row: none for every entry.** No comparison claim below rests on recollection.
 The ranked defects are supported by project code and observed behavior, not feature
 differences between tools.

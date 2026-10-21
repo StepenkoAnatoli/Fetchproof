@@ -1,7 +1,7 @@
-# Discovery Contract - Which licence should Research-Kit publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it
+# Discovery Contract - Which licence should Fetchproof publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it
 
 Started 2026-10-02. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

@@ -1,4 +1,4 @@
-# Research-Kit and the original reliability goal
+# Fetchproof and the original reliability goal
 
 Date: 2026-10-05. Checkout inspected: `d83974b21ae8c7f278fb4c30efa7f4c28a67c281`.
 This is a local implementation audit and recommendation. The external literature is
@@ -13,7 +13,7 @@ semantic bug: ADR-0087 excludes judging support, and ADR-0089 explicitly leaves 
 support uncomputed.
 
 **Verified local observation:** on 2026-10-05, with cwd
-`C:\Users\PC\Research-Kit`, Node 24.20.0, and default pluralist policy through an absent
+`C:\Users\PC\Fetchproof`, Node 24.20.0, and default pluralist policy through an absent
 configuration path, root preflight returned 28 passing findings, one warning and zero
 failures. Reading a second copy of the corpus into memory and replacing E-19's Finding
 with a deliberately unsupported sentence returned the same counts and PASS:
@@ -30,10 +30,10 @@ error, or imply an adversarially rewritten ledger was involved.
 Reproduce from the repository root (JavaScript on stdin, no saved code or fake capture):
 
 ```js
-import { readCorpus } from './research-kit/lib/corpus.mjs';
-import { runPreflight } from './research-kit/lib/preflight.mjs';
+import { readCorpus } from './fetchproof/lib/corpus.mjs';
+import { runPreflight } from './fetchproof/lib/preflight.mjs';
 const root = process.cwd();
-const env = { RESEARCH_KIT_CONFIG: 'C:/Users/PC/Research-Kit/.audit-nonexistent-config.json' };
+const env = { FETCHPROOF_CONFIG: 'C:/Users/PC/Fetchproof/.audit-nonexistent-config.json' };
 const baseline = runPreflight(root, { corpus: readCorpus(root), env });
 const alternate = readCorpus(root);
 alternate.evidence.find(e => e.id === 'E-19').finding =
@@ -50,12 +50,12 @@ Paths and lines refer to the inspected checkout; links lead to the repository fi
 | Observation | Local evidence | Implication |
 |---|---|---|
 | Opening wording says collection precedes design/build; enforcement is conditional | [README](../../../README.md), lines 5-7 and 60-79: installed commit hook; edit hook only for Claude Code; fail-open default; recorded and unrecorded overrides | Describe the enforcement scope near the promise. For other agents, commit gating cannot prevent an earlier design or filesystem edit. |
-| Captures and chain are checked, but the chain is self-attested | README lines 76-78; `research-kit/lib/provenance.mjs`; ADR-0087 | Recorded origin and unchanged bytes are useful checks. They do not establish source truth, interpretation or protection against an actor who can rebuild the chain. |
+| Captures and chain are checked, but the chain is self-attested | README lines 76-78; `fetchproof/lib/provenance.mjs`; ADR-0087 | Recorded origin and unchanged bytes are useful checks. They do not establish source truth, interpretation or protection against an actor who can rebuild the chain. |
 | A quote's occurrence is checked; support is outside the predicate | [ADR-0087](../../../docs/adr/0087-a-quote-in-a-claim-must-occur-in-its-capture.md), lines 10-12, 33, 45-46 | A real quotation can still be attached to an unsupported conclusion. More collection cannot alone solve that. |
-| PASS means no findings classified as failures | `research-kit/lib/preflight.mjs`, lines 49-75; `checks.mjs`, lines 340-407 | Passing corpora may contain warnings and KNOWN-UNKNOWN rows. Public wording must preserve those states. |
-| Review completion is a structural approximation | `research-kit/lib/artifact.mjs`, lines 299-323; `brief.mjs`, lines 41-67 | Rewriting an extracted cell and declaring reviewer identity do not establish correct reasoning. |
-| Semantic support and builder quality are unmeasured | `research-kit/lib/measure.mjs`, lines 64-66; [ADR-0089](../../../docs/adr/0089-the-kit-measures-its-citations-without-a-judge.md), lines 26-39; [measurement](../../../docs/measurement-2026-09-28.md), lines 44-67 | Current measurement cannot justify a claim of fewer unsupported answers or coding defects. The historical report's absence of build outcomes is not a claim that every later project was exhaustively searched. |
-| The generated brief can overstate a passing verdict | `research-kit/lib/brief.mjs`, line 275: PASS emits wording that every blocking unknown is closed with evidence; `checks.mjs` accepts disclosed KNOWN-UNKNOWN | Correcting that wording and retaining warnings is an existing output defect, not a need for a new truth judge. |
+| PASS means no findings classified as failures | `fetchproof/lib/preflight.mjs`, lines 49-75; `checks.mjs`, lines 340-407 | Passing corpora may contain warnings and KNOWN-UNKNOWN rows. Public wording must preserve those states. |
+| Review completion is a structural approximation | `fetchproof/lib/artifact.mjs`, lines 299-323; `brief.mjs`, lines 41-67 | Rewriting an extracted cell and declaring reviewer identity do not establish correct reasoning. |
+| Semantic support and builder quality are unmeasured | `fetchproof/lib/measure.mjs`, lines 64-66; [ADR-0089](../../../docs/adr/0089-the-kit-measures-its-citations-without-a-judge.md), lines 26-39; [measurement](../../../docs/measurement-2026-09-28.md), lines 44-67 | Current measurement cannot justify a claim of fewer unsupported answers or coding defects. The historical report's absence of build outcomes is not a claim that every later project was exhaustively searched. |
+| The generated brief can overstate a passing verdict | `fetchproof/lib/brief.mjs`, line 275: PASS emits wording that every blocking unknown is closed with evidence; `checks.mjs` accepts disclosed KNOWN-UNKNOWN | Correcting that wording and retaining warnings is an existing output defect, not a need for a new truth judge. |
 | Consumer warning loss was already audited | [gap audit](../../../docs/review-2026-10-04-gap-audit.md), lines 123-130, 239-249 | Prioritize preserving the verdict's caveats in what the builder reads. Reconfirm the exact consumers and add regression checks before implementing. |
 | Feature growth itself is an acknowledged source of misreading | [ADR-0117](../../../docs/adr/0117-feature-freeze-from-0-9-0.md), lines 9-12, 18-30 | Use documentation, evaluation and existing defect fixes first. A new judge, check, command or format needs a named freeze exception. |
 
@@ -153,7 +153,7 @@ measurement. This audit has not run the pilot or measured its expected benefit.
 
 ## About text that is defensible now
 
-> Research-Kit helps agents base project decisions on traceable evidence. It records
+> Fetchproof helps agents base project decisions on traceable evidence. It records
 > declared blocking unknowns, preserves collected source material, and checks the
 > research artifacts against explicit rules. With its hooks installed, it can block
 > commits that fail those rules; Claude Code also has an edit-time hook. The checks make

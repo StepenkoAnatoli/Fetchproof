@@ -97,8 +97,8 @@ First build step: the named-reason change in `lib/http-transport.mjs`, red test 
 ## Next steps
 
 1. Review the **TODO** sections above (Contradictions, Decision) before handing off.
-2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "/root/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=b5f776152e156900 inputs=9e1578d351ea4b1d gate=pass -->
+<!-- fetchproof:brief-draft body=b5f776152e156900 inputs=9e1578d351ea4b1d gate=pass -->

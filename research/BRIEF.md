@@ -1,4 +1,4 @@
-# Brief - The research kit's own protocol: metered primary-source collection, provenance, and gate enforcement for agent-built bots on this machine.
+# Brief - Fetchproof's own protocol: metered primary-source collection, provenance, and gate enforcement for agent-built bots on this machine.
 
 _Auto-drafted 2026-09-19 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require human/agent judgement; everything else is assembled from evidence already
@@ -56,14 +56,14 @@ written expecting `data` to be a list of results; `firecrawl-cli` v1.23.3 on thi
 machine returns `{success, data: {web: [...]}, creditsUsed}` — a keyed object. No
 page was consulted for this, which is exactly the defect. The machine wins, and
 the bytes that settled it are pinned at
-`research-kit/test/fixtures/firecrawl-search-1.23.3.json` so the next reader does not
+`fetchproof/test/fixtures/firecrawl-search-1.23.3.json` so the next reader does not
 have to spend credits re-proving it. This one had teeth: the adapter believed the
 documented shape, so every search succeeded, cost credits, and returned an empty list
 in silence. Prefer the fixture over any page for this fact.
 
 **`firecrawl status` is not a command; `--status` is a flag.** Same class of error,
 same resolution — the CLI's own `--help` over any documentation, fixture at
-`research-kit/test/fixtures/firecrawl-status-1.23.3.txt`.
+`fetchproof/test/fixtures/firecrawl-status-1.23.3.txt`.
 
 **Tavily's restriction list argues with itself, and says so.** E-16 §3.2 forbids
 "any data mining, robots, or similar data gathering or extraction methods through the
@@ -122,7 +122,7 @@ vendor documentation this is acceptable; it would not be for redistribution.
 
 ### First build step
 
-`research-kit/lib/transport.mjs` already selects one adapter for everything, and
+`fetchproof/lib/transport.mjs` already selects one adapter for everything, and
 `selectTransport` is its single reader (ADR-0005). Make the seam two-sided rather than
 adding a third adapter to the one list:
 

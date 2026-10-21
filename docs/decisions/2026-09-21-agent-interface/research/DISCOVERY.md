@@ -1,4 +1,4 @@
-# Discovery Contract - How an AI agent should invoke the Research-Kit collector
+# Discovery Contract - How an AI agent should invoke the Fetchproof collector
 
 Started 2026-09-21. This file is the definition of "enough information to build".
 `preflight.mjs` reads it and blocks the build until every unknown below is either `CLOSED`
@@ -6,7 +6,7 @@ with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Decide whether Research-Kit should expose its collector as a **Model Context Protocol
+Decide whether Fetchproof should expose its collector as a **Model Context Protocol
 server**, and if so on which transport, or whether the REST-and-CLI seam that already
 exists (`bin/collect-remote.mjs`, `lib/dispatch.mjs`) is the right interface for an agent.
 

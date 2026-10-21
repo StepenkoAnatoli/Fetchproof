@@ -1,7 +1,7 @@
-# Discovery Contract - Which Node.js versions the research kit must run on as of 2026-09-27, and from which versions Node's built-in fetch honours HTTPS_PROXY through NODE_USE_ENV_PROXY
+# Discovery Contract - Which Node.js versions Fetchproof must run on as of 2026-09-27, and from which versions Node's built-in fetch honours HTTPS_PROXY through NODE_USE_ENV_PROXY
 
 Started 2026-09-27. This file is the definition of "enough information to build".
-`node research-kit/bin/preflight.mjs` reads it and blocks the build until every unknown
+`node fetchproof/bin/preflight.mjs` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

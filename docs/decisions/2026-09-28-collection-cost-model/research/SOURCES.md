@@ -5,7 +5,7 @@ carries the design, `S` secondary is context, `L` lead-only is a hint and never 
 
 | URL | Type | Title | Retrieved | Used for |
 |---|---|---|---|---|
-| https://mondayideas.com/ | S | Monday Ideas | 2026-09-28 | phase 0: What a Firecrawl scrape and search and a SerpAPI search cost today, and whether the research kit's budget and credit assumptions still hold |
+| https://mondayideas.com/ | S | Monday Ideas | 2026-09-28 | phase 0: What a Firecrawl scrape and search and a SerpAPI search cost today, and whether Fetchproof's budget and credit assumptions still hold |
 | https://www.firecrawl.dev/pricing | P | Pricing \| Firecrawl | 2026-09-28 | U-1, U-2 - the free plan's credits and the per-page price |
 | https://docs.firecrawl.dev/billing | P | Billing \| Firecrawl | 2026-09-28 | U-2, U-3 - what each endpoint costs in credits |
 | https://docs.firecrawl.dev/rate-limits | P | Rate Limits \| Firecrawl | 2026-09-28 | U-4 - requests per minute per plan and endpoint |

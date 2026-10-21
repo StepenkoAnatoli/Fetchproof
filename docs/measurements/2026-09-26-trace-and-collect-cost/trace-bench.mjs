@@ -7,14 +7,14 @@ import os from 'node:os';
 import pathMod from 'node:path';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { scaffoldProject } from '../../../research-kit/lib/scaffold.mjs';
-import { collectOne } from '../../../research-kit/lib/collect.mjs';
-import { readCorpus, traceOf } from '../../../research-kit/lib/corpus.mjs';
-import { runPreflight } from '../../../research-kit/lib/preflight.mjs';
+import { scaffoldProject } from '../../../fetchproof/lib/scaffold.mjs';
+import { collectOne } from '../../../fetchproof/lib/collect.mjs';
+import { readCorpus, traceOf } from '../../../fetchproof/lib/corpus.mjs';
+import { runPreflight } from '../../../fetchproof/lib/preflight.mjs';
 
 const body = '# Page\n\n' + 'The free plan allows 10 requests per minute and includes 1,000 credits. '.repeat(30);
 for (const n of [100, 500, 2000]) {
-  const root = fs.mkdtempSync(pathMod.join(os.tmpdir(), `rk-bench-${n}-`));
+  const root = fs.mkdtempSync(pathMod.join(os.tmpdir(), `fp-bench-${n}-`));
   scaffoldProject(root, { topic: 'bench' });
   const t0 = performance.now();
   for (let i = 0; i < n; i++) {

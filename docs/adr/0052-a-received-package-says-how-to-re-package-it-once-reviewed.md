@@ -25,7 +25,7 @@ README-FIRST in every package that is not yet approved prints:
 - the preflight and brief commands, to run from `project/`;
 - one line, run from the package folder, that re-packages the reviewed project under the
   identity the package arrived with:
-  `node "$HOME/.agents/research-kit/bin/artifact.mjs" create --root project --output reviewed.zip`
+  `node "$HOME/.agents/fetchproof/bin/artifact.mjs" create --root project --output reviewed.zip`
   followed by repository, ref, commit, workflow, run id and run attempt. The client ref is
   added when there is one. The API version and the two URLs are added only when they differ
   from what `create` would derive.

@@ -1,12 +1,12 @@
-# Discovery Contract - How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Research-Kit's evidence rows, corroboration and URL identity
+# Discovery Contract - How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Fetchproof's evidence rows, corroboration and URL identity
 
 Started 2026-10-04. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
-Benchmark Research-Kit's evidence rows, corroboration check and URL identity against the
+Benchmark Fetchproof's evidence rows, corroboration check and URL identity against the
 standards below. This is a decision about the repository (ADR-0030), read by the lead of a
 gap audit of the kit: it compares what the kit does - a claim is CLOSED on an evidence row
 (claim + URL + cached page, an optional `[quote: ...]` anchor checked byte for byte against

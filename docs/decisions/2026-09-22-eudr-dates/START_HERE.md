@@ -35,8 +35,8 @@ From **this** directory:
 
 ```
 cd docs/decisions/2026-09-22-eudr-dates
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-22: `PASS  0 blocking, 0 warning(s), 15 passing`, passes `--strict`, and

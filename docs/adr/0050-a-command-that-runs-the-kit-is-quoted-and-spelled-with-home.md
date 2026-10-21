@@ -9,8 +9,8 @@
 
 Every project the kit scaffolds tells its reader to run the kit, e.g. `node {{KIT}}/bin/doctor.mjs`.
 `{{KIT}}` is this machine's absolute kit path, or, for a project that travels, whatever `--kit`
-says. The Actions collector said `~/.agents/research-kit`, so every remote package told its reader
-`node ~/.agents/research-kit/bin/doctor.mjs`. The operator reads those packages on Windows.
+says. The Actions collector said `~/.agents/fetchproof`, so every remote package told its reader
+`node ~/.agents/fetchproof/bin/doctor.mjs`. The operator reads those packages on Windows.
 
 The corpus shows that spelling reaches node unexpanded in most Windows shells. On Windows,
 PowerShell passes an unquoted `~` to a native command literally unless PSNativeWindowsTildeExpansion
@@ -25,8 +25,8 @@ not help: bash and zsh expand a tilde only when it is unquoted (E-06, E-13).
    This covers the template files, the kit-root START_HERE.md and the skill. PowerShell requires
    quotes around an argument containing spaces (E-05, E-11), and bash and zsh would split an
    unquoted expansion.
-2. **A project that travels spells the kit `$HOME/.agents/research-kit`.** `collect.yml` passes
-   it to `new-project --kit`. `"$HOME/.agents/research-kit/bin/doctor.mjs"` reaches node as one
+2. **A project that travels spells the kit `$HOME/.agents/fetchproof`.** `collect.yml` passes
+   it to `new-project --kit`. `"$HOME/.agents/fetchproof/bin/doctor.mjs"` reaches node as one
    absolute path:
    - in Windows PowerShell 5.1 and every PowerShell 7 (`$HOME` is USERPROFILE, and a double-quoted
      string expands its variables: E-04, E-05, E-10, E-11);
@@ -37,7 +37,7 @@ not help: bash and zsh expand a tilde only when it is unquoted (E-06, E-13).
 3. **START_HERE says what cmd needs:** `%USERPROFILE%` where a command says `$HOME` (E-08, E-09).
    cmd expands neither `~` nor `$HOME`.
 4. The kit-root START_HERE.md, the skill and `scaffoldProject`'s default use the same spelling.
-   new-project's help shows `--kit '$HOME/.agents/research-kit'`, single-quoted so the typing
+   new-project's help shows `--kit '$HOME/.agents/fetchproof'`, single-quoted so the typing
    shell leaves it for the reader's shell.
 
 ## Rejected alternatives
@@ -47,7 +47,7 @@ not help: bash and zsh expand a tilde only when it is unquoted (E-06, E-13).
   (U-3).
 - **`%USERPROFILE%` everywhere.** Only cmd expands it; PowerShell, bash and zsh would pass it
   literally.
-- **A launcher on PATH** (a `research-kit` command). That is a new installed artifact with its
+- **A launcher on PATH** (a `fetchproof` command). That is a new installed artifact with its
   own failure modes, when quoting plus `$HOME` already reach every shell the kit's readers use.
 - **One line per shell in every document.** That quadruples every command for a difference
   only cmd needs. START_HERE carries the one cmd line instead.

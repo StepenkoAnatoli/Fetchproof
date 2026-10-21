@@ -6,8 +6,8 @@ in this repository.
 | You want to | Read | Then |
 |---|---|---|
 | set the kit up and run one research cycle | [`../README.md`](../README.md) | [`../QUICKSTART.md`](../QUICKSTART.md) for the GitHub route with one token |
-| know the rules an agent follows in a project | [`../AGENTS.md`](../AGENTS.md) | [`../research-kit/template/AGENTS.md`](../research-kit/template/AGENTS.md), the copy a project receives |
-| look up a command, a flag, the package format or the test suite | [`../research-kit/README.md`](../research-kit/README.md) | `node research-kit/bin/<command>.mjs --help` |
+| know the rules an agent follows in a project | [`../AGENTS.md`](../AGENTS.md) | [`../fetchproof/template/AGENTS.md`](../fetchproof/template/AGENTS.md), the copy a project receives |
+| look up a command, a flag, the package format or the test suite | [`../fetchproof/README.md`](../fetchproof/README.md) | `node fetchproof/bin/<command>.mjs --help` |
 | understand what a module owns and why the seams sit where they do | [`ARCHITECTURE.md`](ARCHITECTURE.md), the numbered seams first, then one row at a time | the ADRs each row cites |
 | know why a decision was made, and what it rejected | [`adr/README.md`](adr/README.md), one line per decision | the ADR itself, dated, with its trigger to revisit |
 | read the vocabulary the rules are written in | [`../CONTEXT.md`](../CONTEXT.md) | |

@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import pathMod from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { scaffoldProject } from '../../../research-kit/lib/scaffold.mjs';
-import { collectOne } from '../../../research-kit/lib/collect.mjs';
-import { readCorpus } from '../../../research-kit/lib/corpus.mjs';
+import { scaffoldProject } from '../../../fetchproof/lib/scaffold.mjs';
+import { collectOne } from '../../../fetchproof/lib/collect.mjs';
+import { readCorpus } from '../../../fetchproof/lib/corpus.mjs';
 const body = '# Page\n\n' + 'The free plan allows 10 requests per minute and includes 1,000 credits. '.repeat(30);
 for (const n of [100, 300, 500]) {
-  const root = fs.mkdtempSync(pathMod.join(os.tmpdir(), `rk-build-${n}-`));
+  const root = fs.mkdtempSync(pathMod.join(os.tmpdir(), `fp-build-${n}-`));
   scaffoldProject(root, { topic: 'bench' });
   const corpus = readCorpus(root);                     // once, as runResearch does
   const lap = [];

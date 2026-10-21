@@ -7,14 +7,14 @@
 ## Context
 
 `new-project --kit` sets how a project's files spell the kit. A project that travels passes
-`'$HOME/.agents/research-kit'`, and every scaffolded file used that spelling (ADR-0050).
+`'$HOME/.agents/fetchproof'`, and every scaffolded file used that spelling (ADR-0050).
 Files written *later* ignored the choice. `brief.mjs` and `timeline.mjs` spell their
 commands with `documentCommand` (ADR-0051), which looks at the *running* kit: `$HOME` when
 it is the standard install, its real path otherwise.
 
 On 2026-09-28 the kit ran from a repository checkout to research MoonAliza's open gaps. The
 project was scaffolded with the `$HOME` spelling, but the drafted `BRIEF.md` said
-`node /home/user/Research-Kit/research-kit/bin/brief.mjs`. That path exists only in that
+`node /home/user/Fetchproof/fetchproof/bin/brief.mjs`. That path exists only in that
 container, and the brief is the one file phase 2 must read. It was corrected by hand
 before the commit.
 
@@ -33,7 +33,7 @@ before the commit.
 - **Read the spelling back out of the scaffolded `AGENTS.md` or `DISCOVERY.md`.** That
   makes a sentence of prose load-bearing (the same objection as ADR-0014), and an operator
   editing their own AGENTS.md would silently change what the brief prints.
-- **Always write `$HOME/.agents/research-kit` into project files.** On a machine where the
+- **Always write `$HOME/.agents/fetchproof` into project files.** On a machine where the
   kit lives elsewhere and the project never travels, the brief would name a path that does
   not exist there. The operator's `--kit` choice is the only thing that knows which case
   applies.

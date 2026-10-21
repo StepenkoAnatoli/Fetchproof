@@ -21,7 +21,7 @@ refusals of anonymity, not of strangers.
 
 Dispatched through `bin/collect-remote.mjs` - the agent path, the same one an AI would
 use - as run
-[35620262684](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35620262684),
+[35620262684](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35620262684),
 depth `quick`. Three pages, all `full`, all from `docs.github.com`.
 
 The `corroboration` check reports that as `one-voice` rather than `independent`, and it is
@@ -34,8 +34,8 @@ From **this** directory:
 
 ```
 cd docs/decisions/2026-09-21-public-run-visibility
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-21: `PASS  0 blocking, 3 warning(s), 13 passing` and `handoff OK - 3 ledger

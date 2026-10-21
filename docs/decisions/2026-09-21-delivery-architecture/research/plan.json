@@ -1,5 +1,5 @@
 {
-  "topic": "How Research-Kit should be delivered to a non-technical user",
+  "topic": "How Fetchproof should be delivered to a non-technical user",
   "notes": "Second pass, 2026-09-21. The corpus passed preflight and even --strict, and every one of U-1..U-8 rested on exactly ONE capture - the kit has no corroboration check, so the gate was structurally blind to it. These three pages are independent second sources for the three claims that carry decisions: the dispatch response shape (ADR-0031), environments on a free plan going private (ADR-0035), and runner cost for public repositories. Appended to the SAME ledger, because two runs would be two chains.",
   "depth": "normal",
   "refreshDays": 30,

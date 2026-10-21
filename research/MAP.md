@@ -2,7 +2,7 @@
 
 ## Topic
 
-The research kit's own protocol: metered primary-source collection, provenance, and gate
+Fetchproof's own protocol: metered primary-source collection, provenance, and gate
 enforcement for agent-built bots on this machine.
 
 ## Subtopics

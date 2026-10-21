@@ -1,4 +1,4 @@
-# Contributing to Research-Kit
+# Contributing to Fetchproof
 
 Thanks for helping make research easier to inspect and hand off. Bug fixes,
 documentation, useful regressions and vendor compatibility updates are welcome.
@@ -12,12 +12,12 @@ to find the relevant guide or decision.
 
 ## Find a task
 
-- [Good first issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+- [Good first issues](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
   are small, well-defined tasks with a clear way to verify the result.
-- [Help wanted](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22)
+- [Help wanted](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22)
   marks tasks where another contributor would help.
-- [Bugs](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3Abug)
-  and [documentation issues](https://github.com/StepenkoAnatoli/Research-Kit/issues?q=is%3Aissue%20is%3Aopen%20label%3Adocumentation)
+- [Bugs](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3Abug)
+  and [documentation issues](https://github.com/StepenkoAnatoli/Fetchproof/issues?q=is%3Aissue%20is%3Aopen%20label%3Adocumentation)
   identify the kind of change.
 
 Check for an existing fix PR before starting. A short comment on the issue helps
@@ -35,12 +35,12 @@ The kit uses plain Node with no package install step.
 Fork the repository, clone your fork, and create a branch for one task:
 
 ```sh
-git clone https://github.com/YOUR-USERNAME/Research-Kit.git
-cd Research-Kit
+git clone https://github.com/YOUR-USERNAME/Fetchproof.git
+cd Fetchproof
 git switch -c fix/describe-the-defect
-node research-kit/bin/handoff.mjs
-node research-kit/bin/preflight.mjs
-node research-kit/bin/doctor.mjs
+node fetchproof/bin/handoff.mjs
+node fetchproof/bin/preflight.mjs
+node fetchproof/bin/doctor.mjs
 ```
 
 Run these commands from the checkout you intend to change. Handoff checks the
@@ -57,11 +57,11 @@ test groups, fix the behavior, then rerun those groups. Group arguments match te
 file names; for example:
 
 ```sh
-node research-kit/bin/selftest.mjs machine panel
-node research-kit/bin/selftest.mjs
-node research-kit/bin/preflight.mjs
-node research-kit/bin/handoff.mjs
-node research-kit/bin/doctor.mjs
+node fetchproof/bin/selftest.mjs machine panel
+node fetchproof/bin/selftest.mjs
+node fetchproof/bin/preflight.mjs
+node fetchproof/bin/handoff.mjs
+node fetchproof/bin/doctor.mjs
 git diff --check
 ```
 
@@ -69,7 +69,7 @@ The offline suite needs no vendor key or paid collection. Tests that exercise a
 local browser need Chromium or Chrome; the suite reports unavailable capabilities
 as `UNSUP`, with their reason. Include unsupported results when reporting a run.
 The full suite can take around 25–30 minutes on a Windows PC. The normal commit
-gate runs it when a commit touches `research-kit/`; let that gate finish.
+gate runs it when a commit touches `fetchproof/`; let that gate finish.
 
 A red suite stops work. Record the failing test and working directory, then fix
 or explain the failure before continuing. Do not bypass the hooks to publish a
@@ -78,7 +78,7 @@ fix that has not passed its required checks.
 Keep these records with the change:
 
 - Update `docs/ARCHITECTURE.md` in the same commit as a declared code-path change.
-- Update the registered test count in `research-kit/README.md` when adding or
+- Update the registered test count in `fetchproof/README.md` when adding or
   removing tests, and describe the user-visible fix under `Unreleased` in
   `CHANGELOG.md`.
 - Record a behavior decision with a rejected alternative in an ADR. An obvious
@@ -113,13 +113,13 @@ limitations. Wait for the required CI jobs and respond to review comments.
 
 ## GitHub Actions
 
-[offline-suite](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/offline-suite.yml)
+[offline-suite](https://github.com/StepenkoAnatoli/Fetchproof/actions/workflows/offline-suite.yml)
 runs on pull requests and `main` pushes. It checks Linux and Windows, supported
 Node lines, cross-language conformance, the root preflight, archive behavior and
 whether verification leaves the checkout clean. Its `suite` job summarizes the
 required results.
 
-[action-pins](https://github.com/StepenkoAnatoli/Research-Kit/actions/workflows/action-pins.yml)
+[action-pins](https://github.com/StepenkoAnatoli/Fetchproof/actions/workflows/action-pins.yml)
 checks pinned third-party actions weekly and on relevant workflow changes.
 The collector and live-collection workflows have separate purposes and may spend
 credits; they are documented in the [collector guide](README.md#run-the-collector-on-github).

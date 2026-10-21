@@ -1,5 +1,5 @@
 {
-  "topic": "How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Research-Kit's hash-chained ledger",
+  "topic": "How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Fetchproof's hash-chained ledger",
   "notes": "Owner pages per unknown, no queries: every owner URL is known (W3C TR for PROV-DM, the in-toto attestation repository for the Statement, the DSSE envelope and the spec README, docs.sigstore.dev for Rekor, rfc-editor.org for RFCs 3161, 6962 and 8785, slsa.dev for the provenance predicate). Budget: 14 scrapes and 3 searches on the metered transport; phase 0 (decompose, 2026-10-04) spent 3 searches and 3 scrapes on secondary context, so this plan holds 10 pages and leaves one scrape spare. Depth deep so maxScrapes is the cap. No --fallback. Run 1 (2026-10-04): 9 collected, 1 failed - https://docs.sigstore.dev/logging/sign-verify/ answered HTTP 404 and was dropped from the plan; the Rekor overview names the inclusion proof and the append-only property but not the signed entry timestamp. Run 2: Rekor's openapi.yaml, the spare scrape. 13 of 14 scrapes and 3 of 3 searches spent in all (3 scrapes and 3 searches by phase 0).",
   "depth": "deep",
   "refreshDays": 30,

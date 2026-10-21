@@ -33,7 +33,7 @@ paths for the audit bundle, but nothing else did.
   project has. Refusing tells the operator exactly what to remove.
 - **Refuse every symlink, wherever it points.** A link that stays inside the project
   leaks nothing. Resolving real paths blocks exactly the escape.
-- **The outside break-test's own fix** (`arena/01a0e65a-research-kit`): it hardened
+- **The outside break-test's own fix** (`arena/01a0e65a-fetchproof`): it hardened
   `readCaptures` but not packaging, which still copied all three outside files in the
   reproduction.
 

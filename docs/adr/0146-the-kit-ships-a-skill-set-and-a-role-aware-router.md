@@ -28,7 +28,7 @@ names the set exactly, is enough).
 
 ## Decision
 
-1. **The set lives in `research-kit/skills/<name>/SKILL.md`, one directory per skill,**
+1. **The set lives in `fetchproof/skills/<name>/SKILL.md`, one directory per skill,**
    and is deployed to every personal skill root (`skillRoots()`: the machine config's
    `skillRoots`, else `RUNTIME_ANCHORS.skillRoots`) as `<root>/<name>`, a sibling of
    `research-first`, and by `install.mjs --into` into the project skill directory beside
@@ -52,7 +52,7 @@ names the set exactly, is enough).
    also apply, so the current copy is not byte-identical to that receipt:
    `leadorchastratorv2.md` -> `lead-orchestrator/SKILL.md` (its frontmatter name is
    `lead-orchestrator`), `agent-briefsv2.md` -> `references/agent-briefs.md`. The kit adds
-   one file of its own beside them, `lead-orchestrator/references/research-kit.md`, which
+   one file of its own beside them, `lead-orchestrator/references/fetchproof.md`, which
    says how it runs on each machine and notes that two references it names
    (`project-facts-template.md`, `report-templates.md`) are not in the source. Seven were
    received as `.skill` zip archives the collector's transport refuses to capture (U-07,
@@ -72,7 +72,7 @@ names the set exactly, is enough).
    **Changed after receipt** (2026-10-06, pull-request review), each file marked at its
    top as Apache-2.0 section 4(b) asks: auto-build's `SKILL.md` (the standing mandate no
    longer skips the Mandate wait, so it says what decision 6 says; it names
-   `references/research-kit.md` as governing; the missing `references/run-ledger.md` is
+   `references/fetchproof.md` as governing; the missing `references/run-ledger.md` is
    replaced by lead-orchestrator's `SKILL.md`), `references/mandate.md` (section 4 to
    match; `Architectural tasks: proceed` withdrawn), `assets/claude-md-auto-build-mandate.md`
    (the same), `references/merge-protocol.md` (the merge command pins the approved head
@@ -115,8 +115,8 @@ names the set exactly, is enough).
    for each target. Research-first has its separate copy behavior.
 
 6. **Auto-build runs the kit's way, from a note beside it** (owner order, 2026-10-06):
-   `auto-build/references/research-kit.md`, written by the kit, governs the run inside a
-   Research-Kit project. Stage 0 starts from the router (`doctor`, `preflight`, `handoff`,
+   `auto-build/references/fetchproof.md`, written by the kit, governs the run inside a
+   Fetchproof project. Stage 0 starts from the router (`doctor`, `preflight`, `handoff`,
    the brief); on a builder Stage 1 is `handoff` + `build-from-brief` + `fact-request` and
    the run stops at the Mandate with "awaiting collector" when a fact is missing;
    requirements and Mandate decisions name the `E-##` rows they rest on; constants cite

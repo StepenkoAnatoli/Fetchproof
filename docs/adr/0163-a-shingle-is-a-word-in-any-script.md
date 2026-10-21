@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-17
 - **Status:** superseded in part by ADR-0176 (in a script without word spaces a character is a token, and a shingle is fifteen of them; the word rule for every other script stands)
-- **Area:** `research-kit/lib/similarity.mjs`
+- **Area:** `fetchproof/lib/similarity.mjs`
 - **Supersedes nothing.** The word basis, the sketch size and `MIRROR_THRESHOLD` are kept as
   they were decided and measured; what changes is which characters count as a word.
 

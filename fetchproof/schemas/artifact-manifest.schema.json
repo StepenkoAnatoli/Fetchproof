@@ -1,0 +1,445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fetchproof/artifact-manifest-v1",
+  "title": "Fetchproof portable artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "formatVersion",
+    "packageId",
+    "clientRef",
+    "createdAt",
+    "kind",
+    "state",
+    "buildAuthorized",
+    "topic",
+    "producer",
+    "source",
+    "collection",
+    "review",
+    "gate",
+    "nextActions",
+    "privacy",
+    "files"
+  ],
+  "properties": {
+    "format": {
+      "const": "fetchproof-artifact"
+    },
+    "formatVersion": {
+      "type": "string",
+      "pattern": "^[12]\\.[0-9]+\\.[0-9]+$"
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^FP-[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "clientRef": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "createdAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "COLLECTED_CORPUS",
+        "APPROVED_RESEARCH"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "COLLECTION_FAILED",
+        "REVIEW_REQUIRED",
+        "HUMAN_REVIEW_REQUIRED",
+        "REVIEW_IN_PROGRESS",
+        "PREFLIGHT_BLOCKED",
+        "APPROVED_BRIEF"
+      ]
+    },
+    "buildAuthorized": {
+      "type": "boolean"
+    },
+    "topic": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "platform", "runtime"],
+      "properties": {
+        "name": {
+          "const": "fetchproof"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "ref",
+        "commit",
+        "workflow",
+        "apiVersion",
+        "workflowRunId",
+        "runUrl",
+        "htmlUrl",
+        "runAttempt"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "workflow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apiVersion": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "workflowRunId": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runUrl": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "htmlUrl": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "runAttempt": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result",
+        "fetchProvider",
+        "searchProvider",
+        "captures",
+        "creditsUsed",
+        "completeness",
+        "startedAt",
+        "finishedAt"
+      ],
+      "properties": {
+        "result": {
+          "type": "string",
+          "enum": ["SUCCEEDED", "PARTIAL", "FAILED"]
+        },
+        "fetchProvider": {
+          "type": ["string", "null"]
+        },
+        "searchProvider": {
+          "type": ["string", "null"]
+        },
+        "captures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "creditsUsed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "completeness": {
+          "type": "string",
+          "enum": ["FULL", "PARTIAL", "NONE"]
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "finishedAt": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mapClassified",
+        "findingsReviewed",
+        "briefReviewed"
+      ],
+      "properties": {
+        "mapClassified": {
+          "type": "boolean"
+        },
+        "findingsReviewed": {
+          "type": "boolean"
+        },
+        "briefReviewed": {
+          "type": "boolean"
+        },
+        "by": {
+          "description": "Who did the review, as the reviewer declared it in BRIEF.md (format 1.1.0, ADR-0074). A declaration nothing verifies, and not an approval condition. Absent in 1.0.0 packages. \"human\" occurs only in 1.x packages: from 2.0.0 the review is the agent's (ADR-0107).",
+          "enum": ["agent", "human", "undeclared"]
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "buildAuthorized",
+        "blockingFindings"
+      ],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "NOT_RUN",
+            "PASS",
+            "FAIL",
+            "INCOMPLETE",
+            "BLOCKED"
+          ]
+        },
+        "buildAuthorized": {
+          "type": "boolean"
+        },
+        "blockingFindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "remedy": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "path", "required"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containsResearchTopic",
+        "containsCollectedPages",
+        "containsSecrets",
+        "safeForPublicDistribution"
+      ],
+      "properties": {
+        "containsResearchTopic": {
+          "type": "boolean"
+        },
+        "containsCollectedPages": {
+          "type": "boolean"
+        },
+        "containsSecrets": {
+          "type": "boolean"
+        },
+        "safeForPublicDistribution": {
+          "type": "boolean"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "APPROVED_BRIEF"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "properties": {
+          "kind": {
+            "const": "APPROVED_RESEARCH"
+          },
+          "buildAuthorized": {
+            "const": true
+          },
+          "review": {
+            "properties": {
+              "mapClassified": {
+                "const": true
+              },
+              "findingsReviewed": {
+                "const": true
+              },
+              "briefReviewed": {
+                "const": true
+              }
+            }
+          },
+          "gate": {
+            "properties": {
+              "verdict": {
+                "const": "PASS"
+              },
+              "buildAuthorized": {
+                "const": true
+              },
+              "blockingFindings": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "buildAuthorized": {
+            "const": false
+          },
+          "gate": {
+            "properties": {
+              "buildAuthorized": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^https://[^\\s\\\\\\r\\n]+$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\u0000)[^\\\\\\r\\n]+$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "role",
+        "mediaType",
+        "byteLength",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "HUMAN_INSTRUCTIONS",
+            "AGENT_INSTRUCTIONS",
+            "PROJECT_START",
+            "DISCOVERY_CONTRACT",
+            "RESEARCH_MAP",
+            "SOURCE_REGISTER",
+            "EVIDENCE_REGISTER",
+            "RESEARCH_BRIEF",
+            "COLLECTION_PLAN",
+            "KIT_CONFIGURATION",
+            "PROVENANCE_LEDGER",
+            "RAW_CAPTURE",
+            "COLLECTION_SUMMARY",
+            "PROBLEM_REPORT",
+            "SCHEMA",
+            "OTHER"
+          ]
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    }
+  }
+}

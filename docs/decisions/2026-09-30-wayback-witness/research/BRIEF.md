@@ -81,8 +81,8 @@ witnessed record, a named "no snapshot", and a named malformed result.
 ## Next steps
 
 1. Contradictions and Decision were reviewed by an agent on 2026-09-30.
-2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the builder (phase 2). Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
 
-<!-- research-kit:brief-draft body=ac901c65302713a9 inputs=39bb1ae3db5d453c gate=pass -->
+<!-- fetchproof:brief-draft body=ac901c65302713a9 inputs=39bb1ae3db5d453c gate=pass -->

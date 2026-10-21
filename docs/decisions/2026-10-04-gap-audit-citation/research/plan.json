@@ -1,5 +1,5 @@
 {
-  "topic": "How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Research-Kit's evidence rows, corroboration and URL identity",
+  "topic": "How citation-integrity and text-identity standards decide that a claim is supported and that two texts or URLs are the same, as a benchmark for Fetchproof's evidence rows, corroboration and URL identity",
   "notes": "Owner pages per unknown (U-1 Wikipedia V, RS and NOR; U-2 Crossref REST API docs and one live work record; U-3 UAX #15; U-4 UTS #46 and the WHATWG URL Standard; U-5 datasketch MinHash; U-6 Elicit and Perplexity help centres). No queries: the lead's budget of 3 searches was spent by decompose (3 compound-topic parts, ADR-0085), so the plan is urls only. Depth deep so maxScrapes is the cap: 11 pages, which with decompose's 3 is the lead's 14. The SimHash half of U-5 is not in the plan - no scrape is left for it after the 11 owner pages - and the brief records it as a known unknown with its day-one step.",
   "depth": "deep",
   "refreshDays": 30,

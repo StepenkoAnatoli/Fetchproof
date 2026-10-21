@@ -6,7 +6,7 @@ carries the design, `S` secondary is context, `L` lead-only is a hint and never 
 | URL | Type | Title | Retrieved | Used for |
 |---|---|---|---|---|
 | https://www.w3.org/TR/annotation-model/ | P | Web Annotation Data Model | 2026-10-03 | U-1: the Text Quote Selector (exact, prefix, suffix) as the W3C Recommendation defines it; re-fetched through Firecrawl because the phase-0 keyless capture is graded partial |
-| https://w3c.github.io/web-annotation/model/fpwd/ | S | Web Annotation Data Model | 2026-10-03 | phase 0: What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Research-Kit's captures |
+| https://w3c.github.io/web-annotation/model/fpwd/ | S | Web Annotation Data Model | 2026-10-03 | phase 0: What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Fetchproof's captures |
 | https://web.hypothes.is/blog/fuzzy-anchoring/ | P | Fuzzy Anchoring : Hypothesis | 2026-10-03 | U-1: Hypothesis's own description of fuzzy anchoring - quote, prefix/suffix context, position, and the tolerance it accepts |
 | https://raw.githubusercontent.com/hypothesis/client/main/src/annotator/anchoring/match-quote.ts | P | match-quote-ts | 2026-10-03 | U-1: the anchoring package's quote matcher in the hypothesis/client source - the algorithm and its error tolerance |
 | https://html.spec.whatwg.org/multipage/parsing.html | P | HTML Standard | 2026-10-03 | U-2: 'determining the character encoding' and the prescan algorithm, as the WHATWG HTML Standard defines them |

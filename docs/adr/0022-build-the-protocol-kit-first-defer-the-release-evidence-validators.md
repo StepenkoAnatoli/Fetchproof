@@ -2,13 +2,13 @@
 
 - **Date:** 2026-09-17
 - **Status:** accepted
-- **Area:** build scope, `research-kit/`, the superpowers specs
+- **Area:** build scope, `fetchproof/`, the superpowers specs
 
 ## Context
 
 This checkout is the planning-and-handoff bundle: 79 source documents, a research corpus
 with its `research/raw/**` deliberately absent, and **no implementation at all**.
-`BUNDLE_INDEX.md` says so in its own words — `research-kit/**`, schemas, dependencies and
+`BUNDLE_INDEX.md` says so in its own words — `fetchproof/**`, schemas, dependencies and
 implementation code are outside the archive's inclusion boundary.
 
 Phase 2 therefore starts from two very different bodies of specification, and they are not
@@ -32,9 +32,9 @@ the same size or the same kind:
    pairs are listed as intentionally absent).
 
 The second layer *validates releases of the first*. Its specs repeatedly name files the
-bundle does not carry — `research-kit/schemas/trap-register.schema.json`,
-`research-kit/test/fi-validator-conformance.test.mjs`,
-`research-kit/lib/r29-workbook-linkage-validator.mjs` — and several of its gates are defined
+bundle does not carry — `fetchproof/schemas/trap-register.schema.json`,
+`fetchproof/test/fi-validator-conformance.test.mjs`,
+`fetchproof/lib/r29-workbook-linkage-validator.mjs` — and several of its gates are defined
 against sealed record catalogs, signed pointers, and worksheets that exist only on the
 machine that ran the qualification. Building it from the specs alone would mean inventing
 the evidence it is supposed to check.
@@ -43,7 +43,7 @@ the evidence it is supposed to check.
 
 **Build the protocol kit completely, and defer the release-evidence validator layer.**
 
-Delivered, and covered by the suite (`node research-kit/bin/selftest.mjs`):
+Delivered, and covered by the suite (`node fetchproof/bin/selftest.mjs`):
 
 - every `lib/` module named in `docs/ARCHITECTURE.md`'s module table except the five that
   belong to the deferred layer (`release-validator`, `path-authority-validator`,

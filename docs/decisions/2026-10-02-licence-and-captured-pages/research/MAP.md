@@ -2,7 +2,7 @@
 
 ## Topic
 
-Which licence should Research-Kit publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it
+Which licence should Fetchproof publish under so that people and agents may install and run it, and may the cached third-party pages in its research corpora be redistributed under it
 
 ## Subtopics
 

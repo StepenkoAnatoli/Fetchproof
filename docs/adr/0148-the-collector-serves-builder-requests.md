@@ -6,7 +6,7 @@
   requests**. That one item has three parts: the request file format
   `research/requests/<id>.json` and its result file `<id>.result.json`; the auto-collect
   mode of the desktop panel (`lib/auto-collect.mjs`, `lib/requests.mjs`); and its machine-local
-  settings file `research-kit.autocollect.json`, beside the machine config. No command, flag,
+  settings file `fetchproof.autocollect.json`, beside the machine config. No command, flag,
   transport, provider or check is added. ADR-0010 (only the collector fetches), ADR-0056 (the
   topic is the project's), ADR-0110 (no fetch into this machine's network) and ADR-0129 (on
   exhaustion the run stops and the operator decides) stay in force.

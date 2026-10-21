@@ -8,7 +8,7 @@
 
 On 2026-09-27 a keyless plan query ended with "collected 0, cached 0, failed 0", and nothing
 in the output said a search had run. DuckDuckGo had answered the kit's user agent
-(`research-kit/1.0 (+keyless transport; ...)`) with its bot check: HTTP 200, an
+(`fetchproof/1.0 (+keyless transport; ...)`) with its bot check: HTTP 200, an
 `anomaly-modal`, "Unfortunately, bots use DuckDuckGo too", and no result links. The adapter
 parsed zero links and returned `ok: true`. The same query fetched with a browser user agent
 returned ten results.

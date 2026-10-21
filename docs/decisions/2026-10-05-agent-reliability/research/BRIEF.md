@@ -1,4 +1,4 @@
-# Brief - Research-Kit's reliability promise
+# Brief - Fetchproof's reliability promise
 
 _Auto-drafted 2026-10-05, then reviewed and condensed by the agent._
 
@@ -79,5 +79,4 @@ as a separate later variant. Track useful completion, unsupported/confident erro
 failures, truthful reporting, appropriate uncertainty, unnecessary blocking and cost
 separately. Treat the pilot as exploratory; make outcome claims only within what its
 results support. Detailed cases and grading limits are in AUDIT.md.
-
-<!-- research-kit:brief-draft body=fa7f5622bcd942a4 inputs=0cca9e90841955de gate=pass -->
+<!-- fetchproof:brief-draft body=dc9ac376cb883895 inputs=4e1357f3d5796359 gate=pass -->

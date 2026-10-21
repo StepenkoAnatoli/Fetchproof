@@ -18,7 +18,7 @@ sh hooks cannot read.
 - **The hand-on reproduces what git did before the kit.** The hooks folder the install replaced
   runs when there was one. Otherwise the repository's own hooks run, as ADR-0112 had it.
 - **The install records the replaced folder in git's own config**, as
-  `research-kit.previousHooksPath` in the global scope, where the hooks read it with
+  `fetchproof.previousHooksPath` in the global scope, where the hooks read it with
   `git config --type=path`. It never records the kit's own folder: an install over an install
   would otherwise hand on to itself. Uninstall clears the record as it restores the setting.
 - **One implementation.** The logic lives in `githooks/hand-on.sh`, which every hook sources.

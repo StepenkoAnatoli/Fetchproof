@@ -2,7 +2,7 @@
 
 ## Topic
 
-What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Research-Kit's captures
+What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Fetchproof's captures
 
 ## Subtopics
 
@@ -42,7 +42,7 @@ is not enough.
   unknown.
 - Phase 0 is on the record: the compound topic was split into four fragments (ADR-0085),
   of which "What do web-capture" found Microsoft Edge screenshot pages and "as a benchmark
-  for Research-Kit's captures" found exome capture kits; the two pages collected are the
+  for Fetchproof's captures" found exome capture kits; the two pages collected are the
   W3C annotation model (Recommendation, keyless, graded partial) and its 2014 first public
   working draft. The plan names the owner pages by hand.
 

@@ -23,7 +23,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Answer, for the owner, whether Research-Kit measurably beats a strongly prompted agent
+Answer, for the owner, whether Fetchproof measurably beats a strongly prompted agent
 given the same browsing, file, and testing tools, the same models, and the same total
 budget (ADR-0145). The deliverable is the evaluation itself: a frozen protocol and
 per-task grading rubrics committed before any trial (`research/PROTOCOL.md`), then
@@ -116,5 +116,4 @@ after the first trial.
 3. Protocol step 4: score blind-first, report with status words, record each
    mechanism's keep/simplify/drop as its own ADR, and flip this project's row in
    `docs/decisions/README.md` from `pending`.
-
-<!-- research-kit:brief-draft body=2205193943dee069 inputs=bb88a419d4c7376e gate=pass -->
+<!-- fetchproof:brief-draft body=f5df338c6d1537f6 inputs=b29a74a641aba847 gate=pass -->

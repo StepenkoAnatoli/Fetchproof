@@ -4,7 +4,7 @@
 - **Status:** accepted
 - **Area:** lifts the feature freeze (ADR-0117) for one item: **the desktop panel** - one
   command, `bin/panel.mjs` (flags `--project`, `--port`, `--no-open`), its module
-  `lib/panel.mjs`, and the page under `research-kit/panel/`. No transport, provider, check,
+  `lib/panel.mjs`, and the page under `fetchproof/panel/`. No transport, provider, check,
   file format or configuration key is added; the key it saves is the existing `serpapiKey`.
   ADR-0010 (a builder does not collect), ADR-0012 (the kit names no runtime), ADR-0050 (no
   PATH launcher) and ADR-0056 (the topic is the project's) stay in force.

@@ -1,4 +1,4 @@
-# Brief - How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Research-Kit's corpus and gate
+# Brief - How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Fetchproof's corpus and gate
 
 _Auto-drafted 2026-10-03 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Benchmark Research-Kit's corpus parsing, source judgement and search merging against the
+Benchmark Fetchproof's corpus parsing, source judgement and search merging against the
 tools and specifications below. This is a decision about the repository (ADR-0030), read by
 the lead of a gap audit of the kit: it compares what the kit's table parser, evidence rows,
 search seam and source grading do with what the GitHub Flavored Markdown specification says
@@ -135,8 +135,7 @@ the kit - the freeze (ADR-0117) stands, and a gap found here enters through an A
 ## Next steps
 
 1. The TODO sections are answered (Reviewed by: agent, ADR-0107).
-2. Hand this file to the gap-audit lead (phase 2 here is the audit's reading, not a build). Re-running `node "/root/.agents/research-kit/bin/brief.mjs"`
+2. Hand this file to the gap-audit lead (phase 2 here is the audit's reading, not a build). Re-running `node "/root/.agents/fetchproof/bin/brief.mjs"`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=141c7738e2fe67e2 inputs=024ea499cfcbbd2d gate=pass -->
+<!-- fetchproof:brief-draft body=53e8b46cace76f83 inputs=d4b0dd3622e80c36 gate=pass -->

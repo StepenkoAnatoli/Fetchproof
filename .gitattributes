@@ -12,7 +12,7 @@
 # makes the checkout write what the ledger hashed, on every platform, regardless
 # of the reader's core.autocrlf. This file outranks that setting.
 #
-# See ADR-0020 and research-kit/lib/handoff.mjs, which detects this exact case
+# See ADR-0020 and fetchproof/lib/handoff.mjs, which detects this exact case
 # and says so instead of blaming a missing push.
 research/raw/*   text eol=lf
 *.jsonl          text eol=lf
@@ -27,4 +27,4 @@ research/*.md    text eol=lf
 # The commit gate is a POSIX sh script. CRLF in a shebang script is a syntax error
 # on every POSIX host, and the failure is a hook that cannot run - which, per
 # ADR-0001, git reports as a clean commit.
-research-kit/githooks/pre-commit text eol=lf
+fetchproof/githooks/pre-commit text eol=lf

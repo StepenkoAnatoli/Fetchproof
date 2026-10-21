@@ -25,7 +25,7 @@ not package publication, Registry submission or an accepted packaging design.
 ## Observed verification
 
 The nested commands ran in
-`C:\Users\PC\.codex\worktrees\mcp-registry-audit\Research-Kit\docs\decisions\2026-10-05-mcp-registry`.
+`C:\Users\PC\.codex\worktrees\mcp-registry-audit\Fetchproof\docs\decisions\2026-10-05-mcp-registry`.
 
 - **verified:** decomposition gathered candidate material and seeded all nine universal
   dimensions. The reviewed map has twelve dimensions, eleven COVERED and one DISMISSED

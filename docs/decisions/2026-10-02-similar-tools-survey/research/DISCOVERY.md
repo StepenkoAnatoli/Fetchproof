@@ -1,7 +1,7 @@
 # Discovery Contract - Which similar agent-research and evidence-provenance tools on GitHub and Hugging Face do something this kit should take
 
 Started 2026-10-02. This file is the definition of "enough information to build".
-`node "/root/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "/root/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

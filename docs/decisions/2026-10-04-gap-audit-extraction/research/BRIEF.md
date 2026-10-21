@@ -1,4 +1,4 @@
-# Brief - How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Research-Kit's converter, completeness grade and capture acceptance
+# Brief - How content extractors grade their output, how web tools read PDFs, and how challenge pages and soft 404s are detected, as a benchmark for Fetchproof's converter, completeness grade and capture acceptance
 
 _Auto-drafted 2026-10-04 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require the reviewing agent's judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-Benchmark three of Research-Kit's capture mechanisms against the tools and specifications
+Benchmark three of Fetchproof's capture mechanisms against the tools and specifications
 that own the comparable behaviour. This is a decision about the repository (ADR-0030), read
 by the lead of a gap audit of the kit, and it is a documentation benchmark: nothing is built
 here. The three mechanisms are (1) the kit's HTML-to-markdown converter, benchmarked
@@ -153,7 +153,6 @@ kit - the freeze (ADR-0117) stands, and a gap found here enters through an ADR.
 
 1. The TODO sections are answered (Reviewed by: agent, ADR-0107).
 2. Hand this file to the gap-audit lead (phase 2 here is the audit's reading, not a build).
-   Re-running `node "$HOME/.agents/research-kit/bin/brief.mjs"` redrafts this file while it
+   Re-running `node "$HOME/.agents/fetchproof/bin/brief.mjs"` redrafts this file while it
    is unedited; after any edit it refuses without `--force`, so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=b80e8ae3fc14b379 inputs=1b5efc82a811e299 gate=pass -->
+<!-- fetchproof:brief-draft body=57a2a1673606792f inputs=2248490c366c8ea3 gate=pass -->

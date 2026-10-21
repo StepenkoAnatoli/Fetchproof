@@ -17,11 +17,11 @@ const records = [];
 for (const profile of ['unstamped', 'pre-0069', 'current']) {
   const root = fixtures.approvedProject();
   const file = path.join(root, 'research', 'BRIEF.md');
-  const authored = fs.readFileSync(file, 'utf8').replace(/\n?<!-- research-kit:brief-draft[^>]*-->\s*/g, '\n');
+  const authored = fs.readFileSync(file, 'utf8').replace(/\n?<!-- fetchproof:brief-draft[^>]*-->\s*/g, '\n');
   if (profile === 'unstamped') fs.writeFileSync(file, authored);
   else if (profile === 'pre-0069') {
     historicalBrief.renderBrief(root, { force: true });
-    const stamp = fs.readFileSync(file, 'utf8').match(/<!-- research-kit:brief-draft[^>]*-->/)?.[0];
+    const stamp = fs.readFileSync(file, 'utf8').match(/<!-- fetchproof:brief-draft[^>]*-->/)?.[0];
     if (!stamp) throw new Error('the historical writer did not emit its actual stamp');
     fs.writeFileSync(file, `${authored.trimEnd()}\n\n${stamp}\n`);
   }
@@ -38,7 +38,7 @@ for (const profile of ['unstamped', 'pre-0069', 'current']) {
     formatVersion: built.manifest.formatVersion, producerState: built.manifest.state,
     producerAuthorized: built.manifest.buildAuthorized, consumerStatus: validation.status,
     consumerAuthorized: validation.buildAuthorized, stamp,
-    stampHasGate: /<!-- research-kit:brief-draft[^>]* gate=/.test(text),
+    stampHasGate: /<!-- fetchproof:brief-draft[^>]* gate=/.test(text),
     historicalInputs: historicalBrief.briefInputsHash(snapshot), currentInputs: currentBrief.briefInputsHash(snapshot),
     currentProducerState: currentArtifact.deriveState(root).state,
     briefText: text,

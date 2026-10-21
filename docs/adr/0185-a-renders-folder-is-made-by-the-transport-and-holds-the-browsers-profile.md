@@ -2,9 +2,9 @@
 
 - **Date:** 2026-10-19
 - **Status:** accepted
-- **Area:** `research-kit/lib/browser-transport.mjs` (`renderGuarded`),
-  `research-kit/lib/browser-guard.mjs` (`makeRenderFolder`, `renderThroughGuard`),
-  `research-kit/lib/core.mjs` (`removeRetrying`)
+- **Area:** `fetchproof/lib/browser-transport.mjs` (`renderGuarded`),
+  `fetchproof/lib/browser-guard.mjs` (`makeRenderFolder`, `renderThroughGuard`),
+  `fetchproof/lib/core.mjs` (`removeRetrying`)
 - **Defect:** break-test of the 2026-10-19 review, finding B1
 - **Freeze (ADR-0117):** a bug fix. The browser is given one more Chromium flag; no command,
   flag, config key or check of the kit's is added.
@@ -12,15 +12,15 @@
 ## Context
 
 The guard child (ADR-0118) launched Chromium without `--user-data-dir`, and had it write its net
-log (ADR-0137) to a private `rk-netlog-` folder that the child removed in its own `finally`.
+log (ADR-0137) to a private `fp-netlog-` folder that the child removed in its own `finally`.
 
 The break-test found both left behind in the temp folder:
 
 - After one suite run, the suite's private TEMP held 8 `HeadlessChrome<pid><n>` folders
-  (52 KB to 6.3 MB) and one `rk-netlog-*` folder. The operator's real `%TEMP%` held 1841
-  `HeadlessChrome*` folders (656 MB) and 72 `rk-netlog-*` folders, in steps of 8 for each hour a
+  (52 KB to 6.3 MB) and one `fp-netlog-*` folder. The operator's real `%TEMP%` held 1841
+  `HeadlessChrome*` folders (656 MB) and 72 `fp-netlog-*` folders, in steps of 8 for each hour a
   suite ran. Production renders leave them the same way.
-- `rk-netlog-*`: when the transport kills the guard child at `guardChildTimeout`, the child's
+- `fp-netlog-*`: when the transport kills the guard child at `guardChildTimeout`, the child's
   `finally` never runs.
 - `HeadlessChrome*`: the report's direct control saw none after a clean exit, and put them down
   to browsers killed at a deadline. Re-checked for this ADR with one direct run at a time on the
@@ -35,7 +35,7 @@ temporary profile, it is not asked to make one.
 
 ## Decision
 
-1. **One folder per render.** `makeRenderFolder()` makes `rk-render-` and six characters under
+1. **One folder per render.** `makeRenderFolder()` makes `fp-render-` and six characters under
    `tempBase()` (the same base the net log used). The browser's profile is `<folder>/profile`,
    given as `--user-data-dir`, and the net log is `<folder>/net-log.json`. Both flags go after
    the guard's flags and before `--dump-dom <url>`. A folder that cannot be made means neither
@@ -46,7 +46,7 @@ temporary profile, it is not asked to make one.
    returns, in a `finally`. That covers a child that ended normally, one killed at
    `guardChildTimeout`, and one killed by anything else. Because the parent made the folder, it
    knows the path without hearing from the child, so a SIGKILL of the child loses nothing.
-   The child accepts a `folder` only if it is an absolute path named `rk-render-...`;
+   The child accepts a `folder` only if it is an absolute path named `fp-render-...`;
    otherwise, and when it is run without one, it makes its own.
 3. **The child removes it too**, in the `finally` where it removed the net-log folder, after
    the guard has closed. The transport's removal after it is then a no-op.
@@ -63,7 +63,7 @@ temporary profile, it is not asked to make one.
 - **The child tells the parent its paths.** The parent runs the child under spawnSync, which
   returns only when the child is gone, so a path would have to be written to a side file. That
   file is itself a leftover after a SIGKILL. A parent that makes the folder needs no message.
-- **Sweep old `HeadlessChrome*`, `rk-netlog-*` or `rk-render-*` folders from the temp folder.**
+- **Sweep old `HeadlessChrome*`, `fp-netlog-*` or `fp-render-*` folders from the temp folder.**
   The temp folder is shared. A sweep by name could remove a folder that another process, or
   another render running at the same moment, is using. The 1841 existing folders are the
   operator's to remove; the CHANGELOG names the command.
@@ -80,8 +80,8 @@ temporary profile, it is not asked to make one.
 
 ## Consequences
 
-- A render no longer adds a `HeadlessChrome*` or `rk-netlog-*` folder to the temp folder. While
-  it runs, it has one `rk-render-*` folder, and that folder goes when the render ends.
+- A render no longer adds a `HeadlessChrome*` or `fp-netlog-*` folder to the temp folder. While
+  it runs, it has one `fp-render-*` folder, and that folder goes when the render ends.
 - On Windows, a browser killed at the deadline did not stop at once on the operator's PC:
   `child.kill()` returned true, and 11 Chrome processes were still alive about 3 s later. The
   exit came 6 to 7.5 s after the kill. The child waits for the exit before it removes the folder, so
@@ -89,7 +89,7 @@ temporary profile, it is not asked to make one.
 - A guard child killed by the transport leaves its browser running: the browser is its own
   process group on POSIX, and Windows does not kill a process tree. On Windows that browser
   holds its profile, so the transport's removal can fail after its 1.6 s and leave part of an
-  `rk-render-*` folder. On POSIX the removal succeeds, but a browser still running can write
+  `fp-render-*` folder. On POSIX the removal succeeds, but a browser still running can write
   into a profile path again. This happens only after a render ran past
   `2 x timeout + 10 s`, and is less than before, when every render left a folder.
 - The parent makes the folder under its own `tempBase()`, not under the TEMP of the `env` it
@@ -99,5 +99,5 @@ temporary profile, it is not asked to make one.
 
 - A Chromium release that refuses or ignores `--user-data-dir` in headless mode.
 - A LIVE run that still finds `HeadlessChrome*` in the suite's TEMP.
-- Partly removed `rk-render-*` folders seen in the temp folder in normal use. Killing the
+- Partly removed `fp-render-*` folders seen in the temp folder in normal use. Killing the
   browser's process tree is then the next step.

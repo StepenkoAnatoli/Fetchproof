@@ -1,4 +1,4 @@
-# Brief - What a Firecrawl scrape and search and a SerpAPI search cost today, and whether the research kit's budget and credit assumptions still hold
+# Brief - What a Firecrawl scrape and search and a SerpAPI search cost today, and whether Fetchproof's budget and credit assumptions still hold
 
 _Auto-drafted 2026-09-28 by `bin/brief.mjs` from the corpus. Sections marked **TODO**
 require human/agent judgement; everything else is assembled from evidence already
@@ -18,7 +18,7 @@ it: that is a phase-1 gap to close, not a phase-2 judgment call.
 
 ## Intent
 
-The research kit spends two metered services: Firecrawl (scrapes, and searches when no SerpAPI key is set) and SerpAPI (searches). Its budget code assumes what each call costs and what a free plan allows: the depth tiers in `lib/research-run.mjs` are "tuned for a ~1,000-credit free month", `lib/firecrawl.mjs` estimates a search at 2 credits per 10 results and names a 10-requests-a-minute free tier, and `lib/research-run.mjs` counts SerpAPI against a 50-an-hour, 250-a-month Free Plan. "Done" is a verdict per assumption - still true, changed (with the new value), or unverifiable - each resting on the vendor's own page, so a builder can change the constants (or leave them) without re-researching.
+Fetchproof spends two metered services: Firecrawl (scrapes, and searches when no SerpAPI key is set) and SerpAPI (searches). Its budget code assumes what each call costs and what a free plan allows: the depth tiers in `lib/research-run.mjs` are "tuned for a ~1,000-credit free month", `lib/firecrawl.mjs` estimates a search at 2 credits per 10 results and names a 10-requests-a-minute free tier, and `lib/research-run.mjs` counts SerpAPI against a 50-an-hour, 250-a-month Free Plan. "Done" is a verdict per assumption - still true, changed (with the new value), or unverifiable - each resting on the vendor's own page, so a builder can change the constants (or leave them) without re-researching.
 
 ## What we verified
 
@@ -71,8 +71,7 @@ corpus, not facts about the vendors.
 ## Next steps
 
 1. Nothing to build: the constants stand. Re-run this project with `--refresh-days 0` when a vendor announces new pricing.
-2. Hand this file to the builder (phase 2). Re-running `node /home/user/Research-Kit/research-kit/bin/brief.mjs`
+2. Hand this file to the builder (phase 2). Re-running `node /home/user/Fetchproof/fetchproof/bin/brief.mjs`
    redrafts this file while it is unedited; after any edit it refuses without `--force`,
    so your judgements are preserved.
-
-<!-- research-kit:brief-draft body=81b3d5fc7139d3f3 inputs=4999c6fdb380337d gate=pass -->
+<!-- fetchproof:brief-draft body=0f948609c835ca2f inputs=ac6e4007cc1ef438 gate=pass -->

@@ -8,7 +8,7 @@
 ## Context
 
 The drafted brief and the regenerated timeline told their reader to run
-`node research-kit/bin/preflight.mjs`, `node bin/brief.mjs` and `node research-kit/bin/timeline.mjs`.
+`node fetchproof/bin/preflight.mjs`, `node bin/brief.mjs` and `node fetchproof/bin/timeline.mjs`.
 Those paths exist only at the kit repository's root. From the project folder, where the files
 are read, each command crashed with MODULE_NOT_FOUND. This was found on 2026-09-27 while reviewing
 the package the collector returned from run 36300088606.
@@ -22,8 +22,8 @@ on another machine, so a path from the machine that wrote it names nothing there
 `documentCommand(script, args)` in `lib/core.mjs` spells every command written into a project
 file:
 
-- **The running kit is the standard install** (`<home>/.agents/research-kit`, compared by real
-  path): `node "$HOME/.agents/research-kit/bin/<script>"`. ADR-0050 showed that this spelling
+- **The running kit is the standard install** (`<home>/.agents/fetchproof`, compared by real
+  path): `node "$HOME/.agents/fetchproof/bin/<script>"`. ADR-0050 showed that this spelling
   reaches node whole in PowerShell, bash and zsh, including from a home folder with a space.
   It works on any machine with the documented install, which is where a brief is read.
 - **Anywhere else**, such as a repository checkout: the kit's real path, quoted as
@@ -33,7 +33,7 @@ file:
 
 - **The absolute path always** (`kitCommand`). It is right on the machine that wrote the file and
   wrong on the builder's machine, which the brief exists for.
-- **`$HOME/.agents/research-kit` always.** On a checkout with no standard install, every command
+- **`$HOME/.agents/fetchproof` always.** On a checkout with no standard install, every command
   in the file names nothing, including on the machine that wrote it.
 - **Reading the spelling back from the project's scaffolded files.** That makes a sentence of the
   project's prose load-bearing, which ADR-0014 already declined for the brief's marker.
@@ -47,5 +47,5 @@ file:
 
 ## Trigger that would reopen this
 
-A supported install location other than `<home>/.agents/research-kit`, or briefs routinely
+A supported install location other than `<home>/.agents/fetchproof`, or briefs routinely
 written from checkouts and read elsewhere.

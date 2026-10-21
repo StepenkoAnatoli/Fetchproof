@@ -5,7 +5,7 @@ Status: accepted. Lifts the freeze (ADR-0117) for this one check. Refines ADR-01
 
 ## Context
 
-The install records the `core.hooksPath` it replaced as `research-kit.previousHooksPath`,
+The install records the `core.hooksPath` it replaced as `fetchproof.previousHooksPath`,
 and every hook in `githooks/` runs that folder's hook after its own (ADR-0112), so a machine
 that had husky or its own hooks before the kit keeps them. On the maintainer's machine the
 recorded folder was the previous implementation's own `githooks/`. Every commit ran two
@@ -18,11 +18,11 @@ history to say where they were from.
 
 - `handOnState({ previous })` in `lib/doctor.mjs`, pure: `none` (nothing recorded),
   `missing` (the folder is gone), `kit` (its `pre-commit` carries the header every version of
-  this kit's hook has carried, "research-kit commit gate"), `other` (anything else, including
+  this kit's hook has carried, "fetchproof commit gate"), `other` (anything else, including
   a folder with no `pre-commit`).
 - `gateHealth` reads the recorded folder through `machine.previousHooksPath` and warns on
   `kit` and on `missing`, each with the remedy `git config --global --unset
-  research-kit.previousHooksPath`. `none` and `other` say nothing: handing on to somebody
+  fetchproof.previousHooksPath`. `none` and `other` say nothing: handing on to somebody
   else's hooks is the point of ADR-0112.
 
 ## Rejected

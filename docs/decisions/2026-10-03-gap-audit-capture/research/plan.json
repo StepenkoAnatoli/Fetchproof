@@ -1,5 +1,5 @@
 {
-  "topic": "What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Research-Kit's captures",
+  "topic": "What do web-capture, annotation and HTTP standards require of a faithful, re-anchorable and current capture, as a benchmark for Fetchproof's captures",
   "notes": "Phase 0 split the compound topic into four fragments (ADR-0085) and gathered Edge screenshot pages, exome capture kits and electrode papers; only the two W3C annotation-model pages were on topic, and they came through the keyless transport (one graded partial). The owner pages are named by hand below, one per standard; the two queries cover the facts whose owner page could not be named with certainty (Hypothesis's anchoring, Firecrawl's robots statement). Budget: at most 20 pages for the project, 2 already spent in phase 0. The two robots searches found only glossary articles that say nothing about Firecrawl's own behaviour; the four Firecrawl owner pages were located afterwards with a separate Firecrawl search (a locator, not evidence) and named here by hand.",
   "depth": "deep",
   "refreshDays": 30,

@@ -76,8 +76,8 @@ Doctor verified collector eligibility and the intact corpus but returned an exis
 
 ## Next steps
 
-1. From this nested project, run `node ../../../research-kit/bin/preflight.mjs`, `node ../../../research-kit/bin/handoff.mjs`, and `node ../../../research-kit/bin/brief.mjs --state` with the intended machine policy. A root-corpus verdict is not a substitute.
+1. From this nested project, run `node ../../../fetchproof/bin/preflight.mjs`, `node ../../../fetchproof/bin/handoff.mjs`, and `node ../../../fetchproof/bin/brief.mjs --state` with the intended machine policy. A root-corpus verdict is not a substitute.
 2. Review the Windows regression and implementation outcomes separately before reporting the product repair as verified. This brief provides facts and scope, not a successful product-test claim.
 3. Re-drafting an edited brief requires --force and retains a backup. Carry these judgments and current gate cautions forward after any corpus change.
 
-<!-- research-kit:brief-draft body=7389da0c6928fbf0 inputs=4c0e71e2216f3aed gate=pass -->
+<!-- fetchproof:brief-draft body=7389da0c6928fbf0 inputs=4c0e71e2216f3aed gate=pass -->

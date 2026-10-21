@@ -27,7 +27,7 @@ a page was Firecrawl, which is metered, and whose credits can run out (ADR-0086)
     here behind a proxy whose CA it did not trust. The failure names the code it found
     (`ERR_CERT_AUTHORITY_INVALID`).
 - **Finding the browser:** `browserPath` in the machine config, then
-  `RESEARCH_KIT_BROWSER`, then the usual install paths.
+  `FETCHPROOF_BROWSER`, then the usual install paths.
 - **Chosen by name only:** auto-detection is unchanged. The transport fetches and does not
   search, so a run on it searches through the keyless route and says so. It is not a
   search provider.

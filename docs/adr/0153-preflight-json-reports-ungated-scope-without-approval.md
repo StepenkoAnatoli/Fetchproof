@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-08
 - **Status:** accepted
-- **Area:** `research-kit/bin/preflight.mjs`; ungated CLI output only
+- **Area:** `fetchproof/bin/preflight.mjs`; ungated CLI output only
 
 ## Context
 

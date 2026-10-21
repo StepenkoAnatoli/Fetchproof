@@ -13,28 +13,30 @@ SPDX-License-Identifier = "LicenseRef-Captured-Page"
 
 # The vendored skills (ADR-0146): received from StepenkoAnatoli/SkillsMDs under Apache-2.0
 # and shipped with recorded file renames and six marked auto-build adaptations (the
-# original five plus stage-handoffs; dated adaptations in ADR-0146 and ADR-0150). Receipt hashes are
+# original five plus stage-handoffs; dated adaptations in ADR-0146 and ADR-0150), and with the kit's
+# rename (ADR-0186) marked in each file it changed. Receipt hashes are
 # retained as historical provenance. The kit's own notes beside
-# lead-orchestrator and auto-build (references/research-kit.md) are the kit's work.
+# lead-orchestrator and auto-build (references/fetchproof.md) are the kit's work; break-test's
+# references/fetchproof.md was received.
 [[annotations]]
 path = [
-  "research-kit/skills/architecture-pass/**",
-  "research-kit/skills/auto-build/SKILL.md",
-  "research-kit/skills/auto-build/assets/**",
-  "research-kit/skills/auto-build/references/mandate.md",
-  "research-kit/skills/auto-build/references/merge-protocol.md",
-  "research-kit/skills/auto-build/references/requirements-and-traceability.md",
-  "research-kit/skills/auto-build/references/stage-handoffs.md",
-  "research-kit/skills/auto-build/scripts/**",
-  "research-kit/skills/brainstorming/**",
-  "research-kit/skills/break-test/**",
-  "research-kit/skills/careful-coding/**",
-  "research-kit/skills/four-dimension-audit/**",
-  "research-kit/skills/gap-audit/**",
-  "research-kit/skills/improve-codebase-architecture/**",
-  "research-kit/skills/lead-orchestrator/SKILL.md",
-  "research-kit/skills/lead-orchestrator/references/agent-briefs.md",
-  "research-kit/skills/subproject-discovery/**",
+  "fetchproof/skills/architecture-pass/**",
+  "fetchproof/skills/auto-build/SKILL.md",
+  "fetchproof/skills/auto-build/assets/**",
+  "fetchproof/skills/auto-build/references/mandate.md",
+  "fetchproof/skills/auto-build/references/merge-protocol.md",
+  "fetchproof/skills/auto-build/references/requirements-and-traceability.md",
+  "fetchproof/skills/auto-build/references/stage-handoffs.md",
+  "fetchproof/skills/auto-build/scripts/**",
+  "fetchproof/skills/brainstorming/**",
+  "fetchproof/skills/break-test/**",
+  "fetchproof/skills/careful-coding/**",
+  "fetchproof/skills/four-dimension-audit/**",
+  "fetchproof/skills/gap-audit/**",
+  "fetchproof/skills/improve-codebase-architecture/**",
+  "fetchproof/skills/lead-orchestrator/SKILL.md",
+  "fetchproof/skills/lead-orchestrator/references/agent-briefs.md",
+  "fetchproof/skills/subproject-discovery/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "Anatoli Stepenko - StepenkoAnatoli/SkillsMDs"

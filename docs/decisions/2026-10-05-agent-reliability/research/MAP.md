@@ -2,7 +2,7 @@
 
 ## Topic
 
-How can Research-Kit reduce unsupported claims and coding mistakes while accurately stating its guarantees?
+How can Fetchproof reduce unsupported claims and coding mistakes while accurately stating its guarantees?
 
 ## Subtopics
 

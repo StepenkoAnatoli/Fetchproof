@@ -14,7 +14,7 @@ change when they close; only the cited definitions are filled in.
 
 Matched in everything but the workflow:
 
-- **Arm A — kit.** The full Research-Kit workflow: decompose, contract, collect,
+- **Arm A — kit.** The full Fetchproof workflow: decompose, contract, collect,
   preflight, brief, handoff, with the commit gate installed and no override.
 - **Arm B — strong prompt.** The same model, the same browsing, file, and testing tools,
   and the same total budget, with a prompt instructing: research before consequential

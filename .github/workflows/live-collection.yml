@@ -149,19 +149,19 @@ jobs:
       - name: the environment is the one this workflow names, not an auto-created one
         if: inputs.transport == 'firecrawl-cli'
         env:
-          DECLARED_ENV: ${{ vars.RESEARCH_KIT_LIVE_ENV }}
+          DECLARED_ENV: ${{ vars.FETCHPROOF_LIVE_ENV }}
         run: |
           expected='live-collection'
           if [ -z "${DECLARED_ENV:-}" ]; then
-            echo "::error::the live-collection environment did not supply RESEARCH_KIT_LIVE_ENV"
+            echo "::error::the live-collection environment did not supply FETCHPROOF_LIVE_ENV"
             echo "Either the environment does not exist - in which case GitHub just created an EMPTY one"
             echo "with that name - or its variables are unset."
             echo "Fix: Settings > Environments > live-collection > add variable"
-            echo "     RESEARCH_KIT_LIVE_ENV = live-collection, and add the secret FIRECRAWL_API_KEY."
+            echo "     FETCHPROOF_LIVE_ENV = live-collection, and add the secret FIRECRAWL_API_KEY."
             exit 1
           fi
           if [ "$DECLARED_ENV" != "$expected" ]; then
-            echo "::error::RESEARCH_KIT_LIVE_ENV is '$DECLARED_ENV', expected '$expected'"
+            echo "::error::FETCHPROOF_LIVE_ENV is '$DECLARED_ENV', expected '$expected'"
             exit 1
           fi
           echo "environment marker present"
@@ -173,16 +173,16 @@ jobs:
           CLI_VERSION: ${{ inputs.cli_version }}
         run: |
           set -e
-          tested=$(node -e 'import("./research-kit/lib/firecrawl.mjs").then(m => process.stdout.write(m.TESTED_CLI_VERSION))')
+          tested=$(node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m => process.stdout.write(m.TESTED_CLI_VERSION))')
           # Package name from the adapter, never spelled here. `firecrawl` on npm is the
           # SDK and ships no binary; the CLI is `firecrawl-cli`. Surveillance mode was the
           # dangerous half: `firecrawl@latest` RESOLVES, so this step would have reported a
           # clean install and the next one would have failed with no binary to run.
           if [ "$CLI_VERSION" = 'tested' ]; then
-            spec=$(node -e 'import("./research-kit/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec()))')
+            spec=$(node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec()))')
             echo "pinning to the version this adapter was written against: $spec"
           else
-            spec=$(node -e 'import("./research-kit/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec("latest")))')
+            spec=$(node -e 'import("./fetchproof/lib/firecrawl.mjs").then(m => process.stdout.write(m.cliInstallSpec("latest")))')
             echo "SURVEILLANCE MODE: installing $spec. A refusal here is the workflow doing its job."
           fi
           if ! npm install -g "$spec"; then
@@ -198,7 +198,7 @@ jobs:
         if: inputs.transport == 'firecrawl-cli'
         run: |
           node -e '
-            import("./research-kit/lib/firecrawl.mjs").then((m) => {
+            import("./fetchproof/lib/firecrawl.mjs").then((m) => {
               const c = m.cliCompatibility();
               console.log(`${c.level}: ${c.detail}`);
               if (!c.supported) { console.error(`::error::${c.remedy}`); process.exit(1); }
@@ -225,7 +225,7 @@ jobs:
         if: inputs.transport == 'browser'
         run: |
           node --input-type=module -e '
-            const { findBrowser } = await import(process.cwd() + "/research-kit/lib/browser-transport.mjs");
+            const { findBrowser } = await import(process.cwd() + "/fetchproof/lib/browser-transport.mjs");
             const found = findBrowser();
             if (!found) { console.error("::error::no Chromium or Chrome found for the browser transport"); process.exit(1); }
             console.log("browser: " + found);
@@ -239,11 +239,11 @@ jobs:
           # (ADR-0027) - the only way this workflow exercises lib/serpapi.mjs, which its
           # header says to run it after changing. Absent, the search is the fetch provider.
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
-          RESEARCH_KIT_TRANSPORT: ${{ inputs.transport }}
+          FETCHPROOF_TRANSPORT: ${{ inputs.transport }}
           MAX_PAGES: ${{ inputs.max_pages }}
         run: |
           set -e
-          kit="$PWD/research-kit"
+          kit="$PWD/fetchproof"
           scratch="$RUNNER_TEMP/live-project"
           mkdir -p "$scratch"
           cd "$scratch"
@@ -305,7 +305,7 @@ jobs:
         run: |
           set -e
           cd "$RUNNER_TEMP/live-project"
-          kit="$GITHUB_WORKSPACE/research-kit"
+          kit="$GITHUB_WORKSPACE/fetchproof"
 
           # REQUIRED, both of them. The point of collecting at all is that a real capture
           # must pass the same checks a synthetic one does - chain verifies, every cited

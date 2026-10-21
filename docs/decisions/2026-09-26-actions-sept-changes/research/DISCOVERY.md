@@ -1,7 +1,7 @@
 # Discovery Contract - GitHub Actions changes of September 2026 that touch this kit: run-query results, expired artifacts, workflow execution protections, cache-mode
 
 Started 2026-09-26. This file is the definition of "enough information to build".
-`node research-kit/bin/preflight.mjs` reads it and blocks the build until every unknown
+`node fetchproof/bin/preflight.mjs` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent

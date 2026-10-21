@@ -2,7 +2,7 @@
 
 ## Topic
 
-How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Research-Kit's corpus and gate
+How do table, citation, search and research-synthesis tools validate their inputs and judge their sources, as a benchmark for Fetchproof's corpus and gate
 
 ## Subtopics
 

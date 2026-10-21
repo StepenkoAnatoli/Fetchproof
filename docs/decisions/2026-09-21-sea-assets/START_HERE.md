@@ -20,7 +20,7 @@ saying so.
 ## How it was collected
 
 Dispatched through `bin/collect-remote.mjs` - the agent path - as run
-[35623502540](https://github.com/StepenkoAnatoli/Research-Kit/actions/runs/35623502540),
+[35623502540](https://github.com/StepenkoAnatoli/Fetchproof/actions/runs/35623502540),
 depth `quick`. Three pages, all graded `full`. One is authoritative and current, one is a
 stale mirror of it, and one rendered no content at all.
 
@@ -34,8 +34,8 @@ From **this** directory:
 
 ```
 cd docs/decisions/2026-09-21-sea-assets
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-21: `PASS  0 blocking, 3 warning(s), 13 passing` and `handoff OK - 5 ledger

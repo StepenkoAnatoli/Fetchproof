@@ -2,7 +2,7 @@
 
 ## Topic
 
-How Research-Kit should be delivered to a non-technical user
+How Fetchproof should be delivered to a non-technical user
 
 ## Subtopics
 

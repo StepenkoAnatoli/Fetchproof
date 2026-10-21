@@ -6,7 +6,7 @@
   block quotes git's `fatal:` or `error:` line, not its first) and by its check (c) (only the
   skip-worktree entries absent from the working tree stay skipped; a file the user hid and has
   on disk is checked out)
-- **Area:** `research-kit/lib/gate.mjs` (`runSuiteOnCommit`, `suiteBreach`)
+- **Area:** `fetchproof/lib/gate.mjs` (`runSuiteOnCommit`, `suiteBreach`)
 - **Supersedes in part:** ADR-0120, which ran "the checkout's `bin/selftest.mjs`": the runner is
   now the commit's own, run in a scratch repository built from the index being committed. The
   rest of ADR-0120 and ADR-0142 (scope, result file, budget, overrides) stands.
@@ -23,8 +23,8 @@ and every other caller judges the working tree. `materializeIndex` reproduces th
 `research/` in a scratch directory, and the corpus verdict runs over that.
 
 ADR-0120 added the suite rule on 2026-10-01: in the kit's own checkout, a commit staging a path
-under `research-kit/` needs a green suite. `runSuiteHere(root)` spawned
-`<root>/research-kit/bin/selftest.mjs` with `root` as its cwd. That is the working tree: the
+under `fetchproof/` needs a green suite. `runSuiteHere(root)` spawned
+`<root>/fetchproof/bin/selftest.mjs` with `root` as its cwd. That is the working tree: the
 runner, the tests and the library they load all came from disk, not from the index.
 
 Reproduced on 2026-10-19 with the shipped `suiteBreach`, on a repository holding the kit's four
@@ -54,7 +54,7 @@ The suite runs in a scratch repository built from the index being committed
    --ita-invisible-in-index` against the empty tree, and only those entries are kept. The index
    is only read. An index with unmerged entries blocks: `git commit` refuses one before its hook
    runs, and `checkout-index` would skip the conflicted paths without an error.
-2. Under `tempBase()`, in a folder named `research-kit-commit-` and six characters, addressed by
+2. Under `tempBase()`, in a folder named `fetchproof-commit-` and six characters, addressed by
    its long name (Windows hands a temp folder over as an 8.3 short name - `RUNNER~1` on CI - and
    git reports the long one, so repo-hygiene's tests would not know their repository and would
    return early), with the repository-location variables stripped (`GIT_DIR`, `GIT_INDEX_FILE`
@@ -77,7 +77,7 @@ The suite runs in a scratch repository built from the index being committed
    The build runs with `GIT_LFS_SKIP_SMUDGE=1`: git-lfs's smudge filter, which the
    machine's config runs at checkout, had gone to the network from the commit hook for an
    object the clone did not hold, and then blocked. The suite's own environment is unchanged.
-3. The runner is the scratch's `research-kit/bin/selftest.mjs`, with the scratch - or the
+3. The runner is the scratch's `fetchproof/bin/selftest.mjs`, with the scratch - or the
    project's place in it, for a project below the top level (#309) - as its cwd. The result-file
    contract, the stripped environment and the budget are ADR-0120's and ADR-0142's.
 4. After the run the index is listed again. A plain `git commit` holds no lock on the index
@@ -111,7 +111,7 @@ tracked path is 172 characters) - so the scratch sits directly under `tempBase()
 
 ## Alternatives rejected
 
-- **Materialise `research-kit/` only, as `materializeIndex` does `research/`.** The tests read
+- **Materialise `fetchproof/` only, as `materializeIndex` does `research/`.** The tests read
   outside it (the README count, the docs, the ADR index), and without a `.git` repo-hygiene's
   tests return early - a silent green.
 - **A plain `checkout-index` copy, no repository.** The same silent skip.
@@ -157,6 +157,6 @@ tracked path is 172 characters) - so the scratch sits directly under `tempBase()
   file outside the cone, or an LFS file's content, fails at the commit as it would in that clone.
   A file hidden with `git update-index --skip-worktree` and present on disk is in the scratch as
   the commit holds it, without the local edit the bit hides.
-- The hook runs the deployed kit's gate (ADR-0120): until `~/.agents/research-kit` carries this
+- The hook runs the deployed kit's gate (ADR-0120): until `~/.agents/fetchproof` carries this
   `lib/gate.mjs`, the deployed gate still runs the working tree, and kit changes are committed
   with the working tree equal to the index.

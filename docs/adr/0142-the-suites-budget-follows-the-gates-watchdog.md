@@ -3,7 +3,7 @@
 Date: 2026-10-05
 Status: accepted. Amends ADR-0120 in two numbers and one sentence: the suite's budget (was 20
 minutes), the hook's watchdog in the kit's checkout (was 1500 s), and "unless the operator set
-`RESEARCH_KIT_GATE_TIMEOUT`, which is theirs" - it is still theirs, and now reaches the suite. A
+`FETCHPROOF_GATE_TIMEOUT`, which is theirs" - it is still theirs, and now reaches the suite. A
 bug fix under the freeze (ADR-0117): no new command, flag, key or check.
 
 ## Context
@@ -12,10 +12,10 @@ ADR-0120 made the commit gate run the suite in the kit's own checkout, with two 
 layers. `lib/gate.mjs` stopped the suite after `SUITE_TIMEOUT_MS`, 20 minutes, and blocked: "a
 suite that cannot report is not green". `githooks/pre-commit` put its watchdog around the whole
 gate, 120 s by default, widened to 1500 s in the kit's checkout unless the operator set
-`RESEARCH_KIT_GATE_TIMEOUT`.
+`FETCHPROOF_GATE_TIMEOUT`.
 
 On the operator's Windows PC (2026-10-05) the whole suite runs green in about 1825 s -
-`1599 passed, 0 failed, 7 unsupported in 1824.6s`. Every commit that staged `research-kit/`
+`1599 passed, 0 failed, 7 unsupported in 1824.6s`. Every commit that staged `fetchproof/`
 was stopped at 1200 s and blocked on a green tree, and the only way through was
 `git commit --no-verify`, taken once for the ADR-0141 commit and reported. Two inconsistencies
 made it worse than one wrong number:
@@ -23,7 +23,7 @@ made it worse than one wrong number:
 1. **The node budget always decided, and it was the shorter one.** The hook's 1500 s was
    already longer than the gate's 1200 s, so widening the watchdog did nothing for a slow
    host: the number the host actually met was the node side's.
-2. **The operator's setting reached one layer of two.** `RESEARCH_KIT_GATE_TIMEOUT` set the
+2. **The operator's setting reached one layer of two.** `FETCHPROOF_GATE_TIMEOUT` set the
    watchdog and nothing else. Raised to fit a slow suite, the gate still stopped the suite at
    1200 s. Set *below* 1200 s, the watchdog killed the gate before the gate could report - an
    internal error, decided by posture (ADR-0020) - and a fail-open machine **allowed** a commit
@@ -42,7 +42,7 @@ blocks a green tree, and the remedy it leaves is the override the rule exists to
 - **The default budget is 65 minutes** (`SUITE_TIMEOUT_MS`): twice the slowest honest run
   measured on a supported host, 1825 s, rounded up to five minutes. A test pins the budget to
   at least twice that measure, so a later cut has to answer to it.
-- **One setting governs both layers.** `suiteBudgetMs()` reads `RESEARCH_KIT_GATE_TIMEOUT`
+- **One setting governs both layers.** `suiteBudgetMs()` reads `FETCHPROOF_GATE_TIMEOUT`
   and gives the suite that watchdog less `GATE_REST_S`, the 120 s the hook's default watchdog
   allows a gate that runs no suite. A watchdog shorter than twice that allowance gives the
   suite half of it. The gate then stops the suite and blocks before the watchdog fires,
@@ -73,12 +73,12 @@ blocks a green tree, and the remedy it leaves is the override the rule exists to
   4020 s, so the node side decides. A test reads both constants from `lib/gate.mjs` and pins
   the hook's number to their sum, and the hook's 120 s default to `GATE_REST_S`.
 - **A suite stopped at its budget names the setting.** The block's fix says to time a run and
-  set `RESEARCH_KIT_GATE_TIMEOUT` to twice that plus 120 for the commit, keeping the margin
+  set `FETCHPROOF_GATE_TIMEOUT` to twice that plus 120 for the commit, keeping the margin
   the default keeps, before it names the override.
 - **This change's own commits.** The gate that judges a commit is the deployed kit's, and the
   deployed kit on the operator's PC still stops the suite at 1200 s. So the commits that bring
-  this change in are judged by this checkout's own gate (`RESEARCH_KIT_HOME` pointed at its
-  `research-kit/`) with `RESEARCH_KIT_GATE_TIMEOUT=4020` set for the deployed hook's
+  this change in are judged by this checkout's own gate (`FETCHPROOF_HOME` pointed at its
+  `fetchproof/`) with `FETCHPROOF_GATE_TIMEOUT=4020` set for the deployed hook's
   watchdog: every check runs, no override is taken, and the commit report says so.
 
 ## Rejected
@@ -96,7 +96,7 @@ blocks a green tree, and the remedy it leaves is the override the rule exists to
   fail-open allow above.
 - **Pass the setting through alone.** No operator should have to discover a variable to commit
   on a supported host with a green tree; the default has to fit the hosts the kit supports.
-- **A new key for the suite's budget** (`RESEARCH_KIT_SUITE_TIMEOUT` or a config field). New
+- **A new key for the suite's budget** (`FETCHPROOF_SUITE_TIMEOUT` or a config field). New
   surface under the freeze, and two settings that must be kept in order by hand - the
   watchdog above the budget - would put inconsistency 2 back in the operator's hands.
 - **Drop the node budget and let the watchdog bound the suite.** A watchdog kill is decided by

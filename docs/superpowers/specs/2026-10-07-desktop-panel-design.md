@@ -29,10 +29,10 @@ and no rule of the kit is weaker for it.
 
 | Piece | Owns |
 |---|---|
-| `research-kit/bin/panel.mjs` | Flags (`--project`, `--port`, `--no-open`), starting the server, opening the browser, Ctrl+C. |
-| `research-kit/lib/panel.mjs` | The server: request checks, routes, running the allowed commands, the hand-off text. |
-| `research-kit/panel/` | `index.html`, `panel.js`, `panel.css`: the page. No framework, no build step. |
-| `research-kit/lib/transport.mjs` `SEARCH_KEY` | The search provider's credential, named only in the registry and the adapter. |
+| `fetchproof/bin/panel.mjs` | Flags (`--project`, `--port`, `--no-open`), starting the server, opening the browser, Ctrl+C. |
+| `fetchproof/lib/panel.mjs` | The server: request checks, routes, running the allowed commands, the hand-off text. |
+| `fetchproof/panel/` | `index.html`, `panel.js`, `panel.css`: the page. No framework, no build step. |
+| `fetchproof/lib/transport.mjs` `SEARCH_KEY` | The search provider's credential, named only in the registry and the adapter. |
 
 ## Layout
 
@@ -94,7 +94,7 @@ commit, and push corpus/result files for those validated requests.
 
 ## Testing
 
-`research-kit/test/panel.test.mjs`, offline, against a disposable config and a stand-in kit
+`fetchproof/test/panel.test.mjs`, offline, against a disposable config and a stand-in kit
 whose scripts print their cwd, argv and environment: state and topic; builder role; token,
 Host, Origin and content-type refusals; asset headers and no token in the page; the page
 never writes HTML; the key saved, cleared, never echoed, refused into a repository; no

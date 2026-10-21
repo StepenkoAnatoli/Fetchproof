@@ -1,13 +1,13 @@
 # Discovery Contract - Firecrawl CLI 1.25 against the 1.24.6 pin: what changed in scrape, search and map and their JSON output
 
 Started 2026-10-02. This file is the definition of "enough information to build".
-`node "$HOME/.agents/research-kit/bin/preflight.mjs"` reads it and blocks the build until every unknown
+`node "$HOME/.agents/fetchproof/bin/preflight.mjs"` reads it and blocks the build until every unknown
 below is either `CLOSED` with evidence or `KNOWN-UNKNOWN` with a verification step.
 
 ## Build intent
 
 A decision about this repository (ADR-0030): whether `TESTED_CLI_VERSION` in
-`research-kit/lib/firecrawl.mjs` should move from 1.24.6 to 1.25.2, the version the CLI's
+`fetchproof/lib/firecrawl.mjs` should move from 1.24.6 to 1.25.2, the version the CLI's
 own update banner now advertises on an operator's PC (2026-10-02). The adapter drives the
 `firecrawl` binary with specific flags (`scrape <url> --only-main-content --json`,
 `search <q> --limit n --json`, `map <url> --limit n --json`, `--status`) and reads a

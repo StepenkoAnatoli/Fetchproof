@@ -38,7 +38,7 @@ SerpAPI answers all three itself, at `GET serpapi.com/account.json`, and documen
 - **Same safeguards as `search()`**: the child-process rendezvous, the key only in the request
   URL built in the child, `redact` on every error, and `allowedEndpoint` (the vendor's host or
   loopback) checked before anything is sent.
-- **The endpoint is overridable by environment** (`RESEARCH_KIT_SEARCH_ACCOUNT_ENDPOINT`), and
+- **The endpoint is overridable by environment** (`FETCHPROOF_SEARCH_ACCOUNT_ENDPOINT`), and
   only within `allowedEndpoint`. Every CLI test points it at a dead loopback port, so no test
   can reach the network — or spend a real key the machine config holds.
 - A failed read is reported ("unavailable from ...") and `--status` still exits 0. The local

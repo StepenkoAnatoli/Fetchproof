@@ -3,7 +3,7 @@
 - **Date:** 2026-09-26
 - **Status:** accepted
 - **Area:** collection, candidate ranking
-- **Evidence:** collect run 36279879229 (2026-09-26); `research-kit/test/collect.test.mjs`
+- **Evidence:** collect run 36279879229 (2026-09-26); `fetchproof/test/collect.test.mjs`
 
 ## Context
 

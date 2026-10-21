@@ -2,7 +2,7 @@
 
 ## Topic
 
-How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Research-Kit's hash-chained ledger
+How provenance, attestation and integrity standards record and verify evidence, as a benchmark for Fetchproof's hash-chained ledger
 
 ## Subtopics
 

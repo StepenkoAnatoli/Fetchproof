@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fetchFailure } from '../../research-kit/lib/runtime.mjs';
+import { fetchFailure } from '../../fetchproof/lib/runtime.mjs';
 
 const USES = /uses:\s*([\w.-]+)\/([\w.-]+)(?:\/[^@\s]*)?@([0-9a-f]{40})\b(?:[^\n#]*#\s*(v[\w.-]+))?/g;
 

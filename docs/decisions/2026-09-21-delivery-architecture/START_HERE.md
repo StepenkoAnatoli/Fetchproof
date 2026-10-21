@@ -4,7 +4,7 @@ This is a **decision project**: a self-contained research project whose corpus s
 repository-level architectural decision. It is not the repository's own research project -
 that one lives at the repository root and answers a different set of unknowns.
 
-The question here: **how should Research-Kit be delivered to a non-technical user?**
+The question here: **how should Fetchproof be delivered to a non-technical user?**
 
 Read `research/BRIEF.md`. Everything else is what it rests on.
 
@@ -42,9 +42,9 @@ the preliminary note.
 
 ```
 cd docs/decisions/2026-09-21-delivery-architecture
-node ..\..\..\research-kit\bin\doctor.mjs
-node ..\..\..\research-kit\bin\preflight.mjs
-node ..\..\..\research-kit\bin\handoff.mjs
+node ..\..\..\fetchproof\bin\doctor.mjs
+node ..\..\..\fetchproof\bin\preflight.mjs
+node ..\..\..\fetchproof\bin\handoff.mjs
 ```
 
 As of 2026-09-21 that is `READY`, `PASS  0 blocking, 3 warning(s), 17 passing`, and
@@ -71,7 +71,7 @@ does not travel proves nothing, which is the whole lesson above.
 ## Starting another decision project
 
 ```
-node ..\..\..\research-kit\bin\new-project.mjs docs/decisions/<date>-<name> --topic "<question>"
+node ..\..\..\fetchproof\bin\new-project.mjs docs/decisions/<date>-<name> --topic "<question>"
 ```
 
 Then fill `research/DISCOVERY.md` with unknowns that would change the design if guessed
