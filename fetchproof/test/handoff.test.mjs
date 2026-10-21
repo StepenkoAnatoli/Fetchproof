@@ -2,10 +2,10 @@
 
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, requireGit, fixtureCommitArgs, fixtureInitArgs } from './harness.mjs';
+import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, requireGit, fixtureCommitArgs, fixtureInitArgs, KIT_ROOT, Unsupported } from './harness.mjs';
 import { evaluate } from '../lib/gate.mjs';
 import { TEMPLATE_DIR } from '../lib/scaffold.mjs';
-import { PATHS, resolve, writeText } from '../lib/core.mjs';
+import { PATHS, resolve, writeText, today } from '../lib/core.mjs';
 import { verifyHandoff, handoffRemedy, HANDOFF_REMEDY, lineEndingRemedy, alteredRemedy, safePathspec, insideRepository, repositoryState, NAMES_FILE, PIN_LINES } from '../lib/handoff.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
@@ -637,6 +637,134 @@ test('a table with no rows has no fetch dates, and the report says null rather t
   const report = verifyHandoff(dir);
   assert.equal(report.rows, 0);
   assert.equal(report.fetched, null);
+});
+
+// Discussion #413: can the next agent tell a current citation from a consistent but stale
+// snapshot? Pinned end to end, offline: one page is collected, an unknown closed on it, and
+// then the page changes. On the builder the handoff still says OK and the gate still passes -
+// the corpus is intact, and a builder cannot fetch to learn more - but the OK line says how
+// old the snapshot is (ADR-0187). Currency is the collector's: a same-day `--refresh-days 0`
+// re-collects nothing, `--force` captures the new text, and the gate blocks the old citation
+// until it moves, keeping the old row (ADR-0026). The server lives in its own process:
+// `scrape` runs its child with spawnSync, which blocks this process's event loop. It exits when
+// its stdin closes, so a suite killed from outside (the gate's budget) leaves no server behind.
+test('a page that changes after collection: the handoff stays OK and dated, the collector\'s re-fetch blocks the stale citation', async () => {
+  const { spawn } = await import('node:child_process');
+  const work = tempDir('fp-handoff-changed-');
+  const page = path.join(work, 'page.html');
+  const say = (limit) => writeText(page, `<html><head><title>Limits</title></head><body><h1>Rate limits</h1><p>The free plan allows ${limit} requests per minute. ${'Every request counts against the same minute window, and a burst above it is refused. '.repeat(4)}</p></body></html>`);
+  say(10);
+  const serverFile = path.join(work, 'server.mjs');
+  writeText(serverFile, `
+import http from 'node:http';
+import fs from 'node:fs';
+http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'text/html' });
+  res.end(fs.readFileSync(${JSON.stringify(page)}, 'utf8'));
+}).listen(0, '127.0.0.1', function () { process.stdout.write('PORT ' + this.address().port + '\\n'); });
+process.stdin.on('end', () => process.exit(0));
+process.stdin.resume();
+`);
+  const proc = spawn(process.execPath, [serverFile], { cwd: work, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
+  try {
+    const port = await new Promise((done, fail) => {
+      let out = '';
+      proc.stdout.on('data', (d) => { out += d; const m = out.match(/PORT (\d+)/); if (m) done(Number(m[1])); });
+      proc.on('exit', (code) => fail(new Error(`the page server exited ${code}`)));
+    });
+
+    // Two machines, each with its own temp config and kit home; never this machine's.
+    const base = Object.fromEntries(Object.entries(process.env)
+      .filter(([name]) => !['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].includes(name) && !name.startsWith('FETCHPROOF_')));
+    const machine = (role) => {
+      const config = path.join(work, `${role}.json`);
+      writeText(config, JSON.stringify({ role }));
+      return { ...base, FETCHPROOF_CONFIG: config, FETCHPROOF_HOME: path.join(work, `${role}-home`, 'fetchproof') };
+    };
+    const collector = machine('collector');
+    const builder = machine('builder');
+    const dir = path.join(work, 'project');
+    fs.mkdirSync(dir);
+    const kit = (env, bin, ...args) => {
+      const r = spawnSync(process.execPath, [path.join(KIT_ROOT, 'bin', bin), ...args], { cwd: dir, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+      return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const evidence = () => readCorpus(dir).evidence;
+
+    let r = kit(collector, 'new-project.mjs', '.', '--topic', 'What is the free plan\'s rate limit?');
+    assert.equal(r.status, 0, r.out);
+    const planFile = resolve(dir, PATHS.plan);
+    const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+    // A loopback URL named directly is collected; only a redirect to one is refused (ADR-0110).
+    plan.urls = [{ url: `http://127.0.0.1:${port}/page`, type: 'P', why: 'U-01' }];
+    writeText(planFile, JSON.stringify(plan, null, 2));
+
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless');
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(evidence().map((row) => row.id), ['E-01'], r.out);
+    const first = evidence()[0];
+    assert.match(fs.readFileSync(resolve(dir, first.raw), 'utf8'), /10 requests per minute/);
+
+    const cite = (id) => {
+      const file = resolve(dir, PATHS.discovery);
+      const text = fs.readFileSync(file, 'utf8').replace(/^\| U-01 \|.*\n/m, '');
+      writeText(file, text.replace(/^(\| ID \| Unknown \|.*\n\|[-| ]+\|\n)/m,
+        `$1| U-01 | What is the free plan's rate limit? | Decides the client's throttle | CLOSED | ${id}: the free plan's limit per minute |\n`));
+    };
+    cite('E-01');
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+    r = kit(collector, 'brief.mjs');
+    assert.equal(r.status, 0, r.out);
+
+    // The live page changes. Nothing in the corpus has.
+    say(2);
+
+    // On the builder: intact, consistent, and stale. handoff and the gate both pass - the
+    // documented limit - and the line says when the captures were fetched (today, in UTC, or
+    // yesterday if the run crossed midnight).
+    r = kit(builder, 'handoff.mjs');
+    assert.equal(r.status, 0, r.out);
+    const day = first.retrieved;
+    assert.match(r.out, new RegExp(`^handoff OK - .*chain verifies; captures fetched ${day}\\.\\.${day} \\(oldest (?:0 days|1 day)\\)\\.  \\[role=builder\\]$`, 'm'), r.out);
+    r = kit(builder, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+
+    // On the collector: a capture made today is not older than 0 days, so nothing is fetched.
+    // Past UTC midnight it is a day old, and this same-day rule is not what the run can show.
+    if (today() !== day) throw new Unsupported('CROSSED_MIDNIGHT', `the run crossed UTC midnight after collecting on ${day}, so the same-day refresh rule cannot be checked`);
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless', '--refresh-days', '0');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^collected\s+0$/m, r.out);
+    assert.equal(evidence().length, 1);
+
+    // --force fetches the page as it reads now, beside the old capture.
+    r = kit(collector, 'research.mjs', '--transport', 'http-keyless', '--force');
+    assert.equal(r.status, 0, r.out);
+    const rows = evidence();
+    assert.deepEqual(rows.map((row) => row.id), ['E-01', 'E-02'], r.out);
+    assert.match(fs.readFileSync(resolve(dir, rows[1].raw), 'utf8'), /2 requests per minute/);
+
+    // The gate blocks the claim that still cites the superseded capture, and the brief drafted
+    // over the old corpus is no longer current.
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /^FAIL /m, r.out);
+    assert.match(r.out, /cites-superseded-row.*E-01.*E-02/, r.out);
+    assert.match(r.out, /brief-stale/, r.out);
+
+    // The citation moves to the new capture: the gate passes, and the old row stays.
+    cite('E-02');
+    r = kit(collector, 'preflight.mjs');
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /^PASS /m, r.out);
+    assert.deepEqual(evidence().map((row) => row.id), ['E-01', 'E-02'], 'history is kept');
+    assert.ok(fs.existsSync(resolve(dir, first.raw)), 'the old capture is still on disk');
+  } finally {
+    proc.kill();
+  }
 });
 
 test('verifyHandoff is read-only: it never repairs, and never writes the corpus', () => {
