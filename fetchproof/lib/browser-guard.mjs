@@ -30,6 +30,14 @@ export const REFUSAL_MARKER = 'fetchproof-guard-refused';
 const STDERR_LINES = 60;
 /** The first lines of the browser's stderr are kept too: a slow start shows there, not in the tail. */
 const STDERR_HEAD_LINES = 30;
+/**
+ * How long a killed browser is waited for before the render is reported without its exit. The
+ * parent allows 10 s past the render budget to kill and report (ADR-0119), not to wait on the
+ * OS: on the operator's Windows PC (2026-10-21) Chromium printed the whole page, did not exit,
+ * and took 15 s to more than 35 s to go after the kill, so the parent gave the child up and
+ * the page went with it.
+ */
+export const KILL_GRACE_MS = 3000;
 
 const normalizeHost = (host) => String(host ?? '').replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
 
@@ -196,6 +204,10 @@ export async function startGuard({ allowInternal = false, exempt = [], upstream 
   // them, or a tunnel the browser left half-open would keep the child alive past its timeout.
   const tunnels = new Set();
   const outgoing = new Set();
+  // And every socket the server accepted: a CONNECT leaves the server's own bookkeeping when it
+  // is handed over, so one the browser kept open - a refusal it never closed, one still being
+  // judged - kept `close` waiting while a browser the kill had not ended still ran (2026-10-21).
+  const accepted = new Set();
   const judgeHost = (host, port, up) => judge(host, port, { allowInternal, exempt: skip, lookup, upstream: up });
   // The browser's own traffic is not the page's, so it is not judged and not a refusal. It is
   // known two ways: by name (ADR-0124), and - with `pageFirst`, the render's rule - by timing
@@ -296,6 +308,7 @@ export async function startGuard({ allowInternal = false, exempt = [], upstream 
     client.on('close', () => { tunnels.delete(client); tunnel.destroy(); });
   });
 
+  server.on('connection', (socket) => { accepted.add(socket); socket.on('close', () => accepted.delete(socket)); });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   // A request to a server that never answers would otherwise outlive the browser and keep
   // the child alive past its timeout (found by a probe with a silent server, 2026-10-01).
@@ -305,6 +318,8 @@ export async function startGuard({ allowInternal = false, exempt = [], upstream 
     for (const request of outgoing) request.destroy();
     outgoing.clear();
     for (const entry of seen) done(entry, 'unanswered');
+    for (const socket of accepted) socket.destroy();
+    accepted.clear();
     server.closeAllConnections?.();
     server.close(() => resolve());
   });
@@ -337,23 +352,27 @@ function isRenderFolder(dir) {
  * Run `binary` through a guard that exempts only the `host:port` of `url`: `args` are its flags
  * ending in `--dump-dom <url>`; the guard's flags are inserted before those two. Resolves to Chromium's exit as spawnSync would report
  * it, plus `refused`, `truncated` and `netLog` (ADR-0137). `folder` is the render's folder the
- * transport made (ADR-0185); without one, this render makes its own.
+ * transport made (ADR-0185); without one, this render makes its own. `since` is when the launch
+ * allowance began, on this process's monotonic clock (`performance.now()`): the guard child's
+ * own start, 0 (ADR-0188); without one, the launch.
  */
-export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, bypass = '', lookup = dns.lookup, folder = null } = {}) {
+export async function renderThroughGuard({ binary, args, url, timeout = 60_000, allowInternal = false, upstream = null, bypass = '', lookup = dns.lookup, folder = null, since = null } = {}) {
   const asked = new URL(url);
   // The host and port asked for are exempt from the literal-address judgment; a name among
   // them is still judged by what it resolves to (ADR-0155).
   const exempt = [`${asked.hostname.replace(/^\[|\]$/g, '').includes(':') ? `[${asked.hostname.replace(/^\[|\]$/g, '')}]` : asked.hostname}:${asked.port || (asked.protocol === 'https:' ? 443 : 80)}`];
   // The render timeout starts at the browser's first request through the guard; the launch
-  // is allowed as long again, and no more (ADR-0119): on the CI runners Chromium's process
-  // startup took 4 to 43 s before its first request, out of the render budget, and the page
-  // was killed before it had been asked for.
+  // is allowed as long again, less what the guard child's own start spent when `since` is
+  // given (ADR-0119, ADR-0188): on the CI runners Chromium's process startup took 4 to 43 s
+  // before its first request, out of the render budget, and the page was killed before it
+  // had been asked for.
   const clock = { timer: null, started: 0, firstRequestAt: null, timedOut: false, kill: () => {} };
-  const arm = () => { clearTimeout(clock.timer); clock.timer = setTimeout(() => { clock.timedOut = true; clock.kill(); }, timeout); };
+  const arm = (ms = timeout) => { clearTimeout(clock.timer); clock.timer = setTimeout(() => { clock.timedOut = true; clock.kill(); }, ms); };
   const guard = await startGuard({ allowInternal, exempt, upstream, bypass, lookup, pageFirst: true, onFirstRequest: () => { if (clock.firstRequestAt !== null) return; clock.firstRequestAt = Date.now(); arm(); } });
   // The render's folder (ADR-0185): the browser's profile and its net log - for the origin's
   // HTTP status `--dump-dom` does not report (ADR-0137) - are written there, read once the
-  // browser is gone, and removed with the folder on every way out. Without --user-data-dir,
+  // browser is gone, or as they stand when the kill has not ended it within KILL_GRACE_MS, and
+  // removed with the folder on every way out. Without --user-data-dir,
   // Chromium made a HeadlessChrome profile in the temp folder per render and left it there,
   // killed or not (B1, 2026-10-19). The transport makes the folder and removes it again after
   // this child, so a child killed before its finally leaves nothing either. A folder that
@@ -363,6 +382,9 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
   let profile = null;
   if (dir) { try { fs.mkdirSync(path.join(dir, 'profile'), { recursive: true }); profile = path.join(dir, 'profile'); } catch { profile = null; } }
   const logFile = profile ? path.join(dir, 'net-log.json') : null;
+  // False when the render was reported without the browser's exit: the browser still holds
+  // the folder, so it is tried once here, and again by the transport (ADR-0188).
+  let exitSeen = true;
   try {
     const own = profile ? [`--user-data-dir=${profile}`, `--log-net-log=${logFile}`] : [];
     const argv = [...args.slice(0, -2), ...guardFlags(guard.port), ...own, ...args.slice(-2)];
@@ -385,17 +407,27 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
       let errDropped = 0;
       let settled = false;
       const stderrKept = () => [...errHead, ...(errDropped ? [`... ${errDropped} lines omitted ...`] : []), ...errLines].join('\n');
+      let grace = null;
       const kill = () => {
+        // The kill is asked for, and its exit is not awaited past KILL_GRACE_MS: the page read
+        // so far is reported, as after any kill, without the exit the OS has not delivered.
+        // Armed first, so an exit the kill reports at once clears it.
+        if (grace === null) grace = setTimeout(() => { exitSeen = false; settle(null, null); }, KILL_GRACE_MS).unref();
         try { if (detached) process.kill(-child.pid, 'SIGKILL'); else child.kill(); } catch { /* already gone */ }
       };
       clock.kill = kill;
-      arm();
+      // The launch allowance began with the guard child, not with the browser: the parent counts
+      // from the child's spawn, and a boot slowed by load was in none of its times (ADR-0188).
+      // Counted on the monotonic clock, as the parent's cutoff is: a step of the wall clock would
+      // move the kill.
+      arm(Math.max(0, timeout - (Number.isFinite(since) ? Math.max(0, performance.now() - since) : 0)));
       const started = Date.now();
       clock.started = started;
       const settle = (status, signal) => {
         if (settled) return;
         settled = true;
         clearTimeout(clock.timer);
+        clearTimeout(grace);
         const timedOut = clock.timedOut;
         resolve({
           status, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: stderrKept(),
@@ -424,6 +456,7 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
         if (settled) return;
         settled = true;
         clearTimeout(clock.timer);
+        clearTimeout(grace);
         resolve({ status: null, signal: null, stdout: '', stderr: stderrKept(), errorCode: err.code ?? 'SPAWN', errorMessage: err.message, refused: guard.refused, truncated });
       });
       // 'close' follows 'exit' once the pipes drain; a helper that outlived the browser would
@@ -435,8 +468,9 @@ export async function renderThroughGuard({ binary, args, url, timeout = 60_000, 
   } finally {
     await guard.close();
     // Tried again while the browser's helpers still hold it; one that will not go is left,
-    // and the render's result stands (ADR-0185).
-    removeRetrying(dir);
+    // and the render's result stands (ADR-0185). A browser not yet gone holds it for longer
+    // than the retries: one try, and the time is left to the parent (ADR-0188).
+    removeRetrying(dir, exitSeen ? {} : { retries: 0 });
   }
 }
 
@@ -478,7 +512,9 @@ async function child() {
     }
     const variable = proxyVariable(process.env);
     // NO_PROXY from the same environment the proxy was read from (#314).
-    const result = await renderThroughGuard({ ...job, allowInternal, upstream: variable ? process.env[variable] : null, bypass: noProxyOf(process.env) });
+    // The launch allowance runs from this process's start - 0 on its monotonic clock - which the
+    // parent's clock counts from too (ADR-0188).
+    const result = await renderThroughGuard({ ...job, allowInternal, upstream: variable ? process.env[variable] : null, bypass: noProxyOf(process.env), since: 0 });
     // The decision is reported with the render: the transport judges the final URL the net log
     // names by the same rule, and only this half resolved the URL asked for (ADR-0137).
     process.stdout.write(JSON.stringify({ ...result, allowInternal }), () => process.exit(0));

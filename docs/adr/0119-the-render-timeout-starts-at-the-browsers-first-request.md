@@ -1,7 +1,7 @@
 # ADR-0119 — The render timeout starts at the browser's first request
 
 - **Date:** 2026-10-01
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0188 (the launch allowance runs from the guard child's own start, not from the browser's launch, so the child's boot is inside what the parent counts; the first-request clock and the render budget stand)
 - **Area:** `lib/browser-guard.mjs` (the child's clock), `lib/browser-transport.mjs` (the
   timeout message, the deadline judgment)
 

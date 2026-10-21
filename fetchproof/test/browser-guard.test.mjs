@@ -14,8 +14,9 @@ import childProcess, { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { syncBuiltinESMExports } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { test, describe, assert, tempDir, fs, path, requireCapability, KIT_ROOT } from './harness.mjs';
-import { startGuard, judge, parseUpstream, renderThroughGuard, REFUSAL_MARKER, DROP_MARKER, isBrowserService, parseNoProxy, bypassesProxy, noProxyOf } from '../lib/browser-guard.mjs';
+import { startGuard, judge, parseUpstream, renderThroughGuard, KILL_GRACE_MS, REFUSAL_MARKER, DROP_MARKER, isBrowserService, parseNoProxy, bypassesProxy, noProxyOf } from '../lib/browser-guard.mjs';
 import browser, { findBrowser, renderGuarded, browserArgs } from '../lib/browser-transport.mjs';
 
 describe('browser-guard');
@@ -290,6 +291,42 @@ test('the guard records every request it carried, and reports the ones still una
   } finally { await guard.close(); await pages.close(); await new Promise((r) => { silent.closeAllConnections?.(); silent.close(r); }); }
 });
 
+// A browser the kill has not ended yet (KILL_GRACE_MS) still holds its sockets when the guard
+// is closed under it. A CONNECT leaves the server's own bookkeeping when it is handed over, so
+// one the browser kept open - a refusal it never closed, or one still being judged - kept
+// `close` waiting, and the render with it (break-test of the 2026-10-21 fix).
+test('closing the guard ends every socket the browser still holds, answered or still being judged', async () => {
+  const guard = await startGuard({ lookup: () => { /* never answers: the CONNECT is still being judged */ } });
+  const held = [];
+  const hold = (hostPort) => new Promise((resolve) => {
+    const socket = net.connect({ port: guard.port, host: '127.0.0.1', allowHalfOpen: true }, () => socket.write(`CONNECT ${hostPort} HTTP/1.1\r\nHost: ${hostPort}\r\n\r\n`));
+    held.push(socket);
+    let got = '';
+    socket.on('data', (d) => { got += d; });
+    socket.on('end', () => resolve(got));
+    socket.on('error', () => resolve(got));
+  });
+  // Waited for by what the guard recorded, not by a fixed sleep a loaded machine can outrun.
+  const recorded = async (count) => {
+    const end = Date.now() + 5000;
+    while (guard.seen.length < count) {
+      if (Date.now() > end) assert.fail(`the guard recorded ${guard.seen.length} of ${count} CONNECTs within 5 s: ${JSON.stringify(guard.seen)}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  try {
+    const refusal = hold('10.0.0.1:443');
+    await recorded(1);
+    const judging = hold('never.example:443');
+    await recorded(2);
+    assert.match(await refusal, /403/, 'the internal address was answered with a refusal, which the browser keeps open');
+    assert.deepEqual(guard.seen.map((e) => [e.target, e.outcome]), [['10.0.0.1:443', 'refused'], ['never.example:443', null]]);
+    const within = (promise, value) => Promise.race([promise.then(() => value), new Promise((r) => setTimeout(() => r('still waiting'), 2000))]);
+    assert.equal(await within(guard.close(), 'closed'), 'closed', 'the guard waited on sockets the browser still held');
+    assert.equal(await within(judging, 'ended'), 'ended', 'the CONNECT still being judged was left open');
+  } finally { for (const socket of held) socket.destroy(); await Promise.race([guard.close(), new Promise((r) => setTimeout(r, 2000))]); }
+});
+
 // Found 2026-10-01 on CI (Windows): a hung launch's log tail showed profile creation 43 s
 // after the launch and normal progress after it, so the wait was in the first 43 s - which
 // the tail, the last 60 lines, could not show. The child keeps the HEAD of the browser's
@@ -487,6 +524,68 @@ test('a render\'s folder Windows still holds is removed on a later try, and one 
   let called = false;
   assert.equal(removeRetrying(null, { rm: () => { called = true; }, sleep }), true, 'no folder is nothing to remove');
   assert.equal(called, false);
+  // One try and no wait, for a folder a browser the kill has not ended still holds.
+  slept.length = 0;
+  const single = held('EBUSY', Infinity);
+  assert.equal(removeRetrying('/t/fp-render-x', { rm: single.rm, sleep, platform: 'win32', retries: 0 }), false);
+  assert.equal(single.calls.length, 1, 'a single try was retried');
+  assert.deepEqual(slept, [], 'a single try waited');
+});
+
+// A browser the kill has not ended within KILL_GRACE_MS still holds its profile, so the
+// transport's removal after the child failed too: on the operator's PC (2026-10-21) every
+// render whose Chromium hung at shutdown left its whole profile, 143 files and 2.7 MB. The
+// transport keeps the folders it made and could not remove, and tries each once more before
+// its next render and as its process exits. It touches no folder it did not make (ADR-0185).
+test('a render\'s folder still held when the render ends is removed by a later render or at exit, and no other folder is touched', async () => {
+  await inPrivateTemp(async (temp) => {
+    const other = fs.mkdtempSync(path.join(temp, 'fp-render-'));
+    const folders = [];
+    const stuck = new Set();
+    const attempts = [];
+    const remove = (dir, options = {}) => {
+      if (!dir) return true;
+      if (folders.includes(dir)) attempts.push([dir, options.retries ?? 'retried']);  // another test's leftovers are not this one's to count
+      if (stuck.has(dir)) return false;
+      try { fs.rmSync(dir, { recursive: true, force: true }); return true; } catch { return false; }
+    };
+    const spawn = (cmd, argv, options) => {
+      folders.push(JSON.parse(options.input).folder);
+      return { status: 0, stdout: JSON.stringify({ status: 0, stdout: '<html></html>', stderr: '', refused: [] }), stderr: '' };
+    };
+    const render = (hold) => {
+      const r = renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: {}, spawn: (...a) => { const out = spawn(...a); if (hold) stuck.add(folders.at(-1)); return out; }, nodePath: '/opt/node', remove });
+      assert.equal(r.status, 0, 'the render\'s result depends on its folder\'s removal');
+    };
+    render(true);
+    const [held] = folders;
+    assert.ok(fs.existsSync(held), 'the held folder is still there, as the browser still holds it');
+    assert.deepEqual(attempts, [[held, 'retried']]);
+    stuck.delete(held);  // the browser has gone
+    render(false);
+    assert.equal(fs.existsSync(held), false, 'the next render did not try the folder left behind again');
+    assert.deepEqual(attempts.slice(1), [[held, 0], [folders[1], 'retried']], 'the folder left behind is tried once, without waiting, before the next render');
+    render(false);
+    assert.equal(attempts.filter(([dir]) => dir === held).length, 2, 'a folder removed was tried again');
+    assert.ok(fs.existsSync(other), 'a folder this process did not make was touched');
+    assert.deepEqual(fs.readdirSync(temp), [path.basename(other)]);
+  });
+  // At exit: a process whose last render's folder was held removes it as it exits, once the
+  // browser has let it go.
+  const temp = tempDir('fp-exit-temp-');
+  const script = path.join(tempDir('fp-exit-script-'), 'last.mjs');
+  fs.writeFileSync(script, `
+import { renderGuarded } from ${JSON.stringify(pathToFileURL(path.join(KIT_ROOT, 'lib', 'browser-transport.mjs')).href)};
+let folder;
+const spawn = (cmd, argv, options) => { folder = JSON.parse(options.input).folder; return { status: 0, stdout: '{"status":0}', stderr: '' }; };
+renderGuarded('/opt/chrome', [], { url: 'https://x.invalid/a', env: {}, spawn, nodePath: '/opt/node', remove: (dir) => !dir });
+process.stdout.write(folder);
+`);
+  const last = childProcess.spawnSync(process.execPath, [script], { encoding: 'utf8', env: { ...process.env, TMPDIR: temp, TEMP: temp, TMP: temp } });
+  assert.equal(last.status, 0, last.stderr);
+  assert.match(last.stdout, /fp-render-/, 'the render was given no folder');
+  assert.equal(fs.existsSync(last.stdout), false, 'the folder the last render left behind outlived its process');
+  assert.deepEqual(fs.readdirSync(temp), []);
 });
 
 // The previous fixture measured `node -e 0`, then relied on a different ESM child's boot
@@ -540,7 +639,8 @@ test('the render timeout starts at the browser\'s first request, and the launch 
   const killChild = (child, exitSignal = 'SIGTERM') => {
     child.kills += 1;
     child.killTimes.push(now);
-    closeChild(child, null, exitSignal);
+    // A child marked unkillable is one the kill has not yet ended: the OS took it at its word.
+    if (!child.unkillable) closeChild(child, null, exitSignal);
     return true;
   };
   const advance = (ms) => {
@@ -616,9 +716,9 @@ test('the render timeout starts at the browser\'s first request, and the launch 
     };
     Date.now = () => now;
     globalThis.setTimeout = (fn, ms, ...args) => {
-      // The guard's deadline is the only duration controlled here. Other timers,
-      // including the harness's default 60000 ms watchdog, remain real.
-      if (ms !== timeout) return original.setTimeout(fn, ms, ...args);
+      // The guard's deadline and the kill's grace are the only durations controlled here.
+      // Other timers, including the harness's default 60000 ms watchdog, remain real.
+      if (ms !== timeout && ms !== KILL_GRACE_MS) return original.setTimeout(fn, ms, ...args);
       const handle = { unref() { return this; } };
       ownedTimers.add(handle); timers.set(handle, { at: now + ms, fn, args });
       return handle;
@@ -667,6 +767,32 @@ test('the render timeout starts at the browser\'s first request, and the launch 
     assert.equal(silent.errorCode, 'ETIMEDOUT');
     assert.equal(silent.startupMs, null);
     assert.equal(silent.elapsedMs, 1000);
+
+    // A browser the kill does not end at once is reported a grace later, with the page it had
+    // printed. On the operator's Windows PC (2026-10-21) Chromium printed the whole page, did not
+    // exit, and took 15 s to more than 35 s to go after the kill; the guard child waited for the
+    // exit past the parent's allowance, and the parent threw the page away with it (ADR-0119).
+    const stuck = await start('/stuck');
+    stuck.child.unkillable = true;
+    advance(600);
+    await request(stuck);
+    stuck.child.stdout.write('<html><body>printed before the kill</body></html>');
+    let reported = false;
+    stuck.promise.then(() => { reported = true; }, () => {});
+    const real = (ms) => new Promise((resolve) => original.setTimeout(resolve, ms));
+    await real(50);
+    advance(1000);
+    assert.equal(stuck.child.kills, 1, 'the stalled render was not killed at its deadline');
+    advance(KILL_GRACE_MS - 1);
+    await real(200);
+    assert.equal(reported, false, 'the render was reported before the kill had its grace');
+    advance(1);
+    await Promise.race([stuck.promise, real(5000)]);
+    assert.equal(reported, true, 'a browser the kill did not end held the render past the grace, and the parent would throw the page away');
+    const hung = await stuck.promise;
+    assert.equal(hung.errorCode, 'ETIMEDOUT');
+    assert.match(hung.stdout, /printed before the kill/, 'the page read before the kill was not reported');
+    assert.equal(hung.elapsedMs, 1600 + KILL_GRACE_MS);
     assert.equal(timers.size, 0, 'a finished render left its deadline armed');
   } finally {
     try {
@@ -751,6 +877,52 @@ process.stdout.write(body);
 `);
   return file;
 }
+
+// A LIVE /stalled run of 2026-10-21 under load (ADR-0188): the parent gave the guard child up at
+// 2 x timeout + 10 s though every part after the kill was bounded. The child's own boot, before it
+// launched the browser, was in none of the times the parent counts. The launch allowance now runs
+// from the child's start.
+test('the launch allowance runs from the guard child\'s own start, so its boot is inside what the parent counts', async () => {
+  const browser = profileBrowser();
+  const said = path.join(tempDir('fp-profile-said-'), 'said.json');
+  const url = 'http://127.0.0.1:9/none';
+  const args = [browser, `--fp-said=${said}`, '--fp-hang', '--dump-dom', url];
+  await inPrivateTemp(async (temp) => {
+    // In process: a caller that has spent 4 s of a 6 s allowance leaves the launch 2 s.
+    const late = await renderThroughGuard({ binary: process.execPath, args, url, allowInternal: true, timeout: 6000, since: performance.now() - 4000 });
+    assert.equal(late.errorCode, 'ETIMEDOUT', JSON.stringify(late));
+    assert.ok(late.elapsedMs < 4500, `the launch was given the whole allowance after 4 s of it had gone: ${late.elapsedMs} ms`);
+    // Through the child: a boot held for 2 s (a preloaded busy-wait) comes out of the launch allowance.
+    const hold = 'data:text/javascript,const until=Date.now()+2000;while(Date.now()<until);';
+    const job = { binary: process.execPath, args, url, allowInternalRedirects: true, timeout: 5000 };
+    const run = childProcess.spawnSync(process.execPath, ['--import', hold, path.join(KIT_ROOT, 'lib', 'browser-guard.mjs')], { input: JSON.stringify(job), encoding: 'utf8', windowsHide: true });
+    const report = JSON.parse(run.stdout || '{}');
+    assert.equal(report.errorCode, 'ETIMEDOUT', `${run.stdout}\n${run.stderr}`);
+    assert.ok(report.elapsedMs < 4000, `the child's 2 s boot was not taken from the launch allowance: ${report.elapsedMs} ms`);
+    assert.deepEqual(fs.readdirSync(temp), [], 'a render left its folder in the temp folder');
+  });
+});
+
+// Break-test of the change above (2026-10-21): the time spent was taken from the wall clock, so a
+// step of it while the child started - a time sync after the PC woke - killed the browser at once.
+// It is counted on the monotonic clock, as the parent's own cutoff is.
+test('the launch allowance is counted on the monotonic clock: a step of the wall clock does not shorten it', async () => {
+  const browser = profileBrowser();
+  const said = path.join(tempDir('fp-profile-said-'), 'said.json');
+  const url = 'http://127.0.0.1:9/none';
+  const args = [browser, `--fp-said=${said}`, '--fp-hang', '--dump-dom', url];
+  const wall = Date.now;
+  await inPrivateTemp(async (temp) => {
+    const since = performance.now();
+    Date.now = () => wall() + 3_600_000;
+    let report;
+    try { report = await renderThroughGuard({ binary: process.execPath, args, url, allowInternal: true, timeout: 2000, since }); } finally { Date.now = wall; }
+    const took = performance.now() - since;
+    assert.equal(report.errorCode, 'ETIMEDOUT', JSON.stringify(report));
+    assert.ok(took >= 1800, `a step of the wall clock by an hour cut the launch allowance: killed after ${Math.round(took)} ms of 2000`);
+    assert.deepEqual(fs.readdirSync(temp), [], 'a render left its folder in the temp folder');
+  });
+});
 
 test('through the child, a page that navigates inward by script lands on the refusal, and the transport says so', async () => {
   const pages = await pagesProcess();

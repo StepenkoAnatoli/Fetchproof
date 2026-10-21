@@ -80,6 +80,19 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   capture made today, and that a same-day re-check is `--force`, which re-fetches every page
   the plan names and runs every search again, those for closed unknowns included (`--only`
   narrows only the searches). Prompted by discussion #413.
+- A page the browser rendered whole is kept when Chromium is slow to die after the guard kills it
+  at its deadline. On the operator's Windows PC Chromium printed the whole page, did not exit, and
+  took 15 s to more than 35 s to go after the kill. The guard child waited for that exit, past the
+  10 s the transport allows it to kill the browser and report (ADR-0119), so the transport gave
+  the child up and the page with it: "the guard child did not finish within 70 s". The child now
+  waits 3 s for a killed browser's exit, then reports the page it has read (ADR-0188). The LIVE
+  `/stalled` test failed this way in 5 of 6 runs on that PC, with or without other load. The
+  render's folder, which a browser not yet gone still holds, is tried again: the transport tries
+  a folder it could not remove once more, without waiting, before each later render and as the
+  process exits, and only folders it made itself; one still held at exit is left. The guard's
+  own close no longer waits on a CONNECT the browser kept open, and the browser's launch
+  allowance now runs from the guard child's own start: under load, the child's boot was counted
+  by the transport and not by the child.
 - Moving the top level's project below it - `git mv research packages/x/research`, turning a
   one-project repository into the nested layout - commits again. The gate counted the top level as
   always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
@@ -126,7 +139,9 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   holding the profile (`--user-data-dir`) and the net log; the guard child removes it, and the
   transport removes it again once the child is gone, however it ended. A removal Windows holds
   is retried for about 1.6 s, and a folder that will not go is left without changing the
-  render's result (ADR-0185, break-test of the 2026-10-19 review, B1). Folders already in the
+  render's result (ADR-0185, break-test of the 2026-10-19 review, B1); one whose browser the
+  kill did not end in time is tried again later, and can be left at exit (ADR-0188, above).
+  Folders already in the
   temp folder stay; remove them while no headless Chrome is running, e.g.
   `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/rk-netlog-*` on Windows (the
   kit that made those folders named them `rk-netlog-*`; see the rename entry above).

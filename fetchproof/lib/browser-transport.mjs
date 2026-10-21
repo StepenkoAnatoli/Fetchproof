@@ -99,7 +99,20 @@ export function guardChildTimeout(timeout = TIMEOUT_MS) {
   return 2 * timeout + 10_000;
 }
 
-export function renderGuarded(binary, args, { url, env = process.env, timeout = TIMEOUT_MS, allowInternalRedirects, nodePath = process.execPath, spawn = spawnSync } = {}) {
+/**
+ * The render folders this process made and could not remove: a browser the guard's kill had
+ * not ended still held them (ADR-0188). Each is tried once more, without waiting, before every
+ * later render and as the process exits. Only folders this process made are kept here; the
+ * temp folder is never swept by name (ADR-0185).
+ */
+const leftBehind = new Set();
+let retriedAtExit = false;
+
+function retryLeftBehind(remove = removeRetrying) {
+  for (const folder of leftBehind) if (remove(folder, { retries: 0 })) leftBehind.delete(folder);
+}
+
+export function renderGuarded(binary, args, { url, env = process.env, timeout = TIMEOUT_MS, allowInternalRedirects, nodePath = process.execPath, spawn = spawnSync, remove = removeRetrying } = {}) {
   // ADR-0110: undefined lets the child decide from the URL asked for; the operator's opt-out,
   // or a caller's explicit choice, overrides it.
   // An unreadable value is a refusal, never the default (#290, internalRedirectsSetting).
@@ -108,6 +121,7 @@ export function renderGuarded(binary, args, { url, env = process.env, timeout = 
   // (ADR-0185): the child removes it too, but a child killed at guardChildTimeout - or by
   // anything else - never reaches its finally, and its browser's profile and net log stayed
   // in the temp folder (B1, 2026-10-19).
+  retryLeftBehind(remove);
   const folder = makeRenderFolder();
   const job = { binary, args, url: String(url), timeout, ...(allow === undefined ? {} : { allowInternalRedirects: allow }), ...(folder ? { folder } : {}) };
   let result;
@@ -116,7 +130,10 @@ export function renderGuarded(binary, args, { url, env = process.env, timeout = 
       input: JSON.stringify(job), encoding: 'utf8', timeout: guardChildTimeout(timeout), windowsHide: true, maxBuffer: CHILD_OUTPUT_LIMIT, env,
     });
   } finally {
-    removeRetrying(folder);
+    if (!remove(folder)) {
+      leftBehind.add(folder);
+      if (!retriedAtExit) { retriedAtExit = true; process.once('exit', () => retryLeftBehind()); }
+    }
   }
   const failed = (code, message) => ({ status: null, signal: null, stdout: '', stderr: '', error: Object.assign(new Error(message), { code }), refused: [] });
   if (result.error?.code === 'ETIMEDOUT') return { ...failed('ETIMEDOUT', `the guard child did not finish within ${Math.round(guardChildTimeout(timeout) / 1000)} s - the launch allowance, the render budget and 10 s to report (ADR-0119) - so its record of where the time went was lost`), gaveUp: true };
