@@ -1,4 +1,4 @@
-<!-- Modified by Fetchproof: ADR-0146 Mandate-wait correction and 2026-10-08 corrections to merge intent, budgets, unanswered questions and owner stops. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Fetchproof: ADR-0146 Mandate-wait correction and 2026-10-08 corrections to merge intent, budgets, unanswered questions and owner stops. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 ## Auto-build mandate
 - Default reply offered for bounded tasks: GO MERGE (merge intent; the run still waits for the owner's reply)
 - Architectural tasks: wait

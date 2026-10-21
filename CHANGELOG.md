@@ -28,6 +28,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
      then `node fetchproof/bin/install-hooks.mjs`, then `node fetchproof/bin/doctor.mjs` until it
      says `READY`. Delete `~/.agents/research-kit`, and `~/.agents/research-kit.config.json.last-good`
      if it is there: it is the old kit's copy of its configuration, and the new kit keeps its own.
+     If the install says it `left <project>/.claude/skills/research-first as it is` because the
+     project edited its copy, and you did not edit it, run
+     `node fetchproof/bin/install.mjs --into <that project>`: the new kit does not read the old
+     kit's copy of the skill, so it cannot tell the copy the old kit wrote from an edited one, and
+     the project keeps commands that name the deleted folder. `--into` replaces the project's copy.
   4. In an MCP client's configuration, point the server at `~/.agents/fetchproof/bin/mcp-server.mjs`,
      and rename any `RESEARCH_KIT_*` key in its `env` block to `FETCHPROOF_*`: the server reads its
      token from `FETCHPROOF_GITHUB_TOKEN` or `GITHUB_TOKEN`, not `RESEARCH_KIT_GITHUB_TOKEN`.
@@ -35,15 +40,20 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
      wrote, `.agents/research-kit`, to `.agents/fetchproof`. On Windows the path is spelled
      `.agents\research-kit`, and `.agents\\research-kit` inside `research/kit.json`; a project made
      with `--kit` holds the spelling it was given. The path is in `research/kit.json` (`kitPath`),
-     `AGENTS.md`, `START_HERE.md`, `research/DISCOVERY.md`, `research/MAP.md` and
-     `research/TIMELINE.md`; none of those lines is an input of a brief's stamp. In
+     `AGENTS.md`, `START_HERE.md`, `research/DISCOVERY.md`, `research/MAP.md`,
+     `research/TIMELINE.md`, and the fourth line of a `research/BRIEF.md` not drafted yet (the
+     scaffold); none of those lines is an input of a brief's stamp. In
      `research/BRIEF.md`, replace `research-kit:brief` with `fetchproof:brief`; the hashes in a
      draft stamp cover the text above it, so the stamp stays valid. A drafted brief's next steps
      keep the old command until the brief is drafted again; editing them by hand marks the brief
      edited. Leave `research/raw/` as it is.
-  6. In a repository that runs `collect.yml`, rename the GitHub environment variable
-     `RESEARCH_KIT_COLLECTION_ENV` to `FETCHPROOF_COLLECTION_ENV` (and `RESEARCH_KIT_LIVE_ENV` to
-     `FETCHPROOF_LIVE_ENV` for `live-collection.yml`).
+  6. In a repository that runs `collect.yml`, such as your fork, first bring its workflows to this
+     version (GitHub's "Sync fork", or merge this repository's `main` and push), then, in the same
+     sitting, rename the GitHub environment variable `RESEARCH_KIT_COLLECTION_ENV` to
+     `FETCHPROOF_COLLECTION_ENV` (and `RESEARCH_KIT_LIVE_ENV` to `FETCHPROOF_LIVE_ENV` for
+     `live-collection.yml`). The old `collect.yml` reads the old variable and uploads
+     `research-kit-corpus-v1-*`, which the new kit does not fetch: `collect-remote` and
+     `fetch_corpus` answer `NO_ARTIFACT` for a run that has already collected.
   A `research-kit-commit-*` folder in the system temp folder is a checkout copy the old gate left
   when a commit was interrupted; the new gate sweeps only its own `fetchproof-commit-*` folders, so
   delete old ones by hand. The kit's other temporary folders now start with `fp-` (`fp-render-*`
@@ -101,7 +111,8 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   is retried for about 1.6 s, and a folder that will not go is left without changing the
   render's result (ADR-0185, break-test of the 2026-10-19 review, B1). Folders already in the
   temp folder stay; remove them while no headless Chrome is running, e.g.
-  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/fp-netlog-*` on Windows.
+  `rm -rf "$LOCALAPPDATA"/Temp/HeadlessChrome* "$LOCALAPPDATA"/Temp/rk-netlog-*` on Windows (the
+  kit that made those folders named them `rk-netlog-*`; see the rename entry above).
 - A commit that removes a project's `research/` is judged by #312's rule again. `rm -rf research
   && git add -A` at the top level left no gate marker, so the gate answered not-gated and the
   commit took the corpus and turned the gate off with no record; `git rm -r research`, with the

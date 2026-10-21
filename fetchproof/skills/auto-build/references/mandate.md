@@ -1,6 +1,6 @@
 # The Mandate
 
-<!-- Modified by Fetchproof: ADR-0146 standing-mandate corrections and 2026-10-08 corrections to approval summaries, reply/default tables and saved consent. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; Architectural tasks: proceed remains withdrawn. -->
+<!-- Modified by Fetchproof: ADR-0146 standing-mandate corrections and 2026-10-08 corrections to approval summaries, reply/default tables and saved consent. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; Architectural tasks: proceed remains withdrawn. -->
 
 The Mandate presents the current design for the owner's approval. Inside a Fetchproof
 project, `fetchproof.md` also requires the owner's reply at consequential stops and a

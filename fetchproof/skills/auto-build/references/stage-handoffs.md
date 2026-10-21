@@ -1,6 +1,6 @@
 # Stage Handoffs
 
-<!-- Modified by Fetchproof on 2026-10-08: approval handoffs and unattended owner stops align with the governing Fetchproof note and ADR-0146; ADR-0150 adds complete-review/Git-ownership handoff guidance. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Fetchproof on 2026-10-08: approval handoffs and unattended owner stops align with the governing Fetchproof note and ADR-0146; ADR-0150 adds complete-review/Git-ownership handoff guidance. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 
 How auto-build hands each stage to the skill that owns it, what that skill must leave behind
 before the next stage may start, where auto-build adapts the skill's rules (and why), and what

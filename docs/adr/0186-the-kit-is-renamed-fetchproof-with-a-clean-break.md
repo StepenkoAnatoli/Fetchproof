@@ -94,7 +94,9 @@ temporary-folder prefixes, and prose across the documentation, the ADRs and the 
   owner chose the clean break. Re-suggest only when the trigger below fires.
 - **Leave dated records as written.** Offered first, because they record what was true when they
   were written; the owner chose to rename them. Paths in an old record now name the new folder, and a
-  temporary folder an old record counted (ADR-0185's `fp-netlog-*`) has the new prefix too.
+  temporary folder an old record counted (ADR-0185's `fp-netlog-*`) has the new prefix too. The
+  cleanup command in that CHANGELOG entry is an instruction, not a record, so it names the folders
+  as they are on disk, `rk-netlog-*`.
 - **Rename the package ID only and keep the internal `rk-` prefixes.** Recommended, because the
   package ID is the only one a user sees; the owner chose to rename all of them.
 - **Rename only the display name** and keep the internal identifiers. Rejected: the order was to

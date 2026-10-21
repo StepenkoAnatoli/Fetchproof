@@ -6,7 +6,7 @@ metadata:
   version: "1.0"
   origin: Auto-Build Mode (research-to-production autonomous builder), 2026-10-04
 ---
-<!-- Modified by Fetchproof: ADR-0146 adaptations and 2026-10-08 approval-summary corrections (description, purpose, stage table, research/design handoffs, Mandate, merge and stop summaries), plus ADR-0150 complete-review guidance. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; the ledger reference also differs from that baseline. -->
+<!-- Modified by Fetchproof: ADR-0146 adaptations and 2026-10-08 approval-summary corrections (description, purpose, stage table, research/design handoffs, Mandate, merge and stop summaries), plus ADR-0150 complete-review guidance. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; the ledger reference also differs from that baseline. -->
 
 Inside a Fetchproof project, `references/fetchproof.md` governs this run; where it and this
 file differ, it wins.

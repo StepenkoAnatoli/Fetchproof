@@ -122,8 +122,10 @@ function handsOnTo(folder, { own, base }) {
  * that folder's hook after its own. On the maintainer's machine that folder was the previous
  * implementation's own githooks/ - two gates on every commit, the older one deciding on its
  * own rules, and on 2026-10-03 crashing ("number 0 is not iterable") and failing open after
- * the current gate had allowed. Recognised by the header every version of this kit's
- * pre-commit has carried; a folder with no pre-commit hands nothing on and is nobody's
+ * the current gate had allowed. Recognised by the header this kit's pre-commit has carried since
+ * the rename (ADR-0186); an older kit's header names the old kit and is not recognised, and that
+ * kit's own uninstall removes it (the CHANGELOG's migration step 1). A folder with no pre-commit
+ * hands nothing on and is nobody's
  * business. Pure, like doctor's `commitGateState`, for the same reason (ADR-0004). It lives
  * here, beside the install that writes the record, because the installer judges with it too
  * (ADR-0141); doctor re-exports it.

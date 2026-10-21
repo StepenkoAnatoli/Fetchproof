@@ -18,7 +18,8 @@
 set -u
 
 # Modified by Fetchproof (ADR-0146): --timeout-minutes, which the parser never accepted, is
-# dropped from the usage line. The rest is as received from StepenkoAnatoli/SkillsMDs at 3f2d2fc.
+# dropped from the usage line, and the kit's rename (ADR-0186, 2026-10-20) changed its name here
+# and in the Requires line. The rest is as received from StepenkoAnatoli/SkillsMDs at 3f2d2fc.
 
 PR=""
 BASE=""

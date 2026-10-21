@@ -1,6 +1,6 @@
 # Merge Protocol
 
-<!-- Modified by Fetchproof: ADR-0146 head-pinned command and 2026-10-08 corrections to entry conditions, consent, resumed/moved heads and follow-up merges. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Fetchproof: ADR-0146 head-pinned command and 2026-10-08 corrections to entry conditions, consent, resumed/moved heads and follow-up merges. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 
 Stage 8 of auto-build. The pull request is the run's delivery; the merge is the one irreversible
 action in the run, so it has the strictest entry conditions and the most explicit record. The
