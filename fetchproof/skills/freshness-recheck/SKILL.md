@@ -21,7 +21,9 @@ check the day has not moved on.
 
    `--refresh-days 0` does not re-collect a capture made today: it re-collects a capture
    older than `n` days, and today's is 0 days old. For a same-day re-check, use `--force`
-   with `--dry-run` first. `--force` re-fetches every page the plan names; `--only <text>`
+   with `--dry-run` first. `--force` re-fetches every page the plan names and runs every
+   search again, those for closed unknowns included, keeping up to `perQuery` pages each
+   within the run's scrape budget; the dry run lists what it would spend. `--only <text>`
    narrows the searches it runs again, not the plan's pages.
 3. Run it without `--dry-run`. Every re-collection spends a credit; when the account runs
    out the run stops and asks - never pass `--fallback` on your own initiative.

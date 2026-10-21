@@ -78,7 +78,8 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   a fact has changed reports it for the collector to re-check. The five-minute example points
   there. The `freshness-recheck` skill says that `--refresh-days 0` does not re-collect a
   capture made today, and that a same-day re-check is `--force`, which re-fetches every page
-  the plan names (`--only` narrows only the searches). Prompted by discussion #413.
+  the plan names and runs every search again, those for closed unknowns included (`--only`
+  narrows only the searches). Prompted by discussion #413.
 - Moving the top level's project below it - `git mv research packages/x/research`, turning a
   one-project repository into the nested layout - commits again. The gate counted the top level as
   always staying, so it called the move a deletion: "research/raw/.fetches.jsonl is in HEAD and is
