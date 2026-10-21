@@ -16,10 +16,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { PATHS, HEADERS, resolve, exists, readText, kitCommand } from './core.mjs';
+import { PATHS, HEADERS, resolve, exists, readText, kitCommand, ageInDays } from './core.mjs';
 import { readCorpus, captureOf, traceOf } from './corpus.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { briefState, judgedSection, JUDGED_SECTIONS } from './brief.mjs';
+import { freshnessDay, supersededRows } from './checks.mjs';
 
 /**
  * How the corpus goes into git, as the kit prints it: everything under research/ the ignore
@@ -311,8 +312,13 @@ export function lineEndingRemedy(files = [], { isRepo = true, pinned = false, re
  * Findings are named: handoff-ledger-missing, handoff-ledger-empty, handoff-evidence-missing,
  * handoff-evidence-unparsed, handoff-capture-missing, handoff-capture-unledgered, handoff-chain-broken,
  * plus one handoff-remedy.
+ *
+ * It checks integrity, not currency (ADR-0187): a corpus that arrived whole is OK however old
+ * its captures are, because the machine that asks cannot fetch to learn whether a page has
+ * changed since. `fetched` says how old the snapshot is instead, and never changes `ok`.
+ * `now` is for tests.
  */
-export function verifyHandoff(root, { corpus = null } = {}) {
+export function verifyHandoff(root, { corpus = null, now = new Date() } = {}) {
   const snapshot = corpus ?? readCorpus(root);
   const chain = snapshot.chain ?? verifyLedger(root, { corpus: snapshot });
   const findings = [];
@@ -427,6 +433,7 @@ export function verifyHandoff(root, { corpus = null } = {}) {
     })),
     entries: snapshot.ledger.entries.length,
     rows: snapshot.evidence.length,
+    fetched: fetchedRange(snapshot, now),
     // Not a finding: the corpus can arrive whole while the brief is unreviewed. The CLI
     // says so, because phase 2 starts from that file.
     brief: briefReview(snapshot),
@@ -438,6 +445,33 @@ export function verifyHandoff(root, { corpus = null } = {}) {
   if (remedy) report.findings.push({ name: 'handoff-remedy', severity: 'info', detail: remedy });
   report.remedy = remedy;
   return report;
+}
+
+/**
+ * `{ from, to, oldestDays }`: the first and last day the current evidence rows' captures were
+ * fetched, and how many whole days before `now` the first one was; null when no current row
+ * carries a date that parses. Each row is dated as stale-evidence dates it (`freshnessDay`):
+ * by the capture its Raw cell names, whose `retrieved` is under the ledger's hash, and by the
+ * table's editable Retrieved cell when the Raw cell names none (G8).
+ *
+ * Current rows: every row but those a later capture of the same URL superseded
+ * (`supersededRows`, ADR-0026). Counted, a page the collector re-checked kept its first
+ * fetch's age for as long as history is kept, and the line could not tell a re-checked
+ * snapshot from a stale one (review, 2026-10-20). Not only the cited rows: the arrival
+ * question stays free of the contract, and an uncited row can only make the snapshot look
+ * older. A day shaped like a date that is not one (`2026-00-13`) is left out rather than
+ * printed as "null days", and a capture dated after this machine's clock - the day of slack
+ * hygiene's future-date allows - is 0 days old, not -1.
+ */
+function fetchedRange(snapshot, now) {
+  const superseded = supersededRows(snapshot);
+  const days = snapshot.evidence
+    .filter((row) => !superseded.has(String(row.id ?? '').toUpperCase()))
+    .map((row) => freshnessDay(snapshot, row))
+    .filter((day) => day && ageInDays(day, now) !== null)
+    .sort();
+  if (!days.length) return null;
+  return { from: days[0], to: days.at(-1), oldestDays: Math.max(0, ageInDays(days[0], now)) };
 }
 
 /**

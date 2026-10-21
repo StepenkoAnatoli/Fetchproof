@@ -568,7 +568,7 @@ node fetchproof/bin/selftest.mjs            # all of it
 node fetchproof/bin/selftest.mjs gate hook  # just these files
 ```
 
-2104 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
+2112 tests, offline, no key and no network. The runner **awaits** every test, so `ok` means
 the assertions settled (ADR-0021), and each test is raced against a watchdog
 (`FETCHPROOF_TEST_TIMEOUT`, default 60s).
 

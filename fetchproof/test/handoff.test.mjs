@@ -1,6 +1,7 @@
 // The arrival question, and one remedy per cause (ADR-0011, ADR-0020).
 
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { test, describe, assert, makePassingProject, corrupt, tempDir, fs, path, requireGit, fixtureCommitArgs, fixtureInitArgs } from './harness.mjs';
 import { evaluate } from '../lib/gate.mjs';
 import { TEMPLATE_DIR } from '../lib/scaffold.mjs';
@@ -9,6 +10,7 @@ import { verifyHandoff, handoffRemedy, HANDOFF_REMEDY, lineEndingRemedy, altered
 import { readCorpus } from '../lib/corpus.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
 import { appendFetch } from '../lib/provenance.mjs';
+import { writeRaw } from '../lib/collect.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 
 describe('handoff');
@@ -546,6 +548,95 @@ test('a report holding both causes prints both remedies', () => {
 test('the remedy texts are the module\'s, so neither consumer can drift', () => {
   assert.match(HANDOFF_REMEDY, /COLLECTOR machine/);
   assert.match(lineEndingRemedy(['research/raw/a.md']), /research\/raw\/a\.md/);
+});
+
+// Discussion #413: handoff answers whether the corpus arrived intact, not whether its pages
+// still say the same thing, and a builder cannot fetch to find out. So the report says how
+// old the captures are, dated as freshness dates them - by the capture, which the ledger's
+// hash covers, not by the table's editable Retrieved cell (ADR-0187).
+function datedProject(first, second, { url = 'https://example.invalid/docs/pricing' } = {}) {
+  const dir = makePassingProject(tempDir('fp-handoff-dated-'), { date: first });
+  const entry = writeRaw(dir, {
+    url, title: 'Pricing', cmd: `firecrawl scrape ${url} --only-main-content --json`, statusCode: 200,
+    transport: 'firecrawl-cli', completeness: 'full',
+    markdown: `# Pricing\n\n${'The paid plan costs 20 dollars a month and allows 600 requests per minute. '.repeat(30)}`,
+  }, { date: second });
+  appendFetch(dir, {
+    op: 'scrape', url, type: 'P', raw: entry.file,
+    bodySha256: crypto.createHash('sha256').update(fs.readFileSync(resolve(dir, entry.file))).digest('hex'),
+    transport: 'firecrawl-cli', completeness: 'full', cmd: entry.command, at: `${second}T00:00:00.000Z`,
+  });
+  fs.appendFileSync(resolve(dir, PATHS.evidence), `| E-02 | ${second} | P | ${url} | The paid plan costs 20 dollars a month. | ${entry.file} |\n`);
+  return dir;
+}
+
+test('the handoff report gives the days its captures were fetched and the oldest one\'s age', () => {
+  const now = new Date('2026-10-20T12:00:00.000Z');
+  const report = verifyHandoff(datedProject('2026-09-13', '2026-10-02'), { now });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.equal(report.rows, 2);
+  assert.deepEqual(report.fetched, { from: '2026-09-13', to: '2026-10-02', oldestDays: 37 });
+});
+
+test('the fetch dates are the captures\', not the table\'s editable Retrieved cells', () => {
+  const dir = datedProject('2026-09-13', '2026-10-02');
+  // Editing the oldest row's cell to a recent day must not make the snapshot look younger:
+  // the capture on disk still says 2026-09-13 (the same rule as freshnessDate, G8).
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/^\| E-01 \| 2026-09-13 \|/m, '| E-01 | 2026-10-19 |'));
+  assert.match(fs.readFileSync(resolve(dir, PATHS.evidence), 'utf8'), /^\| E-01 \| 2026-10-19 \|/m, 'the fixture did not edit the cell');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-09-13', to: '2026-10-02', oldestDays: 37 });
+});
+
+// Found 2026-10-20 (review): every row counted, so a page the collector re-checked kept its
+// first fetch's age - ADR-0026 keeps the superseded row as history - and the line could not
+// tell a re-checked snapshot from a stale one.
+test('a row a later capture superseded is history, not the snapshot\'s age', () => {
+  const dir = datedProject('2026-09-13', '2026-10-19', { url: 'https://example.invalid/docs/limits' });
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.equal(report.rows, 2, 'the superseded row is still counted as a row');
+  assert.deepEqual(report.fetched, { from: '2026-10-19', to: '2026-10-19', oldestDays: 1 });
+});
+
+// The Raw cell of E-01 blanked and its Retrieved cell set to `cell`.
+function unnamedCapture(dir, cell) {
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/^(\| E-01 \| )2026-09-13( \|.*\| )\S+( \|)$/m, `$1${cell}$2$3`));
+  assert.match(fs.readFileSync(resolve(dir, PATHS.evidence), 'utf8'), new RegExp(`^\\| E-01 \\| ${cell} \\|.*\\|  \\|$`, 'm'), 'the fixture did not blank the Raw cell');
+  return dir;
+}
+
+// A row whose Raw cell names no capture is dated by its cell, as stale-evidence dates it: the
+// URL's latest capture may be a later fetch the row never read (G8). The docs say so.
+test('a row whose Raw cell names no capture is dated by its Retrieved cell, as freshness is', () => {
+  const dir = unnamedCapture(datedProject('2026-09-13', '2026-10-02'), '2026-09-20');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.deepEqual(report.fetched, { from: '2026-09-20', to: '2026-10-02', oldestDays: 30 });
+});
+
+// Found 2026-10-20 (review): `2026-00-13` is shaped like a date and is not one, and the OK line
+// printed "(oldest null days)".
+test('a day that does not parse is left out of the fetch dates, never printed as null', () => {
+  const dir = unnamedCapture(datedProject('2026-09-13', '2026-10-02'), '2026-00-13');
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-10-02', to: '2026-10-02', oldestDays: 18 });
+});
+
+// Found 2026-10-20 (review): a collector's clock ahead of the builder's across UTC midnight
+// printed "(oldest -1 days)". hygiene allows the same day of slack (future-date).
+test('a capture dated after the asking machine\'s clock is 0 days old, not -1', () => {
+  const dir = makePassingProject(tempDir('fp-handoff-ahead-'), { date: '2026-10-21' });
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
+  assert.deepEqual(report.fetched, { from: '2026-10-21', to: '2026-10-21', oldestDays: 0 });
+});
+
+test('a table with no rows has no fetch dates, and the report says null rather than a guess', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (text) => text.split('\n').filter((line) => !line.startsWith('| E-')).join('\n'));
+  const report = verifyHandoff(dir);
+  assert.equal(report.rows, 0);
+  assert.equal(report.fetched, null);
 });
 
 test('verifyHandoff is read-only: it never repairs, and never writes the corpus', () => {

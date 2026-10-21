@@ -473,8 +473,10 @@ builder with `.gitattributes`: `research/raw/* text eol=lf`). The scaffold ships
 
 `handoff OK` means the corpus arrived intact and consistent: every capture is the page as it
 was fetched, and the ledger proves it. It does not mean the pages still say the same thing
-today. A builder cannot fetch, so it cannot check that. Each capture's fetch date is in the
-`Retrieved` column of `research/EVIDENCE.md`. A builder who suspects a fact has changed
+today. A builder cannot fetch, so it cannot check that. What it can see is how old the
+snapshot is. The `handoff OK` line ends with the days the captures were fetched, for example
+`captures fetched 2026-09-13..2026-10-02 (oldest 37 days)`. It reads the date each capture
+recorded at its fetch; the `Retrieved` column of `research/EVIDENCE.md` gives each row's date. A builder who suspects a fact has changed
 reports which one, and the collector re-checks it (the `freshness-recheck` skill). Once the
 collector has re-collected a page that changed, the gate fails with `cites-superseded-row`
 until the claim is re-read and its citation moved to the new capture.
