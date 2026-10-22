@@ -1,7 +1,7 @@
 # ADR-0185 - A render's folder is made by the transport and holds the browser's profile
 
 - **Date:** 2026-10-19
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0188 (a killed browser is waited for 3 s, no longer, so the child no longer waits for its exit before removing the folder; a folder still held is tried again by the transport before later renders and at exit; the tree kill was measured and set aside; the folder, its two removals and the rejected sweep stand)
 - **Area:** `fetchproof/lib/browser-transport.mjs` (`renderGuarded`),
   `fetchproof/lib/browser-guard.mjs` (`makeRenderFolder`, `renderThroughGuard`),
   `fetchproof/lib/core.mjs` (`removeRetrying`)

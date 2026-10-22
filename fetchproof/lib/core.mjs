@@ -399,11 +399,12 @@ export const REMOVE_RETRIES = 6;
  * A render's folder holds the browser's profile and net log (ADR-0185). The browser's helper
  * processes can still hold files in it for a moment after the browser exits - on Windows a
  * removal then fails with EPERM, EBUSY or EACCES, anywhere with ENOTEMPTY when a helper wrote
- * one more file while the folder was emptied. Waits of 25 ms doubling, about 1.6 s in all.
+ * one more file while the folder was emptied. Waits of 25 ms doubling, about 1.6 s in all;
+ * `retries: 0` is one try and no wait, for a folder a browser not yet gone still holds.
  * A folder that will not go is left: cleaning a temp folder never changes what a collection
  * found (ADR-0185).
  */
-export function removeRetrying(dir, { rm = fs.rmSync, sleep = sleepSync, platform = process.platform } = {}) {
+export function removeRetrying(dir, { rm = fs.rmSync, sleep = sleepSync, platform = process.platform, retries = REMOVE_RETRIES } = {}) {
   if (!dir) return true;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -411,7 +412,7 @@ export function removeRetrying(dir, { rm = fs.rmSync, sleep = sleepSync, platfor
       return true;
     } catch (err) {
       const held = err?.code === 'ENOTEMPTY' || (platform === 'win32' && HELD.has(err?.code));
-      if (!held || attempt >= REMOVE_RETRIES) return false;
+      if (!held || attempt >= retries) return false;
       sleep(25 * 2 ** attempt);
     }
   }
