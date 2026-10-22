@@ -181,7 +181,7 @@ qualification ledger before BM-5/BM-6 or R33-03 approval.
 
 The canonical-hashing, predecessor-closure, and descendant-invalidation property loops use
 fixed unsigned-32-bit seeds. If an iteration fails, the harness creates exactly one canonical JSON envelope at
-`research-kit/conformance/property-regressions/PREG-<family>-<seed-hex>-<iteration>.json`.
+`fetchproof/conformance/property-regressions/PREG-<family>-<seed-hex>-<iteration>.json`.
 It records the replay profile/version, family, seed, iteration, regenerated-input SHA-256,
 bounded failure name/message, and a self-excluding envelope SHA-256. Existing envelopes are
 immutable: a subsequent failure for the same case may read it but must not replace it.
@@ -189,8 +189,8 @@ immutable: a subsequent failure for the same case may read it but must not repla
 Replay is intentionally narrower than the suite and is read-only:
 
 ```text
-node research-kit/bin/property-replay.mjs --case <case.json> --json
-node research-kit/bin/property-replay.mjs --all --json
+node fetchproof/bin/property-replay.mjs --case <case.json> --json
+node fetchproof/bin/property-replay.mjs --all --json
 ```
 
 The replay implementation must reject duplicate-key JSON, unsupported profiles, invalid
@@ -201,7 +201,7 @@ passes and the underlying correction is independently reviewed.
 
 ### 6.2 Exported cross-language vectors
 
-`research-kit/conformance/property-graph-hash-vectors.json` exports static, synthetic
+`fetchproof/conformance/property-graph-hash-vectors.json` exports static, synthetic
 values from declared canonical-hashing and descendant-invalidation seeds. It includes an
 object-order/array-order hash case, a self-excluding record and chain-hash case, and one
 R28–R33 graph with base, self-cycle, and duplicate-identity outcomes. The source-case map is
@@ -211,8 +211,8 @@ evidence.
 Both runners consume the checked-in bytes and never regenerate or rewrite them:
 
 ```text
-node research-kit/bin/property-vector-conformance.mjs --json
-python research-kit/bin/property_vector_conformance.py --json
+node fetchproof/bin/property-vector-conformance.mjs --json
+python fetchproof/bin/property_vector_conformance.py --json
 ```
 
 They must agree on every normalized vector row (not runtime metadata), reject malformed or

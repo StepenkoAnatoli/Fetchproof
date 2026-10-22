@@ -38,7 +38,7 @@ Rules of the new flag:
   `.git`, `AGENTS.md`, or `research/` in it. A typo must fail loudly, not scatter copies of
   the protocol across the filesystem.
 - **One canonical kit behind every deployed skill.** The `{{KIT}}` template token still
-  substitutes to the deployed `~/.agents/research-kit` path, so a project skill points at
+  substitutes to the deployed `~/.agents/fetchproof` path, so a project skill points at
   the same deployed copy the personal skill does. Re-running `install.mjs` updates all of
   them; the idempotence, `--dry-run`, and `--skip-existing` behaviour are unchanged.
 - **The project skill is knowledge, not enforcement.** A skill carries the research

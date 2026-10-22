@@ -1,4 +1,4 @@
-# Architecture Review — research-kit, 2026-09-14
+# Architecture Review — fetchproof, 2026-09-14
 
 A scan of the research-first kit for **deepening opportunities**: refactors that
 turn shallow modules into deep ones, judged for testability and
@@ -24,7 +24,7 @@ in this document on purpose; the shared design vocabulary is the one above.
   "1 failing" bullet — that was incomplete. The precise picture, verified
   empirically: **the test is cwd-dependent.** It passes when the suite runs from
   a gated project's directory (the repo root: all 243 green) and fails when it
-  runs from an ungated one (`research-kit/`: 242 green, 1 red). The pin's
+  runs from an ungated one (`fetchproof/`: 242 green, 1 red). The pin's
   invariant — *same snapshot, same verdict* — was only satisfied when the caller
   happened to be standing in a gated project. The defect is structural (the
   verdict derived its gate state from `process.cwd()` when a corpus was

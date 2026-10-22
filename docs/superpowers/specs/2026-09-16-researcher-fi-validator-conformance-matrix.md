@@ -2,7 +2,7 @@
 
 **Status:** executable conformance contract; no benchmark fixtures
 **Validator contract:** [`2026-09-16-researcher-fi-signoff-offline-validator.md`](2026-09-16-researcher-fi-signoff-offline-validator.md)
-**Executable matrix:** [`research-kit/test/fi-validator-conformance.test.mjs`](../../../research-kit/test/fi-validator-conformance.test.mjs)
+**Executable matrix:** [`fetchproof/test/fi-validator-conformance.test.mjs`](../../../fetchproof/test/fi-validator-conformance.test.mjs)
 
 ## Purpose and isolation
 
@@ -16,13 +16,13 @@ rows retain their required semantic error code for the eventual full validator a
 Run it from the repository root:
 
 ```text
-node --input-type=module -e "import('./research-kit/test/fi-validator-conformance.test.mjs').then(async()=>{const {runPending}=await import('./research-kit/test/harness.mjs'); const n=await runPending('fi-validator-conformance.test.mjs'); process.exit(n?1:0);})"
+node --input-type=module -e "import('./fetchproof/test/fi-validator-conformance.test.mjs').then(async()=>{const {runPending}=await import('./fetchproof/test/harness.mjs'); const n=await runPending('fi-validator-conformance.test.mjs'); process.exit(n?1:0);})"
 ```
 
 The repository self-test also discovers the matrix automatically:
 
 ```text
-node research-kit/bin/selftest.mjs
+node fetchproof/bin/selftest.mjs
 ```
 
 ## Case matrix

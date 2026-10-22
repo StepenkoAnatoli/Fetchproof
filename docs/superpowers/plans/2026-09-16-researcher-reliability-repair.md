@@ -41,7 +41,7 @@
 
 ## Package lifecycle and migration gates
 
-Each package follows the same five-step test cycle: write a failing regression, run the focused test and record the failure, implement only the package contract, run the focused test plus `node research-kit/bin/selftest.mjs`, then update the architecture map/ADR and create the package checkpoint. No package is marked complete on a green test alone.
+Each package follows the same five-step test cycle: write a failing regression, run the focused test and record the failure, implement only the package contract, run the focused test plus `node fetchproof/bin/selftest.mjs`, then update the architecture map/ADR and create the package checkpoint. No package is marked complete on a green test alone.
 
 Persisted artifacts use `artifactSchema` fields and the following compatibility policy:
 
@@ -74,15 +74,15 @@ No later gate compensates for an earlier failure. Safe parallelism is listed per
 
 **Findings:** F02.  
 **Files:**
-- Create: `research-kit/test/machine-fixture.mjs` (disposable machine/Git environment factory)
-- Create: `research-kit/test/machine-fixture.test.mjs` (factory contract and containment tests)
-- Modify: `research-kit/test/install.test.mjs`, `research-kit/test/install-hooks.test.mjs`, `research-kit/test/machine.test.mjs`, `research-kit/test/hooks.test.mjs` (consume the factory; remove ad-hoc host-dependent setup)
-- Modify: `research-kit/lib/machine.mjs`, `research-kit/lib/installer.mjs`, `research-kit/bin/install-hooks.mjs` (only the minimum path/config injection required by the failing tests)
+- Create: `fetchproof/test/machine-fixture.mjs` (disposable machine/Git environment factory)
+- Create: `fetchproof/test/machine-fixture.test.mjs` (factory contract and containment tests)
+- Modify: `fetchproof/test/install.test.mjs`, `fetchproof/test/install-hooks.test.mjs`, `fetchproof/test/machine.test.mjs`, `fetchproof/test/hooks.test.mjs` (consume the factory; remove ad-hoc host-dependent setup)
+- Modify: `fetchproof/lib/machine.mjs`, `fetchproof/lib/installer.mjs`, `fetchproof/bin/install-hooks.mjs` (only the minimum path/config injection required by the failing tests)
 - Modify: `docs/ARCHITECTURE.md` (R1 seam and ownership row)
 
-**Consumes:** the existing `research-kit/test/harness.mjs` (`test`, `assert`, `assertEqual`, `cleanup`, `KIT`) and the public machine/installer APIs. **Produces:** `machineFixture(options)` and `gitFixture(options)` test interfaces; no production API is broadened unless a failing containment test proves it is required.
+**Consumes:** the existing `fetchproof/test/harness.mjs` (`test`, `assert`, `assertEqual`, `cleanup`, `KIT`) and the public machine/installer APIs. **Produces:** `machineFixture(options)` and `gitFixture(options)` test interfaces; no production API is broadened unless a failing containment test proves it is required.
 
-**Precedence contract:** path and Git-origin authority is normative in [`docs/superpowers/specs/2026-09-16-researcher-path-precedence.md`](../specs/2026-09-16-researcher-path-precedence.md), with focused executable coverage in `research-kit/test/path-precedence.test.mjs`. R1 must preserve these rules while adding containment fixtures.
+**Precedence contract:** path and Git-origin authority is normative in [`docs/superpowers/specs/2026-09-16-researcher-path-precedence.md`](../specs/2026-09-16-researcher-path-precedence.md), with focused executable coverage in `fetchproof/test/path-precedence.test.mjs`. R1 must preserve these rules while adding containment fixtures.
 
 **Artifact validator contract:** every R28–R32 envelope, predecessor closure, role assignment, and promotion pointer is checked by the normative [`docs/superpowers/specs/2026-09-16-researcher-r28-r32-machine-validators.md`](../specs/2026-09-16-researcher-r28-r32-machine-validators.md). Package promotion is invalid unless the validator reports `PASS` for the complete closure.
 
@@ -104,7 +104,7 @@ gitFixture(machine, { localHooksPath = '', globalHooksPath = '' } = {})
 //      originSnapshot(options), writeSnapshotSet(directory, options), cleanup() }
 ```
 
-`env()` returns a fresh child-process environment on every call. It sets `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `RESEARCH_KIT_HOME`, `RESEARCH_KIT_CONFIG`, `RESEARCH_KIT_INSTALL_STATE`, `RESEARCH_KIT_EDIT_GATE_SETTINGS`, `GIT_CONFIG_GLOBAL`, and `GIT_CONFIG_NOSYSTEM=1`; it does not inherit any host value for those keys. `assertContained()` resolves the candidate path and fails if it is outside `root`, if it traverses through a symlink, or if it is an absolute path unrelated to the fixture. `snapshot()` records sorted relative paths and SHA-256 bytes for the fixture plus the external sentinel; it never snapshots or enumerates the operator's home directory. `cleanup()` removes only `root`; `cleanupOutside()` removes the sibling sentinel directory after the sentinel assertion has run.
+`env()` returns a fresh child-process environment on every call. It sets `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `FETCHPROOF_HOME`, `FETCHPROOF_CONFIG`, `FETCHPROOF_INSTALL_STATE`, `FETCHPROOF_EDIT_GATE_SETTINGS`, `GIT_CONFIG_GLOBAL`, and `GIT_CONFIG_NOSYSTEM=1`; it does not inherit any host value for those keys. `assertContained()` resolves the candidate path and fails if it is outside `root`, if it traverses through a symlink, or if it is an absolute path unrelated to the fixture. `snapshot()` records sorted relative paths and SHA-256 bytes for the fixture plus the external sentinel; it never snapshots or enumerates the operator's home directory. `cleanup()` removes only `root`; `cleanupOutside()` removes the sibling sentinel directory after the sentinel assertion has run.
 
 `writeSnapshotSet(directory, options)` is the deterministic evidence seam: it writes
 `before.json`, `after.json`, and `recovery.json` below the disposable fixture only, with
@@ -115,7 +115,7 @@ records `containment.recovery_result: PASS`; all three envelopes explicitly reco
 
 #### Test-first sequence
 
-- [ ] **Step 1: Write the fixture contract tests before changing production code.** Add `research-kit/test/machine-fixture.test.mjs` with these named tests:
+- [ ] **Step 1: Write the fixture contract tests before changing production code.** Add `fetchproof/test/machine-fixture.test.mjs` with these named tests:
 
 ```js
 import fs from 'node:fs';
@@ -143,7 +143,7 @@ test('machineFixture replaces all profile and Git environment authorities', () =
   assertEqual(env.USERPROFILE, machine.userProfile);
   assertEqual(env.GIT_CONFIG_GLOBAL, machine.globalGitConfig);
   assertEqual(env.GIT_CONFIG_NOSYSTEM, '1');
-  assert(!env.RESEARCH_KIT_CONFIG.includes(os.homedir()), 'real config path leaked');
+  assert(!env.FETCHPROOF_CONFIG.includes(os.homedir()), 'real config path leaked');
 });
 
 test('hostile absolute and traversal paths are rejected before any write', () => {
@@ -189,15 +189,15 @@ The five named tests below must apply this wrapper; the snippets show their asse
 
 - [ ] **Step 2: Run the suite and record the expected red from the new fixture tests.**
 
-Run: `node research-kit/bin/selftest.mjs`  
+Run: `node fetchproof/bin/selftest.mjs`  
 Expected: FAIL in the `machine-fixture.test.mjs` section because `machineFixture`, `gitFixture`, or the containment assertion is not defined. The failure report includes cwd `C:\Users\PC\Desktop\FreeBuff\Deep-Research-Agent-main` and names the first missing interface; it must not create a file under the real profile.
 
-- [ ] **Step 3: Implement the disposable factory with explicit roots.** Create `research-kit/test/machine-fixture.mjs` using `fs.mkdtempSync(path.join(os.tmpdir(), 'research-kit-machine-'))`. Derive every path from `root`; create `projectRoot` with `AGENTS.md` and a minimal `research/` only when `projectMarkers` is true. Create `outsideRoot` as a sibling temporary directory containing a sentinel whose bytes are fixed (`R1 outside sentinel\n`). Implement `env()` as a new object, `assertContained()` with `path.resolve` plus `fs.realpathSync` checks for existing ancestors, `snapshot()` with sorted relative paths and SHA-256, `cleanup()` that removes only `root`, and `cleanupOutside()` that removes only `outsideRoot`.
+- [ ] **Step 3: Implement the disposable factory with explicit roots.** Create `fetchproof/test/machine-fixture.mjs` using `fs.mkdtempSync(path.join(os.tmpdir(), 'fetchproof-machine-'))`. Derive every path from `root`; create `projectRoot` with `AGENTS.md` and a minimal `research/` only when `projectMarkers` is true. Create `outsideRoot` as a sibling temporary directory containing a sentinel whose bytes are fixed (`R1 outside sentinel\n`). Implement `env()` as a new object, `assertContained()` with `path.resolve` plus `fs.realpathSync` checks for existing ancestors, `snapshot()` with sorted relative paths and SHA-256, `cleanup()` that removes only `root`, and `cleanupOutside()` that removes only `outsideRoot`.
 
 ```js
 export function machineFixture({ role = 'collector', projectMarkers = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'research-kit-machine-'));
-  const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'research-kit-outside-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fetchproof-machine-'));
+  const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fetchproof-outside-'));
   // Derive every returned path from root. Create only the fixed sentinel in outsideRoot.
   // Return env(), assertContained(), snapshot(), cleanup(), and cleanupOutside().
 }
@@ -205,7 +205,7 @@ export function machineFixture({ role = 'collector', projectMarkers = true } = {
 
 - [ ] **Step 4: Re-run the fixture tests and require green before integrating callers.**
 
-Run: `node research-kit/bin/selftest.mjs`  
+Run: `node fetchproof/bin/selftest.mjs`  
 Expected: PASS for all five fixture tests, with no path outside the two temporary directories changed. Run it twice; the second run must use a different root and produce the same assertions.
 
 - [ ] **Step 5: Add Git global/system containment tests.** Extend `machine-fixture.test.mjs` with these cases:
@@ -260,7 +260,7 @@ test('dry-run installer is byte-pure for config, state, settings, and sentinel',
 
 - [ ] **Step 6: Run the Git containment tests to capture the pre-fix leak.**
 
-Run: `node research-kit/bin/selftest.mjs`  
+Run: `node fetchproof/bin/selftest.mjs`  
 Expected: FAIL only where an installer or Git helper still resolves the host profile/global config or overwrites repository-local `core.hooksPath`. A failure that changes the outside sentinel is a stop-the-line containment defect, not a test expectation to relax.
 
 - [ ] **Step 7: Thread the minimum injection points through production callers.** Add optional `configPath`, `statePath`, `settingsPath`, and `gitConfigPath` parameters to the existing installer/machine call boundaries, defaulting exactly to current production paths. Ensure every child process receives the caller's environment and `GIT_CONFIG_NOSYSTEM=1` in tests. Reject path arguments that fail the fixture's containment policy before `mkdir`, `writeFile`, `git config`, or hook installation. Preserve the repository-local `core.hooksPath`; report it as an override instead of replacing it.
@@ -274,12 +274,12 @@ readMachineConfig(file = CONFIG_PATH);
 
 The implementation must pass `gitConfigPath` to the existing `git` adapter, pass `env()` to every spawned CLI, and perform path validation before the first filesystem or Git write. Do not monkey-patch `os.homedir()` or mutate `process.env` globally; fixture state travels through explicit arguments and child-process environments.
 
-- [ ] **Step 8: Migrate existing tests to one fixture and add hostile-path sentinels.** Replace `fakeHome()`/`tempEnv()` in `install.test.mjs` and `install-hooks.test.mjs` with `machineFixture()`/`gitFixture()`. Update `machine.test.mjs` to set `RESEARCH_KIT_CONFIG` and `RESEARCH_KIT_INSTALL_STATE` from `machine.env()`. Update `hooks.test.mjs` so every spawned hook receives the fixture environment and a project path containing spaces and Unicode. For each test that invokes an installer or hook, capture `before = machine.snapshot()` and assert that all differences are contained; include a hostile `C:\Users\Real User\AppData\Roaming\research-kit` value in argv/config data and assert refusal plus byte-pure state.
+- [ ] **Step 8: Migrate existing tests to one fixture and add hostile-path sentinels.** Replace `fakeHome()`/`tempEnv()` in `install.test.mjs` and `install-hooks.test.mjs` with `machineFixture()`/`gitFixture()`. Update `machine.test.mjs` to set `FETCHPROOF_CONFIG` and `FETCHPROOF_INSTALL_STATE` from `machine.env()`. Update `hooks.test.mjs` so every spawned hook receives the fixture environment and a project path containing spaces and Unicode. For each test that invokes an installer or hook, capture `before = machine.snapshot()` and assert that all differences are contained; include a hostile `C:\Users\Real User\AppData\Roaming\fetchproof` value in argv/config data and assert refusal plus byte-pure state.
 
 - [ ] **Step 9: Run the callers and prove no host leakage.**
 
-Run: `node research-kit/bin/selftest.mjs`  
-Expected: PASS; output names the disposable root for any failure; no test creates or modifies a host `.gitconfig`, profile settings file, real `.agents` path, or real runtime settings file. In PowerShell, repeat with `$env:RESEARCH_KIT_TEST_TIMEOUT='5000'; node research-kit/bin/selftest.mjs; Remove-Item Env:RESEARCH_KIT_TEST_TIMEOUT`, and with a project path containing spaces and non-ASCII characters.
+Run: `node fetchproof/bin/selftest.mjs`  
+Expected: PASS; output names the disposable root for any failure; no test creates or modifies a host `.gitconfig`, profile settings file, real `.agents` path, or real runtime settings file. In PowerShell, repeat with `$env:FETCHPROOF_TEST_TIMEOUT='5000'; node fetchproof/bin/selftest.mjs; Remove-Item Env:FETCHPROOF_TEST_TIMEOUT`, and with a project path containing spaces and non-ASCII characters.
 
 - [ ] **Step 10: Add interruption and cleanup fault tests.** Inject failures immediately before config write, after temporary-file write, before Git config rename, after hook deployment, and during cleanup. Each test must assert either `BLOCKED` with zero artifact mutation or `ROLLED-BACK` to the byte/hash snapshot. Add a child-process test that exits while holding a fixture lease; the next test must be able to remove the root without waiting on the child. Do not use the real machine config as the failure target.
 
@@ -303,14 +303,14 @@ The fixture's injected failure must be deterministic and scoped to one operation
 
 - [ ] **Step 11: Run the full offline suite twice and inspect the path ledger.**
 
-Run: `node research-kit/bin/selftest.mjs` (twice, from `C:\Users\PC\Desktop\FreeBuff\Deep-Research-Agent-main`)  
+Run: `node fetchproof/bin/selftest.mjs` (twice, from `C:\Users\PC\Desktop\FreeBuff\Deep-Research-Agent-main`)  
 Expected: both runs pass; the test output contains no network request, Firecrawl invocation, or paid operation. Compare the fixture snapshot summaries and verify every created path is below the disposable roots. Any red test stops R1 and records its cwd and first failing assertion before other work continues.
 
 - [ ] **Step 12: Update the architecture map and checkpoint R1.** Document that `machine-fixture.mjs` owns disposable machine/Git state, that production modules accept explicit test paths without changing defaults, and that installer tests never use host configuration. If this introduces a rejected alternative (for example, process-wide monkey-patching of `os.homedir()`), record it in a dated ADR with the trigger for revisiting it. Produce the required checkpoint report naming what changed, why, touched paths/map rows/ADR, verification commands, and “nothing to report” or the concrete mistake corrected.
 
 ```powershell
 git diff --check
-git add research-kit/test/machine-fixture.mjs research-kit/test/machine-fixture.test.mjs research-kit/test/install.test.mjs research-kit/test/install-hooks.test.mjs research-kit/test/machine.test.mjs research-kit/test/hooks.test.mjs research-kit/lib/machine.mjs research-kit/lib/installer.mjs research-kit/bin/install-hooks.mjs docs/ARCHITECTURE.md
+git add fetchproof/test/machine-fixture.mjs fetchproof/test/machine-fixture.test.mjs fetchproof/test/install.test.mjs fetchproof/test/install-hooks.test.mjs fetchproof/test/machine.test.mjs fetchproof/test/hooks.test.mjs fetchproof/lib/machine.mjs fetchproof/lib/installer.mjs fetchproof/bin/install-hooks.mjs docs/ARCHITECTURE.md
 git commit -m "test: contain disposable machine and git state"
 ```
 
@@ -321,7 +321,7 @@ In a real checkout, verify the new commit in a disposable clone by running `git 
 ### Task R2: Harness child-process cleanup
 
 **Findings:** async timeout boundary noted in review.  
-**Files:** `research-kit/test/harness.mjs`, harness tests, `docs/ARCHITECTURE.md`.
+**Files:** `fetchproof/test/harness.mjs`, harness tests, `docs/ARCHITECTURE.md`.
 
 **Consumes:** R1 fixture environment. **Produces:** timeout cancellation/child cleanup with a named `timed-out` result.
 
@@ -335,7 +335,7 @@ In a real checkout, verify the new commit in a disposable clone by running `git 
 ### Task R3: Shell-free Windows Firecrawl entrypoint
 
 **Findings:** F01.  
-**Files:** `research-kit/lib/firecrawl.mjs`, doctor/firecrawl tests, new ADR `0022-windows-firecrawl-entrypoint.md`, architecture map.
+**Files:** `fetchproof/lib/firecrawl.mjs`, doctor/firecrawl tests, new ADR `0022-windows-firecrawl-entrypoint.md`, architecture map.
 
 **Consumes:** R1/R2 isolation. **Produces:** `resolveInvocation(argv)` selecting a validated Node package bin and `defaultExec(argv)` with `shell:false`.
 
@@ -711,7 +711,7 @@ Promotion gates are monotone and blocking:
 ### Task R27: Offline end-to-end qualification
 
 **Findings:** release integration gap.  
-**Files:** new isolated fixtures under `research-kit/test/e2e/`, adapters, docs/architecture map.
+**Files:** new isolated fixtures under `fetchproof/test/e2e/`, adapters, docs/architecture map.
 
 **Consumes:** R5, R9, R13, R19, R24, R25, R26. **Produces:** deterministic decompose → plan → collect → preflight → reviewed brief → audit → handoff run for both transports.
 
@@ -726,7 +726,7 @@ Promotion gates are monotone and blocking:
 
 ## Release qualification artifact contract (R28–R33)
 
-This section defines the evidence chain consumed by benchmark PASS. The logical paths below are canonical package paths under `research-kit/test/benchmark/records/`; an implementation may use an equivalent storage backend only when the release manifest records a one-to-one path mapping and SHA-256 for every item. Records are append-only and sealed before the next role receives access.
+This section defines the evidence chain consumed by benchmark PASS. The logical paths below are canonical package paths under `fetchproof/test/benchmark/records/`; an implementation may use an equivalent storage backend only when the release manifest records a one-to-one path mapping and SHA-256 for every item. Records are append-only and sealed before the next role receives access.
 
 ### Ownership and access rules
 
@@ -821,7 +821,7 @@ The implementation canonicalizes field ordering before hashing, writes the paylo
 ### Task R28: Benchmark v1.0 harness and report schema
 
 **Findings:** benchmark integration requirement.  
-**Files:** `research-kit/test/benchmark/` harness, report templates, architecture map.
+**Files:** `fetchproof/test/benchmark/` harness, report templates, architecture map.
 
 **Consumes:** approved benchmark spec v1.0, R26/R27. **Produces:** R28-01..04 (`contract-pin.json`, `schema-manifest.json`, `report-schema.md`, and `release-manifest.json`), sealed run-record loader, fixture isolation, scoring-sheet loader, result hierarchy, and append-only report writer.
 
@@ -932,7 +932,7 @@ The implementation canonicalizes field ordering before hashing, writes the paylo
 ### Task R33: Release report, operator docs, and final gate
 
 **Findings:** cross-cutting release qualification.  
-**Files:** `research-kit/README.md`, `START_HERE.md`, templates, `AGENTS.md`, `CONTEXT.md`, architecture map, release report.
+**Files:** `fetchproof/README.md`, `START_HERE.md`, templates, `AGENTS.md`, `CONTEXT.md`, architecture map, release report.
 
 **Consumes:** R26–R32, the pinned benchmark v1.0 manifest, and the migration/rollback gates specification. **Produces:** R33-01..03 (sealed release report, canonical status record, and atomic promotion pointer).
 
@@ -992,10 +992,10 @@ Additional review boundaries are owned by R2 (harness cleanup), R5 (network/body
 Run only after R1–R33 and the applicable migration gates pass:
 
 ```powershell
-node research-kit/bin/selftest.mjs
-node research-kit/bin/doctor.mjs
-node research-kit/bin/preflight.mjs
-node research-kit/bin/handoff.mjs
+node fetchproof/bin/selftest.mjs
+node fetchproof/bin/doctor.mjs
+node fetchproof/bin/preflight.mjs
+node fetchproof/bin/handoff.mjs
 ```
 
 Then verify twice-consecutive isolated execution, unchanged machine sentinels, exact release hashes, distinct readiness states, valid handoff chain, benchmark PASS, and unchanged credits unless R32 was explicitly approved.

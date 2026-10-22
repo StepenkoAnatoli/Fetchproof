@@ -206,14 +206,14 @@ a partial file is quarantined and cannot supply hashes or a PASS decision.
 
 ## 9. Machine-checkable register and offline resolver
 
-The strict register shape is [`r29-workbook-linkage.schema.json`](../../../research-kit/schemas/r29-workbook-linkage.schema.json).
+The strict register shape is [`r29-workbook-linkage.schema.json`](../../../fetchproof/schemas/r29-workbook-linkage.schema.json).
 It rejects unknown fields at every row/link object, requires exactly 24 rows, constrains
 hashes and relative worksheet paths, and permits only the R29-01 through R29-06 artifact
 families. Task-set completeness, task uniqueness, per-family identity, and the Frozen/Live
 warm rule remain semantic checks because they are cross-row/cross-record properties.
 
 `validateR29WorkbookLinkage({ register, catalog, pointer })` in
-[`r29-workbook-linkage-validator.mjs`](../../../research-kit/lib/r29-workbook-linkage-validator.mjs)
+[`r29-workbook-linkage-validator.mjs`](../../../fetchproof/lib/r29-workbook-linkage-validator.mjs)
 is the read-only cross-reference resolver. `catalog.records` is an explicit authenticated
 projection with record/member identifiers, hashes, seal state, predecessors, and calibration
 trap key; `pointer` is the explicit current R29 projection. The resolver never discovers

@@ -24,7 +24,7 @@ Two symptoms followed from the shape:
 
 ## Decision
 
-`research-kit/lib/checks.mjs` holds the rules as a frozen, ordered registry:
+`fetchproof/lib/checks.mjs` holds the rules as a frozen, ordered registry:
 
 ```js
 CHECKS = [{ name, about, run(corpus, options) -> findings }]

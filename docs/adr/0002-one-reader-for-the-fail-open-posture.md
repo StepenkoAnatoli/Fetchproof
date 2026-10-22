@@ -10,12 +10,12 @@ The gate fails **open** and loudly by default: a broken gate must not brick ever
 a machine. That posture is recorded in `research/DISCOVERY.md` under "Already decided" and
 in the approved hardening design, and it is not up for revision here.
 
-What *is* a defect is how many places implemented it. `~/.agents/research-kit.config.json`
+What *is* a defect is how many places implemented it. `~/.agents/fetchproof.config.json`
 was read by:
 
 1. `lib/config.mjs · loadConfig()` — 30 lines, the intended reader;
 2. `githooks/pre-commit · fail_closed()` — an inline `node -e` CommonJS one-liner that
-   re-derived the config path from `RESEARCH_KIT_CONFIG` or `os.homedir()`, re-parsed the
+   re-derived the config path from `FETCHPROOF_CONFIG` or `os.homedir()`, re-parsed the
    JSON, and re-applied the default in shell;
 3. `lib/doctor.mjs · gateHealth()` — again, for reporting;
 4. `lib/installer.mjs` — indirectly, via `saveConfig`.
@@ -33,14 +33,14 @@ into the installer rather than concentrating anything.
 
 ## Decision
 
-`research-kit/lib/machine.mjs` owns everything machine-scoped, and is the only reader of
+`fetchproof/lib/machine.mjs` owns everything machine-scoped, and is the only reader of
 the posture:
 
 - `posture()` → `{ failOpen, claudeGate, source }`, defaulting to fail-open when the config
   is missing, unreadable, or corrupt. A broken config never blocks work.
 - `hooksPath` → `{ read, set, unset }`, one adapter for git `core.hooksPath`, used by the
   installer and by `doctor`. `lib/git-config.mjs` folds in.
-- `installState` → `{ read, patch, replace }` over `~/.agents/research-kit.install.json`.
+- `installState` → `{ read, patch, replace }` over `~/.agents/fetchproof.install.json`.
 - `settingsPath` / `CONFIG_PATH` — the machine-scoped locations, declared once. Both stay
   **outside** the deployed kit tree, so `install.mjs` can never clobber them.
 - `bin/gate.mjs --posture` prints the posture for shell consumers. `githooks/pre-commit`

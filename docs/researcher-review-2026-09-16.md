@@ -59,7 +59,7 @@ They create only isolated synthetic projects under a uniquely allocated temporar
 
 ### The complete existing-suite result
 
-Command: `node research-kit/bin/selftest.mjs`.
+Command: `node fetchproof/bin/selftest.mjs`.
 
 CWD: `C:\Users\PC\Desktop\FreeBuff\Deep-Research-Agent-main`.
 
@@ -74,9 +74,9 @@ CWD: `C:\Users\PC\Desktop\FreeBuff\Deep-Research-Agent-main`.
 
 The ten hook failures cover: block open contract; allow research-only commit; allow ungated commit; allow GATE_OFF; missing-kit posture; staged path with a space; 30,000 piped paths; empty staged list; watchdog behavior; and piped code-path enforcement. The installer failures cover personal deployment and the project skill's deployed path. These are all the failures from this complete run, not just the first failures encountered.
 
-`node --test research-kit/test/*.test.mjs` is unsuitable here: the files register cases in a custom harness and do not run those cases on import. Its 22 successful imports are not 377 passing tests. The async-await harness regression tests themselves passed under the real runner.
+`node --test fetchproof/test/*.test.mjs` is unsuitable here: the files register cases in a custom harness and do not run those cases on import. Its 22 successful imports are not 377 passing tests. The async-await harness regression tests themselves passed under the real runner.
 
-**Test side effect:** `install.test.mjs:34–38` passes only a fake HOME to real installer subprocesses. On Windows, Node uses USERPROFILE for `os.homedir()`; the local probe and [Node documentation](https://nodejs.org/api/os.html#oshomedir) agree. Those subprocesses therefore targeted `C:\Users\PC\.agents\research-kit` and the actual configured personal skill root. They may add/update deployment files if contents differ. The exact before/after difference cannot be reconstructed without the missing pre-run snapshot. I did not run the installer again or attempt a speculative rollback. The source/deployed code currently matches. This suite should not be run unisolated on this machine again until that defect is addressed.
+**Test side effect:** `install.test.mjs:34–38` passes only a fake HOME to real installer subprocesses. On Windows, Node uses USERPROFILE for `os.homedir()`; the local probe and [Node documentation](https://nodejs.org/api/os.html#oshomedir) agree. Those subprocesses therefore targeted `C:\Users\PC\.agents\fetchproof` and the actual configured personal skill root. They may add/update deployment files if contents differ. The exact before/after difference cannot be reconstructed without the missing pre-run snapshot. I did not run the installer again or attempt a speculative rollback. The source/deployed code currently matches. This suite should not be run unisolated on this machine again until that defect is addressed.
 
 ## Confirmed findings and suggested remedies
 

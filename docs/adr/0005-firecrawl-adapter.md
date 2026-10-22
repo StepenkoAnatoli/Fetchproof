@@ -22,7 +22,7 @@ only through hand-written payloads in `test/research-run.test.mjs`.
 
 ## Decision
 
-`research-kit/lib/firecrawl.mjs` is the vendor adapter. `lib/cli.mjs` is deleted and the
+`fetchproof/lib/firecrawl.mjs` is the vendor adapter. `lib/cli.mjs` is deleted and the
 adapter halves leave `bin/research.mjs`, which becomes a pure CLI: parse flags, inject the
 adapter, render the result.
 

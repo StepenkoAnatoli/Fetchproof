@@ -2,9 +2,9 @@
 
 **Status:** v1.0 machine-checkable contract; offline and read-only  
 **Source packet:** [`Git-origin and path-authority evidence snapshots`](2026-09-16-researcher-git-origin-path-authority-evidence-snapshots.md)  
-**Schema:** [`git-origin-path-authority-snapshot.schema.json`](../../../research-kit/schemas/git-origin-path-authority-snapshot.schema.json)  
-**Implementation:** [`path-authority-validator.mjs`](../../../research-kit/lib/path-authority-validator.mjs)  
-**CLI:** `node research-kit/bin/path-authority.mjs`
+**Schema:** [`git-origin-path-authority-snapshot.schema.json`](../../../fetchproof/schemas/git-origin-path-authority-snapshot.schema.json)  
+**Implementation:** [`path-authority-validator.mjs`](../../../fetchproof/lib/path-authority-validator.mjs)  
+**CLI:** `node fetchproof/bin/path-authority.mjs`
 
 The validator checks a snapshot envelope produced by the disposable machine/Git
 fixture or an explicitly approved release checkout. It never writes the snapshot,
@@ -16,15 +16,15 @@ contact the network and does not require a credential.
 Validate one complete envelope, including semantic and cross-reference rules:
 
 ```text
-node research-kit/bin/path-authority.mjs validate \
+node fetchproof/bin/path-authority.mjs validate \
   --file <snapshot.json> [--schema <schema.json>] [--json]
 ```
 
 Validate one or more files against the strict JSON Schema only:
 
 ```text
-node research-kit/bin/path-authority.mjs conform \
-  --schema research-kit/schemas/git-origin-path-authority-snapshot.schema.json \
+node fetchproof/bin/path-authority.mjs conform \
+  --schema fetchproof/schemas/git-origin-path-authority-snapshot.schema.json \
   --file <snapshot.json> [--file <another.json>] [--json]
 ```
 

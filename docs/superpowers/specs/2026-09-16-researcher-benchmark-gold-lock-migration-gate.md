@@ -5,7 +5,7 @@
 **Governing benchmark:** `2026-09-16-researcher-benchmark-design.md` v1.0.0  
 **Inputs:** the approved calibration-trap matrix, 24 expanded task packets, 24 blank task worksheets after authoring, source manifests, and the role roster  
 **Outputs:** a projection report, 24-row canonical trap register, live-outcome approval records, and the R29-06 gold-lock payload  
-**Machine contract:** [`trap-register.schema.json`](../../../research-kit/schemas/trap-register.schema.json)  
+**Machine contract:** [`trap-register.schema.json`](../../../fetchproof/schemas/trap-register.schema.json)  
 **No execution:** this gate authorizes no candidate run, source recapture, credential use, fixture creation, or paid request.
 
 This gate converts the human review record into the machine register used by validation and release promotion. It is a migration, not a second grading decision: the human matrix remains the authority for trap intent, while the canonical register is the only machine input after lock. The projection must be lossless for identifiers, scores, outcomes, hard-failure consequences, and grader-field routing. A prose cell never supplies an identifier by inference.
@@ -36,7 +36,7 @@ Before projection, the custodian creates one read-only input snapshot. The snaps
 | Task worksheets | 24 task IDs and per-file hashes | Trap ID and traceability block agree with the matrix; source-dependent cells may be blank only before authoring |
 | Source manifests and captures | per-task source IDs, locators, retrieval/freshness metadata, hashes | Every locked claim has a replayable locator or an explicit bounded unknown procedure |
 | Role roster | roster SHA-256 | All author/reviewer/adjudicator identities and validity intervals are authorized |
-| Register schema | schema ID and SHA-256 | [`trap-register.schema.json`](../../../research-kit/schemas/trap-register.schema.json) is the schema used for validation |
+| Register schema | schema ID and SHA-256 | [`trap-register.schema.json`](../../../fetchproof/schemas/trap-register.schema.json) is the schema used for validation |
 
 The snapshot itself is immutable. Any input byte change after snapshot invalidates `GL-1` and requires a new gold version; it is never silently re-read.
 

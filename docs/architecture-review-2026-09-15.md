@@ -1,4 +1,4 @@
-# Architecture Review — research-kit, 2026-09-15 (second round)
+# Architecture Review — fetchproof, 2026-09-15 (second round)
 
 A scan of the research-first kit for **deepening opportunities**: refactors that
 turn shallow modules into deep ones, judged for testability and
@@ -26,7 +26,7 @@ in this document on purpose; the shared design vocabulary is the one above.
 ## Baseline
 
 - **Suite.** 311 tests, 19 test files, no network, no Firecrawl key, green —
-  from the repo root and from `research-kit/`.
+  from the repo root and from `fetchproof/`.
 - **Preflight (this repo, repo root).** `PASS` — 0 failures, 10 warnings (6
   `capture-transport` — five honest `agent page fetch` transports and one
   unnamed entry —, 3 `capture-partial` — U-2, U-3, U-4 closed on partial

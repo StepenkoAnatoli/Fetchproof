@@ -33,7 +33,7 @@ back truncated. The reader was not the inverse of the writer.
 
 ## Decision
 
-`research-kit/lib/corpus.mjs` owns the format. `lib/ledger.mjs` is deleted and the
+`fetchproof/lib/corpus.mjs` owns the format. `lib/ledger.mjs` is deleted and the
 markdown-table machinery leaves `lib/core.mjs`, which keeps only generic helpers (fs,
 dates, slugs, source classification).
 

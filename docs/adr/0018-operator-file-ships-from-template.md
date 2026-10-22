@@ -21,7 +21,7 @@ place the operator is standing, that says them in his language.
 
 ## Decision
 
-**`research-kit/START_HERE.md`, and the same file at `research-kit/template/START_HERE.md`
+**`fetchproof/START_HERE.md`, and the same file at `fetchproof/template/START_HERE.md`
 so every scaffolded project ships one.** Table-first, plain language, no protocol
 vocabulary: where things are (the kit's install path, `research/`, `research/audits/`),
 the three lines of starting research — open the project folder, say what to research, run
@@ -34,14 +34,14 @@ ADR — a file addressed to a person must not dilute the one addressed to the ag
 
 The two copies differ in exactly one respect: how the kit path is spelled. The template
 says `{{KIT}}`, substituted at scaffold time; the kit's own copy says
-`~/.agents/research-kit`, because that is where the deployed copy is read. Everything else
+`~/.agents/fetchproof`, because that is where the deployed copy is read. Everything else
 is byte-identical, and deploy copies both (`install.mjs` ships the source tree).
 
 ## Consequences
 
 - Every project scaffolded from now on has a page addressed to the person who owns it, in
   the folder he is already in, and it names the one path he kept losing.
-- The kit's own copy is readable at `~/.agents/research-kit/START_HERE.md` — the place he
+- The kit's own copy is readable at `~/.agents/fetchproof/START_HERE.md` — the place he
   arrives at when he goes looking for the kit itself.
 - The file carries no protocol vocabulary, so it cannot drift out of step with `CONTEXT.md`
   by re-defining a term; it can only drift on a path, and there is one path in it.
@@ -65,7 +65,7 @@ is byte-identical, and deploy copies both (`install.mjs` ships the source tree).
   generator needs a reason to differ per project. The only thing that varies is the kit
   path, which `{{KIT}}` already substitutes at scaffold time — so a command would add a
   third copy of a sentence doctor already prints.
-- **Folding it into `research-kit/README.md`.** Rejected as the wrong reader in the wrong
+- **Folding it into `fetchproof/README.md`.** Rejected as the wrong reader in the wrong
   place: the README is the manual for whoever installs the kit, and it is not in the
   project the operator opens. This file has to be inside his project, beside `AGENTS.md`.
 - **Writing it in the kit's own vocabulary, with cross-references to `CONTEXT.md`.**

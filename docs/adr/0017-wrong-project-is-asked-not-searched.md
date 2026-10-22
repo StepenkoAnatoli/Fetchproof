@@ -69,7 +69,7 @@ Nothing is enforced, and nothing may be.
   the agent that asked but asked badly - wrong in both directions. The enforcement
   surfaces stay the two that can be decided from state: the commit gate and the edit-time
   gate.
-- **A `--project <path>` argument (or `RESEARCH_KIT_PROJECT`).** Then an agent could name
+- **A `--project <path>` argument (or `FETCHPROOF_PROJECT`).** Then an agent could name
   the project it meant, and the search would be unnecessary from the other side. Rejected:
   it makes two roots where there was one, and the gate can only judge the root it is
   handed - so the verdict would describe one project while the agent edits another, which

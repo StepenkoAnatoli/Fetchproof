@@ -16,9 +16,9 @@ researcher-release validate --root <record-root> --package R28|R29|R30|R31|R32 \
   --pointers <pointer-directory> --json
 ```
 
-The implementation is `research-kit/lib/release-validator.mjs`, the CLI is
-`research-kit/bin/researcher-release.mjs`, and the checked-in schemas are under
-`research-kit/schemas/`. The companion `conform` command validates explicit JSON
+The implementation is `fetchproof/lib/release-validator.mjs`, the CLI is
+`fetchproof/bin/researcher-release.mjs`, and the checked-in schemas are under
+`fetchproof/schemas/`. The companion `conform` command validates explicit JSON
 files against one schema without loading a registry or writing the input tree.
 
 Inputs are the package records, the immutable artifact registry, the role roster, the approved benchmark contract hash, and the current pointer set. The command never rewrites records or pointers. Exit codes are:

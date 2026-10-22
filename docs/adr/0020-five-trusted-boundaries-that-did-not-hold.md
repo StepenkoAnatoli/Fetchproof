@@ -110,11 +110,11 @@ Four rules the five fixes share, stated once because they are the reusable part:
   unreadable stdin and `[]` for an empty one, and `--staged-stdin` declared with an
   unreadable stdin is **exit 2**, because "no paths" and "could not read the paths"
   must not both mean *allow*. A watchdog (`timeout`/`gtimeout`,
-  `RESEARCH_KIT_GATE_TIMEOUT`, default 120s) makes a pathological case degrade per
+  `FETCHPROOF_GATE_TIMEOUT`, default 120s) makes a pathological case degrade per
   posture instead of hanging; a kill is a named internal error, never a verdict.
 - **C4 — line endings are corpus integrity.** `.gitattributes`
   (`research/raw/* text eol=lf`, `*.jsonl text eol=lf`) ships in this repository
-  **and** in `research-kit/template/`, so a scaffolded project cannot be born
+  **and** in `fetchproof/template/`, so a scaffolded project cannot be born
   without it; an attribute outranks a reader's `core.autocrlf`. `isLineEndingRewrite`
   proves a rewrite by folding and re-hashing, so `body-unmodified` carries
   `kind: 'line-endings' | 'modified'`, and `handoffRemedy(report)` picks the remedy

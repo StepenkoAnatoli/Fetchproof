@@ -6,12 +6,12 @@
 
 ## Context
 
-ADR-0007's enforcement hardcoded `research-kit/lib/` and `research-kit/bin/` — paths
+ADR-0007's enforcement hardcoded `fetchproof/lib/` and `fetchproof/bin/` — paths
 that exist only in this repository. Every project the kit scaffolds keeps its code
 somewhere else, so in those projects the rule never fired and no map was ever required.
 The standing protocol was meant for every project, not for the kit alone. Worse, the
 hardcoded list wrongly exempted this repo's own enforcement surfaces — a change to
-`research-kit/githooks/pre-commit` or `research-kit/hooks/claude-pretooluse.mjs` (the
+`fetchproof/githooks/pre-commit` or `fetchproof/hooks/claude-pretooluse.mjs` (the
 gates themselves) owed no map.
 
 ## Decision
@@ -31,8 +31,8 @@ gates themselves) owed no map.
    including what it does *not* prove) and `research/kit.json` (the defaults, in plain
    sight and obvious to edit). Both in LAYOUT; **neither** in GATE_MARKERS — still
    exactly four (ADR-0001).
-4. **This repository declares its own paths:** `research-kit/lib`, `research-kit/bin`,
-   `research-kit/hooks`, `research-kit/githooks` — the enforcement surfaces included.
+4. **This repository declares its own paths:** `fetchproof/lib`, `fetchproof/bin`,
+   `fetchproof/hooks`, `fetchproof/githooks` — the enforcement surfaces included.
    `lib/gate.mjs` contains no repo-specific path, pinned by test.
 
 ## Consequences

@@ -1,4 +1,4 @@
-# Architecture Review — research-kit, 2026-09-15 (third round): triaged, not yet scheduled
+# Architecture Review — fetchproof, 2026-09-15 (third round): triaged, not yet scheduled
 
 A record of what the five-fix round (`ba5fd1d`, `3cb8a54`, `58eb2b8`, `ddd70b3`,
 `2924cb0`; [ADR-0020](adr/0020-five-trusted-boundaries-that-did-not-hold.md))
@@ -48,7 +48,7 @@ and what would expire the deferral.
 > this entry is left as written: it is the record of what was found. Five items remain
 > triaged.
 
-- **Where.** `research-kit/test/harness.mjs:148` — `runPending`.
+- **Where.** `fetchproof/test/harness.mjs:148` — `runPending`.
 - **Evidence.** Confirmed by reading the loop: `fn()` is called and its throw is
   caught synchronously, then `console.log('  ok    ${name}')` runs. An `async` test
   returns a pending promise; nothing awaits it, so `ok` is printed before the body
@@ -72,7 +72,7 @@ and what would expire the deferral.
 
 ### 2 — A capture path can be a symlink out of `research/raw/`
 
-- **Where.** `research-kit/lib/collect.mjs:53` — `writeRaw`, via
+- **Where.** `fetchproof/lib/collect.mjs:53` — `writeRaw`, via
   `uniqueRawName` (`:34`).
 - **Evidence.** Confirmed by reproduction. The capture name is **predictable**:
   `<today>-<slugify(title, 50)>-<hashShort(url)>.md`. Planting a symlink at that
@@ -98,7 +98,7 @@ and what would expire the deferral.
 
 ### 3 — A paid fetch that returns a thin page is logged as a failure
 
-- **Where.** `research-kit/lib/collect.mjs:137-143` — `collectOne`.
+- **Where.** `fetchproof/lib/collect.mjs:137-143` — `collectOne`.
 - **Evidence.** Confirmed by reading the branch: `if (!res.ok || markdown.length <
   200)` writes `appendFetch(root, { op: 'fail', …, raw: null })` and returns
   `{ result: 'failed' }`. Both halves of that condition collapse into one ledger
@@ -123,8 +123,8 @@ and what would expire the deferral.
 
 ### 4 — `--repair` reports "nothing to do" for a chain it cannot repair
 
-- **Where.** `research-kit/lib/provenance.mjs:167-183` — `repairLedgerTail`;
-  reported at `research-kit/bin/preflight.mjs:95-97`.
+- **Where.** `fetchproof/lib/provenance.mjs:167-183` — `repairLedgerTail`;
+  reported at `fetchproof/bin/preflight.mjs:95-97`.
 - **Evidence.** Confirmed by reading both returns. `{ repaired: false }` is returned
   for four different situations — no ledger file, a ledger that already ends in a
   newline, a tail that is not a partial line, and **a chain broken in the middle** —
@@ -173,7 +173,7 @@ and what would expire the deferral.
 
 ### 6 — A newline in a staged path arrives as two paths
 
-- **Where.** `research-kit/githooks/pre-commit` (the pipe added by C3) →
+- **Where.** `fetchproof/githooks/pre-commit` (the pipe added by C3) →
   `stagedPathsFromStdin` → `splitPathList` in `lib/gate.mjs`.
 - **Evidence.** Confirmed by construction, not by reproduction. C3's protocol is
   `git diff --cached --name-only` piped to the gate and split on newlines. Without

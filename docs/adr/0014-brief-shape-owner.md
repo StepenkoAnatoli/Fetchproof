@@ -41,7 +41,7 @@ structurally rather than in prose.**
   instead of regexes of its own.
 - `briefState(text)` → `template | legacy | draft | authored`. Only `template` and
   `draft` are safe to draft over; `authored` is preserved unless `--force`.
-- `BRIEF_FILE_MARKER` (`<!-- research-kit:brief-template -->`) ships in the template and
+- `BRIEF_FILE_MARKER` (`<!-- fetchproof:brief-template -->`) ships in the template and
   survives substitution, because the substitution pass only replaces `{{TOKEN}}`s.
 - A scaffold written **before** the marker shipped is its own state, `legacy`. The text
   cannot tell it from a brief someone wrote in while leaving the template's prose, so

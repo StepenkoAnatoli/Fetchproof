@@ -21,8 +21,8 @@ documentation that actively lies with the repo's own authority attached.
 1. `docs/ARCHITECTURE.md` is the map of the code: what each module owns, the seams
    between them, and which ADR governs each decision. It is deliberately not a map of
    the research — `research/MAP.md` is that artifact, judged by `subtopic-coverage`.
-2. **Same-commit rule, enforced:** a commit touching `research-kit/lib/` or
-   `research-kit/bin/` without carrying an update to `docs/ARCHITECTURE.md` is refused.
+2. **Same-commit rule, enforced:** a commit touching `fetchproof/lib/` or
+   `fetchproof/bin/` without carrying an update to `docs/ARCHITECTURE.md` is refused.
    The rule lives in `lib/gate.mjs` (`architectureMapBreach`), runs in `evaluate()`
    **before** the research-scope skip (a commit mixing `research/` files with kit code
    owes the map either way), and reports as the `architecture-map` blocker with a fix
@@ -39,12 +39,12 @@ is a property of commits.
 
 ## Amendment — the rule became project configuration (A7.1, ADR-0008)
 
-The original rule hardcoded this repository's paths (`research-kit/lib/`,
-`research-kit/bin/`), which made it kit-shaped law: every project the kit scaffolds
+The original rule hardcoded this repository's paths (`fetchproof/lib/`,
+`fetchproof/bin/`), which made it kit-shaped law: every project the kit scaffolds
 keeps its code elsewhere and was silently exempt. ADR-0008 generalises the mechanism —
 the guarded paths are now read from the project's `research/kit.json` — and this
-repository declares its own, including the two enforcement surfaces (`research-kit/hooks/`,
-`research-kit/githooks/`) that the hardcoded version wrongly exempted.
+repository declares its own, including the two enforcement surfaces (`fetchproof/hooks/`,
+`fetchproof/githooks/`) that the hardcoded version wrongly exempted.
 
 ## What this rule does NOT prove
 
@@ -77,5 +77,5 @@ together, so the enforcement is self-consistent from its first commit.
   arbitrary order; the commit is where a change is atomic and the map update can be
   judged against the whole diff. Revisit if map drift is observed at commit time.
 - **Trigger on more paths (recipes, skill, hooks).** Rejected as scope creep for v1:
-  the protocol names `research-kit/lib/` and `research-kit/bin/`; those are the modules
+  the protocol names `fetchproof/lib/` and `fetchproof/bin/`; those are the modules
   whose seams the map describes. Widening the trigger is cheap later if the map misses.

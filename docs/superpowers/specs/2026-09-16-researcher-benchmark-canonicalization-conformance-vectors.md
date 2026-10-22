@@ -150,7 +150,7 @@ canonical evidence artifact under the qualification-ledger rules.
 ### Executable qualification-ledger subset
 
 The checked-in synthetic packet is
-`research-kit/conformance/qualification-ledger-vectors.json`. It covers the ledger
+`fetchproof/conformance/qualification-ledger-vectors.json`. It covers the ledger
 payload, record, chain, pointer, genesis, and checkpoint hash domains, plus Ed25519
 verification over raw 32-byte digests. It carries public verification keys only; neither
 a private key nor a seed is a release artifact.
@@ -158,8 +158,8 @@ a private key nor a seed is a release artifact.
 Run the independent offline implementations against exactly the same packet:
 
 ```text
-node research-kit/bin/ledger-conformance.mjs --json
-python research-kit/bin/ledger_conformance.py --json
+node fetchproof/bin/ledger-conformance.mjs --json
+python fetchproof/bin/ledger_conformance.py --json
 ```
 
 Both reports must be `PASS`, use the same `vectorPacketSha256`, and have byte-for-byte

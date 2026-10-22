@@ -28,7 +28,7 @@ The qualification ledger is the authoritative history of benchmark evidence and 
 
 ## Logical storage layout
 
-The canonical logical root is `research-kit/test/benchmark/records/qualification/`; an equivalent backend is permitted only when R28-04 records a one-to-one path and hash mapping.
+The canonical logical root is `fetchproof/test/benchmark/records/qualification/`; an equivalent backend is permitted only when R28-04 records a one-to-one path and hash mapping.
 
 ```text
 qualification/
@@ -338,7 +338,7 @@ This document defines the storage and recovery contract only. It authorizes no f
 
 ## Offline signed-verification implementation seam
 
-The read-only `research-kit/lib/release-validator.mjs` implementation exposes
+The read-only `fetchproof/lib/release-validator.mjs` implementation exposes
 `verifyQualificationLedger({ records | ledgerPath, pointer, publicKeys, head,
 genesisHash, genesis | genesisPath, checkpoints | checkpointsDir })`. When a
 genesis anchor is supplied (or discovered beside a ledger directory), it
