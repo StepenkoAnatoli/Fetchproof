@@ -40,9 +40,23 @@ Return review-only gaps in prose; another fetch is needed only for a missing ext
 fact. ADR-0052 still permits local review and re-packaging of a received package,
 without collection or edits to the collector's Git corpus (ADR-0150).
 
+**Research folder.** It is the project's own `research/`, read from the working directory
+(`AGENTS.md`, "Starting in the wrong place"), and one project answers one question. A
+question its contract is not about needs a project of its own: where the project's rules
+place one, scaffold it with
+`node "$HOME/.agents/fetchproof/bin/new-project.mjs" <dir> --topic "<question>"` and work
+from that directory (the kit's own repository puts them under `docs/decisions/<date>-<slug>/`,
+ADR-0030); otherwise ask the operator. Record it with the Fetchproof facts in "Orchestrator
+facts".
+
 ## 2. Which skill
 
 Which skill to use at each point is the `skill-router` skill's table.
+
+A session that continues earlier work ("continue", "resume") first reads where the project
+stands, as the project's `AGENTS.md` says ("Resuming after an interruption"): `resume-from-disk`,
+then the router. This skill's description names the same words, but Phase R resumes a run only
+when this task's run folder already exists; it does not stand in for that reading.
 
 ## 3. Protocol, commands, rules, exit codes
 

@@ -217,6 +217,20 @@ test('every references/*.md a shipped skill names is shipped where it says (ADR-
   assert.deepEqual(missing, []);
 });
 
+test('lead-orchestrator\'s kit note answers what 2.0 sends there (ADR-0190)', () => {
+  // 2.0's Phase 0 reads the research folder convention from the note's "Readiness", which its
+  // own integration reference used to carry; and its description triggers on "continue" and
+  // "resume", as resume-from-disk's does, while Phase R starts a fresh run when none exists.
+  const dir = path.join(SET, 'lead-orchestrator');
+  const note = fs.readFileSync(path.join(dir, 'references', 'fetchproof.md'), 'utf8');
+  const section = (title) => note.split(/^## /m).find((s) => s.startsWith(title)) ?? '';
+  const skill = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  assert.match(skill, /references\/fetchproof\.md`, "Readiness"/, 'Phase 0 no longer points at Readiness');
+  assert.match(section('1. Readiness'), /\*\*Research folder\.\*\*[\s\S]*new-project\.mjs/);
+  assert.match(skill.split('\n---')[0], /"resume"/, 'the description no longer triggers on resume');
+  assert.match(section('2. Which skill'), /`resume-from-disk`/);
+});
+
 test('deploy leaves a same-named skill that is not the kit\'s as it is, and drift ignores it', async () => {
   const { deploy, deployedDrift } = await import('../lib/installer.mjs');
   const root = tempDir('fetchproof-skillset-own-');

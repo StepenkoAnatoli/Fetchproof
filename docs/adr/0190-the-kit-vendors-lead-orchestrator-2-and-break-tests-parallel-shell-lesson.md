@@ -81,6 +81,14 @@ claude.ai.
      conventions").
    - **2.0's pointers still resolve.** 2.0's `SKILL.md` names the note's "Readiness" section, and
      its researcher brief names the note's section 3. Those are the kit note's §1 and §3.
+   - **Section 1 names the research folder.** 2.0's Phase 0 reads the research folder convention
+     from "Readiness", and the convention was in the integration reference the kit does not ship.
+     §1 now says it: the project's own `research/`, one question per project, and a new project
+     for another question where the project's rules place one (ADR-0030).
+   - **Section 2 names the resume order.** 2.0's description triggers on "continue" and
+     "resume", as `resume-from-disk`'s does, and Phase R starts a fresh run when no run folder
+     exists. §2 now says that in a Fetchproof project `resume-from-disk` and the router come
+     first, and that Phase R resumes only an existing run folder.
 3. **auto-build's ledger pointer goes back to the received meaning.** It now names
    lead-orchestrator's `references/run-ledger.md` for `RUN.md`. The other half of the same
    sentence is unchanged: lead-orchestrator's `references/fetchproof.md` remains the authority for
