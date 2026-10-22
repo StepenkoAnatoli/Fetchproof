@@ -69,6 +69,19 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   the received digests are in its history (`git show 7470287:BUNDLE_INDEX.md`). `bundle.mjs` and
   `doctor` report what they did before: 66 of 80 unchanged, 14 changed as expected. One path is
   kept as written, `e7f4d76:research-kit/lib/finding.mjs`, because it names a commit's tree.
+- The shipped lead-orchestrator skill is version 2.0 (ADR-0190), the owner's later text of the
+  skill the kit vendored as 1.x. It keeps an on-disk run ledger (`RUN.md`, described in
+  `references/run-ledger.md`), so a run that stops is resumed from its last checkpoint instead of
+  being done again, and it adds careful execution, a pre-mortem per unit, pipelined review and a
+  failure-recovery table. It also ships `references/project-facts-template.md` and
+  `references/report-templates.md`, which 1.x named without shipping. The shipped auto-build
+  already ran lead-orchestrator's Phase R and kept its stage table in `RUN.md`, neither of which
+  1.x had; its ledger pointer now names `references/run-ledger.md`. The kit's own
+  `references/fetchproof.md` still governs the kit protocol, and in a Fetchproof project the
+  project's conventions come before the templates. break-test now says that shell commands
+  issued in parallel share one working directory, so every path is written absolute. Run
+  `node fetchproof/bin/install.mjs` to update the deployed copies; a skill folder whose
+  `SKILL.md` you changed is left as it is and listed as a conflict.
 - `handoff OK` now says how old the snapshot is: the line ends with `captures fetched
   2026-09-13..2026-10-02 (oldest 37 days)`, the first and last days on which the captures the
   evidence rows name were fetched, and the age of the oldest. A row a later capture of the same

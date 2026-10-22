@@ -1,8 +1,10 @@
 # Fetchproof, as lead-orchestrator uses it
 
 This file is added by the kit (ADR-0146). The SKILL.md beside it names
-`references/fetchproof.md`; the copy of lead-orchestrator the kit vendored did not ship
-one, so this file points at the protocol it would describe rather than restating it.
+`references/fetchproof.md`. Lead-orchestrator 2.0 came with its own integration reference
+under that name; the kit does not ship it (ADR-0190), because a restated protocol drifts
+from the kit's rules. This file points at the protocol rather than restating it, and the
+kit's rules govern wherever the skill's text and theirs differ.
 
 ## 1. Readiness
 
@@ -49,9 +51,11 @@ The section `references/agent-briefs.md` sends a researcher to.
 The `research-first` skill and the project's `AGENTS.md`. Exit codes: `PASS` 0,
 `FAIL`/`REOPEN` 1, `INCOMPLETE` 2, `BLOCKED` 3 - read the code, not the prose.
 
-## 4. Not shipped
+## 4. The project's conventions first
 
-`references/project-facts-template.md` and `references/report-templates.md`, which the
-SKILL.md also names, were not in the source either. Until they are supplied: the facts
-section follows `AGENTS.md`'s "Orchestrator facts", and the report follows the
-`commit-report` skill.
+`references/project-facts-template.md` and `references/report-templates.md` ship with the
+skill since 2.0 (ADR-0190). In a Fetchproof project the project's own conventions come
+first, as the SKILL.md allows: the facts section is `AGENTS.md`'s "Orchestrator facts",
+and a commit message follows the project's five-part report and the `commit-report`
+skill. The templates fill what the project does not prescribe. The run ledger, `RUN.md`
+(`references/run-ledger.md`), is the one auto-build keeps its stage table in.

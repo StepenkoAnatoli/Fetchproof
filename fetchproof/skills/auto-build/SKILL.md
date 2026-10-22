@@ -6,7 +6,7 @@ metadata:
   version: "1.0"
   origin: Auto-Build Mode (research-to-production autonomous builder), 2026-10-04
 ---
-<!-- Modified by Fetchproof: ADR-0146 adaptations and 2026-10-08 approval-summary corrections (description, purpose, stage table, research/design handoffs, Mandate, merge and stop summaries), plus ADR-0150 complete-review guidance. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc; the ledger reference also differs from that baseline. -->
+<!-- Modified by Fetchproof: ADR-0146 adaptations and 2026-10-08 approval-summary corrections (description, purpose, stage table, research/design handoffs, Mandate, merge and stop summaries), plus ADR-0150 complete-review guidance. ADR-0186 (2026-10-20) renamed the kit here too, with the paths and variables that spelled its old name. On 2026-10-22 the ledger reference was returned to lead-orchestrator's `references/run-ledger.md`, as received, once lead-orchestrator 2.0 shipped it (ADR-0190). Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 
 Inside a Fetchproof project, `references/fetchproof.md` governs this run; where it and this
 file differ, it wins.
@@ -311,5 +311,5 @@ written to `RUN.md` with an accurate Next action; a partial run reported as comp
 - `assets/claude-md-auto-build-mandate.md`: a ready-to-paste standing mandate section for a
   project's agent instructions, set for the fewest stops that keep the architectural review.
 - The delegated skills keep their own references; lead-orchestrator's `references/fetchproof.md`
-  is the authority for the kit protocol, and lead-orchestrator's `SKILL.md` for the run ledger
-  (`RUN.md`).
+  is the authority for the kit protocol, and lead-orchestrator's `references/run-ledger.md` for
+  the run ledger (`RUN.md`).

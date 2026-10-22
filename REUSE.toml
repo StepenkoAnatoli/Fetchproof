@@ -15,7 +15,9 @@ SPDX-License-Identifier = "LicenseRef-Captured-Page"
 # and shipped with recorded file renames and six marked auto-build adaptations (the
 # original five plus stage-handoffs; dated adaptations in ADR-0146 and ADR-0150), and with the kit's
 # rename (ADR-0186) marked in each file it changed. Receipt hashes are
-# retained as historical provenance. The kit's own notes beside
+# retained as historical provenance. break-test also carries one lesson from the owner's
+# claude.ai account copy, and auto-build's ledger pointer names lead-orchestrator's
+# references/run-ledger.md again (ADR-0190), each marked. The kit's own notes beside
 # lead-orchestrator and auto-build (references/fetchproof.md) are the kit's work; break-test's
 # references/fetchproof.md was received.
 [[annotations]]
@@ -34,10 +36,27 @@ path = [
   "fetchproof/skills/four-dimension-audit/**",
   "fetchproof/skills/gap-audit/**",
   "fetchproof/skills/improve-codebase-architecture/**",
-  "fetchproof/skills/lead-orchestrator/SKILL.md",
-  "fetchproof/skills/lead-orchestrator/references/agent-briefs.md",
   "fetchproof/skills/subproject-discovery/**",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "Anatoli Stepenko - StepenkoAnatoli/SkillsMDs"
+SPDX-License-Identifier = "Apache-2.0"
+
+# lead-orchestrator 2.0 (ADR-0190): the same author's later text of the skill the set received
+# as 1.x, from the owner's claude.ai account copy (2026-10-04), received on 2026-10-22 under
+# Apache-2.0 like the rest of the set, with the kit's rename (ADR-0186) marked in each file it
+# changed. ADR-0190 records the sha256 of each received file. Its references/fetchproof.md is
+# the kit's note (above), not received.
+[[annotations]]
+path = [
+  "fetchproof/skills/lead-orchestrator/SKILL.md",
+  "fetchproof/skills/lead-orchestrator/references/agent-briefs.md",
+  "fetchproof/skills/lead-orchestrator/references/careful-execution.md",
+  "fetchproof/skills/lead-orchestrator/references/changelog.md",
+  "fetchproof/skills/lead-orchestrator/references/project-facts-template.md",
+  "fetchproof/skills/lead-orchestrator/references/report-templates.md",
+  "fetchproof/skills/lead-orchestrator/references/run-ledger.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Anatoli Stepenko - lead-orchestrator 2.0"
 SPDX-License-Identifier = "Apache-2.0"
