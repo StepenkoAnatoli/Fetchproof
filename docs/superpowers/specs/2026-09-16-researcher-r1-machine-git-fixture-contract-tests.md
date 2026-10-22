@@ -5,13 +5,13 @@
 **Scope:** disposable machine state, profile/path authority, Git global/local/system
 configuration isolation, containment, snapshots, subprocess inheritance, and cleanup
 
-**Out of scope:** changing `research-kit/lib/**`, changing installer/doctor behavior,
+**Out of scope:** changing `fetchproof/lib/**`, changing installer/doctor behavior,
 real profile or Git state, network access, credentials, paid research credits, and
 creating benchmark fixtures.
 
 The existing fixture helpers are the implementation seam under review:
-`research-kit/test/machine-fixture.mjs` and
-`research-kit/test/machine-fixture.test.mjs`. This packet defines the portable
+`fetchproof/test/machine-fixture.mjs` and
+`fetchproof/test/machine-fixture.test.mjs`. This packet defines the portable
 contract those helpers must satisfy before R1 production work resumes.
 
 ## Safety and portability rules
@@ -67,8 +67,8 @@ machineFixture({ role = "collector", projectMarkers = true }) -> MachineFixture
 | `cleanupOutside()` | Remove only `outsideRoot`; safe to call once in teardown |
 
 The environment must replace `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`,
-`RESEARCH_KIT_HOME`, `RESEARCH_KIT_CONFIG`, `RESEARCH_KIT_INSTALL_STATE`,
-`RESEARCH_KIT_EDIT_GATE_SETTINGS`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
+`FETCHPROOF_HOME`, `FETCHPROOF_CONFIG`, `FETCHPROOF_INSTALL_STATE`,
+`FETCHPROOF_EDIT_GATE_SETTINGS`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM`, and `CLAUDE_SETTINGS_PATH`. The parent process environment
 must be unchanged before and after each test.
 

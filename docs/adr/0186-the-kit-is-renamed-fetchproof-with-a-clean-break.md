@@ -1,7 +1,7 @@
 # ADR-0186 - The kit is renamed Fetchproof, with a clean break
 
 - **Date:** 2026-10-20
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0189 (item 3's bullet on the received archive's planning documents: they are renamed too, and their `BUNDLE_INDEX.md` digests rewritten once)
 - **Area:** the whole repository: the `fetchproof/` folder (was `research-kit/`), every
   command path, the deployed kit's location, the machine configuration file, the environment
   variables, the package format, the accounting packet, the MCP server name, the HTTP

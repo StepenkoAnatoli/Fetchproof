@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the research kit's preflight gate block work at commit time and edit time, and make hand-typed evidence fail so a passing verdict means evidence was actually fetched.
+**Goal:** Make Fetchproof's preflight gate block work at commit time and edit time, and make hand-typed evidence fail so a passing verdict means evidence was actually fetched.
 
 **Architecture:** One verdict function (`bin/gate.mjs`, exporting `evaluate`) is called by three consumers: a machine-wide git `pre-commit` hook, a Claude Code `PreToolUse` hook, and `preflight.mjs`. Verdict correctness rests on two new libraries: `lib/provenance.mjs`, which writes and verifies an append-only hash-chained fetch ledger, and `lib/collect.mjs`, which isolates the fetch→cache→ledger pipeline so it can be tested without network access.
 
@@ -21,7 +21,7 @@
 - While the verdict fails, staged paths confined to `research/` are allowed; anything else blocks.
 - `bin/gate.mjs` exit codes: `0` allow, `1` block, `2` internal error.
 - Claude gate emits `permissionDecision: "ask"` by default; `"hard-block"` stays behind config.
-- Machine config lives at `~/.agents/research-kit.config.json` — **outside** the deployed kit tree, so `install.mjs` can never overwrite it.
+- Machine config lives at `~/.agents/fetchproof.config.json` — **outside** the deployed kit tree, so `install.mjs` can never overwrite it.
 - `research/raw/.fetches.jsonl` is written **only** by the collector. Gate overrides and gate-absent warnings go to `research/overrides.log`.
 - Default failure posture is fail-open and loud: a broken gate must not brick the machine.
 - Commit steps assume a git repo. **This project has no repo** (spec O-2). Until O-2 is resolved, treat each Commit step as a checkpoint: run `node bin/selftest.mjs` and record the output.
@@ -31,33 +31,33 @@
 
 | File | Responsibility |
 |---|---|
-| `research-kit/test/harness.mjs` | Test registration, assertions, temp-project builders, fixtures |
-| `research-kit/test/preflight.test.mjs` | The 10 existing preflight/ledger tests, migrated |
-| `research-kit/test/provenance.test.mjs` | Chain write/verify, tamper, truncation, repair |
-| `research-kit/test/collect.test.mjs` | Fetch→raw→ledger pipeline with a stubbed scraper |
-| `research-kit/test/gate.test.mjs` | Verdict, gating predicate, diff-scope rule |
-| `research-kit/test/hooks.test.mjs` | Real git-hook block, Claude payload decisions |
-| `research-kit/test/install-hooks.test.mjs` | hooksPath set/restore, settings repair, uninstall |
-| `research-kit/lib/provenance.mjs` | Chained ledger append + verify (single writer) |
-| `research-kit/lib/collect.mjs` | One URL: scrape, cache raw, ledger, evidence row |
-| `research-kit/lib/config.mjs` | Machine config load/save |
-| `research-kit/bin/gate.mjs` | `evaluate(root, opts)`, CLI, exit codes |
-| `research-kit/githooks/pre-commit` | Commit gate, delegates to `bin/gate.mjs` |
-| `research-kit/hooks/claude-pretooluse.mjs` | PreToolUse payload → `permissionDecision` |
-| `research-kit/bin/install-hooks.mjs` | Install/uninstall both gates |
-| `research-kit/bin/preflight.mjs` | + five provenance checks |
-| `research-kit/bin/research.mjs` | Delegates collection to `lib/collect.mjs` |
-| `research-kit/bin/doctor.mjs` | + gate health reporting |
-| `research-kit/bin/selftest.mjs` | Runner: imports every `test/*.test.mjs` |
+| `fetchproof/test/harness.mjs` | Test registration, assertions, temp-project builders, fixtures |
+| `fetchproof/test/preflight.test.mjs` | The 10 existing preflight/ledger tests, migrated |
+| `fetchproof/test/provenance.test.mjs` | Chain write/verify, tamper, truncation, repair |
+| `fetchproof/test/collect.test.mjs` | Fetch→raw→ledger pipeline with a stubbed scraper |
+| `fetchproof/test/gate.test.mjs` | Verdict, gating predicate, diff-scope rule |
+| `fetchproof/test/hooks.test.mjs` | Real git-hook block, Claude payload decisions |
+| `fetchproof/test/install-hooks.test.mjs` | hooksPath set/restore, settings repair, uninstall |
+| `fetchproof/lib/provenance.mjs` | Chained ledger append + verify (single writer) |
+| `fetchproof/lib/collect.mjs` | One URL: scrape, cache raw, ledger, evidence row |
+| `fetchproof/lib/config.mjs` | Machine config load/save |
+| `fetchproof/bin/gate.mjs` | `evaluate(root, opts)`, CLI, exit codes |
+| `fetchproof/githooks/pre-commit` | Commit gate, delegates to `bin/gate.mjs` |
+| `fetchproof/hooks/claude-pretooluse.mjs` | PreToolUse payload → `permissionDecision` |
+| `fetchproof/bin/install-hooks.mjs` | Install/uninstall both gates |
+| `fetchproof/bin/preflight.mjs` | + five provenance checks |
+| `fetchproof/bin/research.mjs` | Delegates collection to `lib/collect.mjs` |
+| `fetchproof/bin/doctor.mjs` | + gate health reporting |
+| `fetchproof/bin/selftest.mjs` | Runner: imports every `test/*.test.mjs` |
 
 ---
 
 ### Task 1: Test harness and runner
 
 **Files:**
-- Create: `research-kit/test/harness.mjs`
-- Create: `research-kit/test/preflight.test.mjs` (migrates the 10 tests currently in `bin/selftest.mjs`)
-- Modify: `research-kit/bin/selftest.mjs` (becomes a runner)
+- Create: `fetchproof/test/harness.mjs`
+- Create: `fetchproof/test/preflight.test.mjs` (migrates the 10 tests currently in `bin/selftest.mjs`)
+- Modify: `fetchproof/bin/selftest.mjs` (becomes a runner)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -155,7 +155,7 @@ import { summary } from '../test/harness.mjs';
 const TEST_DIR = path.resolve(fileURLToPath(import.meta.url), '..', '..', 'test');
 const files = fs.readdirSync(TEST_DIR).filter((f) => f.endsWith('.test.mjs')).sort();
 
-console.log('research-kit selftest\n');
+console.log('fetchproof selftest\n');
 for (const file of files) {
   console.log(`${file}`);
   await import(path.join(TEST_DIR, file));
@@ -168,13 +168,13 @@ process.exit(failures === 0 ? 0 : 1);
 
 - [ ] **Step 4: Run the suite**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: prints `preflight.test.mjs`, 10 `ok` lines, `all tests passed`, exit 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add research-kit/test research-kit/bin/selftest.mjs
+git add fetchproof/test fetchproof/bin/selftest.mjs
 git commit -m "test: split selftest into a runner plus per-module test files"
 ```
 
@@ -183,8 +183,8 @@ git commit -m "test: split selftest into a runner plus per-module test files"
 ### Task 2: Provenance ledger
 
 **Files:**
-- Create: `research-kit/lib/provenance.mjs`
-- Test: `research-kit/test/provenance.test.mjs`
+- Create: `fetchproof/lib/provenance.mjs`
+- Test: `fetchproof/test/provenance.test.mjs`
 
 **Interfaces:**
 - Consumes: `hashShort`-style hashing is not reused; this module uses `node:crypto` directly.
@@ -328,7 +328,7 @@ test('hashFile matches the recorded bodySha256', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `Cannot find module '.../lib/provenance.mjs'`.
 
 - [ ] **Step 3: Implement the module**
@@ -479,13 +479,13 @@ function isProcessDead(pid) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 19 `ok` lines total (10 migrated + 9 new), `all tests passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add research-kit/lib/provenance.mjs research-kit/test/provenance.test.mjs
+git add fetchproof/lib/provenance.mjs fetchproof/test/provenance.test.mjs
 git commit -m "feat: add hash-chained fetch ledger"
 ```
 
@@ -494,9 +494,9 @@ git commit -m "feat: add hash-chained fetch ledger"
 ### Task 3: Collection pipeline with an injectable scraper
 
 **Files:**
-- Create: `research-kit/lib/collect.mjs`
-- Test: `research-kit/test/collect.test.mjs`
-- Modify: `research-kit/bin/research.mjs` (delegate to `collectOne`)
+- Create: `fetchproof/lib/collect.mjs`
+- Test: `fetchproof/test/collect.test.mjs`
+- Modify: `fetchproof/bin/research.mjs` (delegate to `collectOne`)
 
 **Interfaces:**
 - Consumes: `appendFetch`, `withLock` from `lib/provenance.mjs`; `appendRow`, `upsertSource` from `lib/ledger.mjs`; `inferSourceType`, `slugify`, `hostOf`, `hashShort`, `today`, `nowIso`, `rel`, `abs`, `writeText`, `readRows` from `lib/core.mjs`.
@@ -599,7 +599,7 @@ test('sources are deduplicated by url', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `Cannot find module '.../lib/collect.mjs'`.
 
 - [ ] **Step 3: Implement the module**
@@ -715,15 +715,15 @@ Remove the now-unused `writeRaw` and `firstFinding` definitions from `research.m
 
 - [ ] **Step 5: Run the tests and the dry run**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 25 `ok` lines, `all tests passed`.
-Run: `node research-kit/bin/research.mjs --query "example" --dry-run`
+Run: `node fetchproof/bin/research.mjs --query "example" --dry-run`
 Expected: prints the planned `firecrawl search`/`scrape` commands and exits 0 without network access.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add research-kit/lib/collect.mjs research-kit/test/collect.test.mjs research-kit/bin/research.mjs
+git add fetchproof/lib/collect.mjs fetchproof/test/collect.test.mjs fetchproof/bin/research.mjs
 git commit -m "refactor: isolate the fetch pipeline so it is testable without network"
 ```
 
@@ -732,8 +732,8 @@ git commit -m "refactor: isolate the fetch pipeline so it is testable without ne
 ### Task 4: Provenance checks in preflight
 
 **Files:**
-- Modify: `research-kit/bin/preflight.mjs`
-- Test: `research-kit/test/preflight.test.mjs` (append 5 tests)
+- Modify: `fetchproof/bin/preflight.mjs`
+- Test: `fetchproof/test/preflight.test.mjs` (append 5 tests)
 
 **Interfaces:**
 - Consumes: `verifyLedger`, `readLedger` from `lib/provenance.mjs`.
@@ -806,12 +806,12 @@ test('a KNOWN-UNKNOWN with no fetch attempt warns but does not block', () => {
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 3 of the 5 new tests FAIL (`fetch-entry-exists`, `body-unmodified`, `chain-intact` are unreported); the two pass-through tests currently pass.
 
 - [ ] **Step 3: Add the checks**
 
-In `research-kit/bin/preflight.mjs`, add `import { readLedger, verifyLedger } from '../lib/provenance.mjs';` to the imports at the **top** of the file, and insert the following block after the existing per-citation loop (the `import` line shown below is a reminder of what must be at the top, not a second import to paste mid-file):
+In `fetchproof/bin/preflight.mjs`, add `import { readLedger, verifyLedger } from '../lib/provenance.mjs';` to the imports at the **top** of the file, and insert the following block after the existing per-citation loop (the `import` line shown below is a reminder of what must be at the top, not a second import to paste mid-file):
 
 ```js
 import { readLedger, verifyLedger } from '../lib/provenance.mjs';
@@ -902,13 +902,13 @@ Import `repairLedgerTail` from `../lib/provenance.mjs` alongside the other prove
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 31 `ok` lines, `all tests passed`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add research-kit/bin/preflight.mjs research-kit/test/preflight.test.mjs
+git add fetchproof/bin/preflight.mjs fetchproof/test/preflight.test.mjs
 git commit -m "feat: fail preflight when evidence was not actually fetched"
 ```
 
@@ -917,9 +917,9 @@ git commit -m "feat: fail preflight when evidence was not actually fetched"
 ### Task 5: The verdict
 
 **Files:**
-- Create: `research-kit/lib/config.mjs`
-- Create: `research-kit/bin/gate.mjs`
-- Test: `research-kit/test/gate.test.mjs`
+- Create: `fetchproof/lib/config.mjs`
+- Create: `fetchproof/bin/gate.mjs`
+- Test: `fetchproof/test/gate.test.mjs`
 
 **Interfaces:**
 - Consumes: `runPreflight` from `bin/preflight.mjs`; `appendOverride` from `lib/provenance.mjs`.
@@ -1026,7 +1026,7 @@ test('GATE_OFF allows and is recorded', () => {
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `Cannot find module '.../bin/gate.mjs'`.
 
 - [ ] **Step 3: Implement config and the verdict**
@@ -1037,8 +1037,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { readText, writeText } from './core.mjs';
 
-export const CONFIG_PATH = process.env.RESEARCH_KIT_CONFIG
-  ?? path.join(os.homedir(), '.agents', 'research-kit.config.json');
+export const CONFIG_PATH = process.env.FETCHPROOF_CONFIG
+  ?? path.join(os.homedir(), '.agents', 'fetchproof.config.json');
 export const DEFAULT_CONFIG = { failOpen: true, claudeGate: 'ask' };
 
 export function loadConfig(file = CONFIG_PATH) {
@@ -1130,18 +1130,18 @@ Add `import { fileURLToPath } from 'node:url';` to the imports.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 38 `ok` lines, `all tests passed`.
 
 - [ ] **Step 5: Verify the CLI contract by hand**
 
-Run: `node research-kit/bin/gate.mjs --gate commit --project . --staged src/x.js; echo "exit=$?"`
+Run: `node fetchproof/bin/gate.mjs --gate commit --project . --staged src/x.js; echo "exit=$?"`
 Expected: prints the blocker list plus the fix commands, `exit=1` (this project's example `U-1` row is still `OPEN`).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add research-kit/lib/config.mjs research-kit/bin/gate.mjs research-kit/test/gate.test.mjs
+git add fetchproof/lib/config.mjs fetchproof/bin/gate.mjs fetchproof/test/gate.test.mjs
 git commit -m "feat: add the gate verdict, gating predicate, and diff-scope rule"
 ```
 
@@ -1150,8 +1150,8 @@ git commit -m "feat: add the gate verdict, gating predicate, and diff-scope rule
 ### Task 6: The git pre-commit gate, proven to block
 
 **Files:**
-- Create: `research-kit/githooks/pre-commit`
-- Test: `research-kit/test/hooks.test.mjs`
+- Create: `fetchproof/githooks/pre-commit`
+- Test: `fetchproof/test/hooks.test.mjs`
 
 **Interfaces:**
 - Consumes: `bin/gate.mjs` CLI via `git diff --cached --name-only`.
@@ -1225,7 +1225,7 @@ test('the hook allows anything in an ungated repo', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — the hook file does not exist (`ENOENT`).
 
 - [ ] **Step 3: Implement the hook**
@@ -1270,10 +1270,10 @@ exit 0
 
 - [ ] **Step 4: Make it executable and document the overrides**
 
-Run: `chmod +x research-kit/githooks/pre-commit`
+Run: `chmod +x fetchproof/githooks/pre-commit`
 
 ```markdown
-<!-- research-kit/githooks/README.md -->
+<!-- fetchproof/githooks/README.md -->
 # Commit gate
 
 `pre-commit` blocks a commit when a gated project's Discovery Contract is unsatisfied and the
@@ -1290,13 +1290,13 @@ commit changes anything outside `research/`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 41 `ok` lines, `all tests passed`. The blocking test asserts a real non-zero exit from a real repo.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add research-kit/githooks
+git add fetchproof/githooks
 git commit -m "feat: add a commit gate that provably blocks in a real repo"
 ```
 
@@ -1305,8 +1305,8 @@ git commit -m "feat: add a commit gate that provably blocks in a real repo"
 ### Task 7: Install and uninstall the git gate
 
 **Files:**
-- Create: `research-kit/bin/install-hooks.mjs`
-- Test: `research-kit/test/install-hooks.test.mjs`
+- Create: `fetchproof/bin/install-hooks.mjs`
+- Test: `fetchproof/test/install-hooks.test.mjs`
 
 **Interfaces:**
 - Consumes: `loadConfig`, `saveConfig` from `lib/config.mjs`.
@@ -1390,7 +1390,7 @@ test('uninstall removes the key when there was no previous value', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `Cannot find module '.../bin/install-hooks.mjs'`.
 
 - [ ] **Step 3: Implement install/uninstall (git side)**
@@ -1444,13 +1444,13 @@ Add a `main()` guarded by `process.argv[1]` so importing the module in tests doe
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 46 `ok` lines, `all tests passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add research-kit/bin/install-hooks.mjs research-kit/test/install-hooks.test.mjs
+git add fetchproof/bin/install-hooks.mjs fetchproof/test/install-hooks.test.mjs
 git commit -m "feat: install and uninstall the git gate with dry-run and restore"
 ```
 
@@ -1459,8 +1459,8 @@ git commit -m "feat: install and uninstall the git gate with dry-run and restore
 ### Task 8: The Claude PreToolUse gate
 
 **Files:**
-- Create: `research-kit/hooks/claude-pretooluse.mjs`
-- Test: `research-kit/test/hooks.test.mjs` (append)
+- Create: `fetchproof/hooks/claude-pretooluse.mjs`
+- Test: `fetchproof/test/hooks.test.mjs` (append)
 
 **Interfaces:**
 - Consumes: `evaluate` from `bin/gate.mjs`; `loadConfig` from `lib/config.mjs`.
@@ -1516,7 +1516,7 @@ test('claude hook: hard-block mode denies instead of asking', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `decide is not defined` (the import does not resolve yet).
 
 - [ ] **Step 3: Implement the hook**
@@ -1564,18 +1564,18 @@ Add `import { fileURLToPath } from 'node:url';` to the imports.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 51 `ok` lines, `all tests passed`.
 
 - [ ] **Step 5: Verify the hook end to end without a session**
 
-Run: `echo '{"tool_name":"Edit","tool_input":{"file_path":"src/app.js"},"cwd":"."}' | node research-kit/hooks/claude-pretooluse.mjs`
+Run: `echo '{"tool_name":"Edit","tool_input":{"file_path":"src/app.js"},"cwd":"."}' | node fetchproof/hooks/claude-pretooluse.mjs`
 Expected: JSON containing `"permissionDecision":"ask"` and a reason naming this project's open `U-1` row. In an ungated directory the same command prints `"permissionDecision":"allow"`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add research-kit/hooks research-kit/test/hooks.test.mjs
+git add fetchproof/hooks fetchproof/test/hooks.test.mjs
 git commit -m "feat: add the Claude PreToolUse gate with an offline-testable decision function"
 ```
 
@@ -1584,8 +1584,8 @@ git commit -m "feat: add the Claude PreToolUse gate with an offline-testable dec
 ### Task 9: Settings validation, repair, and Claude hook install
 
 **Files:**
-- Modify: `research-kit/bin/install-hooks.mjs`
-- Test: `research-kit/test/install-hooks.test.mjs` (append)
+- Modify: `fetchproof/bin/install-hooks.mjs`
+- Test: `fetchproof/test/install-hooks.test.mjs` (append)
 
 **Interfaces:**
 - Consumes: nothing new.
@@ -1654,7 +1654,7 @@ test('installClaudeHook refuses to guess at unfamiliar corruption', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — the four new tests fail on missing exports.
 
 - [ ] **Step 3: Implement validation, repair, and install**
@@ -1719,7 +1719,7 @@ Import `readText`, `writeText`, `exists` from `../lib/core.mjs`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 56 `ok` lines, `all tests passed`.
 
 - [ ] **Step 5: Wire the CLI, then STOP and ask**
@@ -1729,7 +1729,7 @@ The `--claude-only` and full-install paths must call `installClaudeHook({ settin
 - [ ] **Step 6: Commit**
 
 ```bash
-git add research-kit/bin/install-hooks.mjs research-kit/test/install-hooks.test.mjs
+git add fetchproof/bin/install-hooks.mjs fetchproof/test/install-hooks.test.mjs
 git commit -m "feat: validate, repair, and install the Claude hook with backups"
 ```
 
@@ -1738,9 +1738,9 @@ git commit -m "feat: validate, repair, and install the Claude hook with backups"
 ### Task 10: Doctor reporting, docs, and the acceptance round trip
 
 **Files:**
-- Modify: `research-kit/bin/doctor.mjs`
-- Modify: `research-kit/template/AGENTS.md`, `research-kit/skill/SKILL.md`, `research-kit/template/.gitignore`
-- Test: `research-kit/test/install-hooks.test.mjs` (append a doctor test)
+- Modify: `fetchproof/bin/doctor.mjs`
+- Modify: `fetchproof/template/AGENTS.md`, `fetchproof/skill/SKILL.md`, `fetchproof/template/.gitignore`
+- Test: `fetchproof/test/install-hooks.test.mjs` (append a doctor test)
 
 **Interfaces:**
 - Consumes: `verifyLedger`, `readLedger` from `lib/provenance.mjs`; `isGated` from `bin/gate.mjs`; `loadConfig`.
@@ -1768,7 +1768,7 @@ test('gateHealth reports each gate and the override count', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: FAIL — `gateHealth is not exported`.
 
 - [ ] **Step 3: Implement gate health and surface it in doctor**
@@ -1820,15 +1820,15 @@ In `template/AGENTS.md` add under Rule 1: a note that the gate is now enforced a
 
 - [ ] **Step 5: Run the full suite**
 
-Run: `node research-kit/bin/selftest.mjs`
+Run: `node fetchproof/bin/selftest.mjs`
 Expected: 57 `ok` lines, `all tests passed`.
 
 - [ ] **Step 6: Run the acceptance round trip**
 
 ```bash
-node research-kit/bin/install-hooks.mjs --git-only --dry-run
-node research-kit/bin/selftest.mjs
-node research-kit/bin/doctor.mjs
+node fetchproof/bin/install-hooks.mjs --git-only --dry-run
+node fetchproof/bin/selftest.mjs
+node fetchproof/bin/doctor.mjs
 ```
 
 Expected: the dry run prints the `core.hooksPath` before/after and writes nothing; the suite passes; `doctor` reports the new gate rows, with `gate-git` failing until the real install runs. Verify acceptance criteria 1, 2, 4, 5, 6, and 8 from the spec are covered by named tests.
@@ -1836,7 +1836,7 @@ Expected: the dry run prints the `core.hooksPath` before/after and writes nothin
 - [ ] **Step 7: Commit**
 
 ```bash
-git add research-kit/bin/doctor.mjs research-kit/template research-kit/skill research-kit/test
+git add fetchproof/bin/doctor.mjs fetchproof/template fetchproof/skill fetchproof/test
 git commit -m "feat: report gate health and document the enforced protocol"
 ```
 

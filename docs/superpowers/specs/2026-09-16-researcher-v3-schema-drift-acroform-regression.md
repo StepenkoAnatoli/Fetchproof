@@ -2,7 +2,7 @@
 
 **Status:** review-ready, offline, read-only
 
-**Checker:** `research-kit/bin/check_sd_acroform_regression.py`
+**Checker:** `fetchproof/bin/check_sd_acroform_regression.py`
 
 **Inputs:**
 
@@ -12,7 +12,7 @@
 Run from the repository root:
 
 ```text
-python research-kit/bin/check_sd_acroform_regression.py --json
+python fetchproof/bin/check_sd_acroform_regression.py --json
 ```
 
 The command never writes either PDF or any sidecar. It exits `0` only when every

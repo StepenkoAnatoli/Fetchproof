@@ -29,7 +29,7 @@
 The eventual test-only command is:
 
 ```text
-node research-kit/test/run-hook-contract.mjs --case <case-id> [--case <case-id> ...] [--json] [--evidence <path>]
+node fetchproof/test/run-hook-contract.mjs --case <case-id> [--case <case-id> ...] [--json] [--evidence <path>]
 ```
 
 With no `--case`, it runs the complete matrix. `--evidence` must resolve below
@@ -204,7 +204,7 @@ shell, probe, platform, and cwd prevented qualification.
 
 ### Task 1: Freeze runner and evidence interfaces
 
-**Files:** Create `research-kit/test/hook-runner.mjs`; test `research-kit/test/hook-runner-contract.test.mjs`; update `docs/ARCHITECTURE.md` and add an ADR if a rejected shell strategy is recorded.
+**Files:** Create `fetchproof/test/hook-runner.mjs`; test `fetchproof/test/hook-runner-contract.test.mjs`; update `docs/ARCHITECTURE.md` and add an ADR if a rejected shell strategy is recorded.
 
 - [ ] Add unit cases for invocation planning, CMD-safe refusal, capability result reduction, and deterministic evidence serialization.
 - [ ] Verify no production module is imported for side effects and no parent environment mutation occurs.
@@ -212,7 +212,7 @@ shell, probe, platform, and cwd prevented qualification.
 
 ### Task 2: Add disposable hook cases
 
-**Files:** Extend `research-kit/test/machine-fixture.mjs` only if the frozen contract requires a new contained path; add `research-kit/test/hook-runner-contract.test.mjs` cases HR-01–HR-16.
+**Files:** Extend `fetchproof/test/machine-fixture.mjs` only if the frozen contract requires a new contained path; add `fetchproof/test/hook-runner-contract.test.mjs` cases HR-01–HR-16.
 
 - [ ] Run every case through `machineFixture`/`gitFixture` with exact cwd and injected environment.
 - [ ] Add capability probes and unsupported-shell evidence; do not skip silently.
@@ -220,7 +220,7 @@ shell, probe, platform, and cwd prevented qualification.
 
 ### Task 3: Wire the R1 release gate
 
-**Files:** Add an offline matrix entry under `research-kit/test/`; update the R1 release evidence specification and architecture map.
+**Files:** Add an offline matrix entry under `fetchproof/test/`; update the R1 release evidence specification and architecture map.
 
 - [ ] Require HR-G0–HR-G6 before hook/installer qualification.
 - [ ] Emit a deterministic JSONL evidence file and a summary whose exit status is nonzero for `FAIL` or blocking `UNSUPPORTED_SHELL`.

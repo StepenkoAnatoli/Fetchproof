@@ -1,7 +1,7 @@
 # ADR-0028 — The bundle is a received state, not a live constraint
 
 - **Date:** 2026-09-20
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0189 (on 2026-10-22 the 44 planning documents that spelled the kit's former name were renamed with it, by the owner's order, and their digests rewritten once; the rest stands)
 - **Area:** documentation, the commit gate, archive provenance
 - **Supersedes:** ADR-0022's byte-preservation consequence (the rest of ADR-0022 stands)
 - **Restores:** ADR-0007 in full — the same-commit map rule now has no exception

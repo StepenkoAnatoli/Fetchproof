@@ -133,7 +133,7 @@ record. Applying an overlay to a different source hash is refused.
 ## 6. CLI, output, and exit contract
 
 ```text
-node research-kit/bin/researcher-release.mjs dashboard \
+node fetchproof/bin/researcher-release.mjs dashboard \
   --input <researcher-dashboard-input-v1.json> \
   --output <dashboard.html> [--json]
 ```

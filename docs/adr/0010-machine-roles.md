@@ -41,7 +41,7 @@ about the thing that does matter on a builder: that it must not collect at all.
 **A machine declares its role, and the role changes what the machine is held to.**
 
 - The role lives in the machine config: `role: 'collector' | 'builder'` in
-  `~/.agents/research-kit.config.json`, read by `machineRole()` and answered in policy
+  `~/.agents/fetchproof.config.json`, read by `machineRole()` and answered in policy
   form by `collectionPolicy()` — both in `lib/machine.mjs`, which owns every
   machine-scoped location (ADR-0002).
 - **The default is `collector`.** A missing, unknown, or corrupt value reads as

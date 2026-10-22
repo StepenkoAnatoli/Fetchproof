@@ -2,12 +2,12 @@
 
 **Status:** review-ready, offline, read-only
 
-**Checker:** `research-kit/bin/check_fi_pdf_visual_regression.py`
+**Checker:** `fetchproof/bin/check_fi_pdf_visual_regression.py`
 
 Run from the repository root:
 
 ```text
-python research-kit/bin/check_fi_pdf_visual_regression.py --json
+python fetchproof/bin/check_fi_pdf_visual_regression.py --json
 ```
 
 The checker reads the 30-page combined FI packet, the 30 standalone case PDFs,

@@ -155,7 +155,7 @@ unowned extra record. Records use UTF-8 without BOM, canonical JSON, and
 `additionalProperties: false` at every object level.
 
 The machine-readable shape is shipped in
-[`research-kit/schemas/fi-signoff-sidecar.schema.json`](../../../research-kit/schemas/fi-signoff-sidecar.schema.json).
+[`fetchproof/schemas/fi-signoff-sidecar.schema.json`](../../../fetchproof/schemas/fi-signoff-sidecar.schema.json).
 The schema is intentionally shape-only: workbook projection equality, the FI-specific outcome
 code, sidecar-to-manifest ownership, signature authorization, and cross-record identity checks
 remain validator semantics and cannot be inferred from one standalone JSON document.
@@ -323,7 +323,7 @@ The evidence manifest is canonical JSON under `researcher-benchmark-c14n-v1`. Ea
 ```
 
 The strict root and entry shape is shipped in
-[`research-kit/schemas/fi-evidence-manifest.schema.json`](../../../research-kit/schemas/fi-evidence-manifest.schema.json).
+[`fetchproof/schemas/fi-evidence-manifest.schema.json`](../../../fetchproof/schemas/fi-evidence-manifest.schema.json).
 The schema rejects unknown properties, invalid FI identifiers, unsupported profiles, malformed
 hashes, unsafe relative paths, negative byte lengths, and duplicate predecessor IDs. Entry-ID
 uniqueness, FI/field ownership, predecessor resolution, byte/hash verification, and
@@ -573,7 +573,7 @@ bundle. It must not create benchmark fixtures, fetch sources, access credentials
 credits. The reviewable matrix is
 [`FI validator fixture-free conformance matrix`](2026-09-16-researcher-fi-validator-conformance-matrix.md),
 and its executable implementation is
-[`research-kit/test/fi-validator-conformance.test.mjs`](../../../research-kit/test/fi-validator-conformance.test.mjs):
+[`fetchproof/test/fi-validator-conformance.test.mjs`](../../../fetchproof/test/fi-validator-conformance.test.mjs):
 it keeps all mutations in memory, asserts deterministic mutation construction, and runs every
 schema-backed case against the shipped sidecar/manifest schemas. Workbook projection, byte,
 containment, role, signature, predecessor, and report assertions are recorded with their

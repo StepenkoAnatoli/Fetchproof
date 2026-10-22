@@ -4,7 +4,7 @@
 
 **Goal:** Provide an offline, read-only FI validator that checks workbook projection, FI sidecar/manifest references, evidence bytes, and status precedence.
 
-**Architecture:** `research-kit/lib/fi-validator.mjs` owns parsing, projection and semantic checks. `research-kit/bin/researcher-release.mjs` exposes it as `fi-validate`; it only reads named inputs and emits a deterministic report. Existing schema checking and canonical hashing remain in `release-validator.mjs`.
+**Architecture:** `fetchproof/lib/fi-validator.mjs` owns parsing, projection and semantic checks. `fetchproof/bin/researcher-release.mjs` exposes it as `fi-validate`; it only reads named inputs and emits a deterministic report. Existing schema checking and canonical hashing remain in `release-validator.mjs`.
 
 **Tech Stack:** Node.js standard library, existing release validator helpers, XLSX ZIP/XML reader, existing test harness.
 
@@ -22,24 +22,24 @@
 ### Task 1: FI sidecar/manifest semantic validator
 
 **Files:**
-- Create: `research-kit/lib/fi-validator.mjs`
-- Test: `research-kit/test/fi-validator-adapter.test.mjs`
+- Create: `fetchproof/lib/fi-validator.mjs`
+- Test: `fetchproof/test/fi-validator-adapter.test.mjs`
 
 **Interfaces:**
 - Consumes: an exact workbook byte hash, parsed FI sidecars, one evidence manifest, an evidence root.
 - Produces: `validateFiBundle(options) -> { status, errors, cases, summary }`.
 
 - [ ] **Step 1: Write failing tests** for a valid sidecar/manifest, an unresolved evidence ID, a mismatched evidence byte hash, and a precedence downgrade.
-- [ ] **Step 2: Run** `node research-kit/test/fi-validator-adapter.test.mjs` and confirm it fails because `fi-validator.mjs` is absent.
+- [ ] **Step 2: Run** `node fetchproof/test/fi-validator-adapter.test.mjs` and confirm it fails because `fi-validator.mjs` is absent.
 - [ ] **Step 3: Implement** schema validation, cross-reference ownership, root-contained byte hashing, and precedence reduction.
-- [ ] **Step 4: Run** `node research-kit/test/fi-validator-adapter.test.mjs` and confirm all new cases pass.
+- [ ] **Step 4: Run** `node fetchproof/test/fi-validator-adapter.test.mjs` and confirm all new cases pass.
 
 ### Task 2: Read-only XLSX projection and command adapter
 
 **Files:**
-- Modify: `research-kit/lib/fi-validator.mjs`
-- Modify: `research-kit/bin/researcher-release.mjs`
-- Test: `research-kit/test/fi-validator-adapter.test.mjs`
+- Modify: `fetchproof/lib/fi-validator.mjs`
+- Modify: `fetchproof/bin/researcher-release.mjs`
+- Test: `fetchproof/test/fi-validator-adapter.test.mjs`
 
 **Interfaces:**
 - Consumes: `.xlsx` workbook and `fi-validate` CLI arguments.
@@ -54,7 +54,7 @@
 
 **Files:**
 - Modify: `docs/ARCHITECTURE.md`
-- Test: `research-kit/test/fi-validator-conformance.test.mjs`, `research-kit/test/fi-signoff-schema.test.mjs`, `research-kit/test/fi-validator-adapter.test.mjs`
+- Test: `fetchproof/test/fi-validator-conformance.test.mjs`, `fetchproof/test/fi-signoff-schema.test.mjs`, `fetchproof/test/fi-validator-adapter.test.mjs`
 
 - [ ] **Step 1: Run** all FI schema/conformance/adapter tests.
 - [ ] **Step 2: Run** the command with a deliberately incomplete public workbook bundle and confirm no files outside the requested report path change.

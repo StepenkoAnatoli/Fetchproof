@@ -51,7 +51,7 @@ is 472.
 | 17 tests moved, 17 untouched, none edited | 34 blocks in the old file, 34 across the two new files, byte-identical as a multiset (17 + 17); old file 521 lines = 367 + 154 | confirmed |
 | the collector's pin stayed behind | *the evidence row is filled with prose, not the page banner* is in `test/collect.test.mjs`, and it is the file that feeds the shared fixture | confirmed |
 | 311 tests before and after | pre-move tree `7f359dc`: 311 tests, 19 files, green. current tree: 311 tests, 20 files, green | confirmed — nothing added, nothing lost |
-| green from three working directories | repo root, `research-kit/`, `research-kit/test/` | confirmed |
+| green from three working directories | repo root, `fetchproof/`, `fetchproof/test/` | confirmed |
 | behavior unchanged across the seam | pre-move and post-move extractor run against each other over 6 raw captures, the 4 page fixtures, 9 edge cases and 400 deterministic fuzz slices, each through 6 fallbacks — **2,514 comparisons** | **0 differences** |
 | the revert test | `git revert --no-commit 5d4c9d0` on top of `e7f4d76` in a throwaway worktree: no conflict, and the tree is `7f359dc`'s except for `RESEARCH_REPORT.md` (+1 line — the second task's, which the revert does not touch). Suite there: 311, green | confirmed |
 | preflight unchanged | repo root: `PASS`, 0 failures, 10 warnings (6 `capture-transport`, 3 `capture-partial`, 1 `citation-primary`), 4/4 unknowns closed, 6 evidence rows, 6 raw captures | confirmed |
@@ -101,8 +101,8 @@ no off-by-one of the counting kind is hiding here. Both ADR-0016 and
 
 ```
 git fetch --depth=3 origin arena/01a0a3e6-deep-research-agent   # brings back 7f359dc, the pre-move tree
-node research-kit/bin/selftest.mjs                              # repo root, research-kit/, research-kit/test/
-node research-kit/bin/preflight.mjs                             # PASS, 0 failures, 10 warnings
+node fetchproof/bin/selftest.mjs                              # repo root, fetchproof/, fetchproof/test/
+node fetchproof/bin/preflight.mjs                             # PASS, 0 failures, 10 warnings
 ```
 
 The block comparison, the test-block multiset comparison and the two-implementation

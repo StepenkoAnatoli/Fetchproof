@@ -56,7 +56,7 @@ or warning-only result.
 
 `trap-register.json` is UTF-8 JSON with no duplicate object keys. Its top-level shape is:
 
-The machine-readable contract is [`research-kit/schemas/trap-register.schema.json`](../../../research-kit/schemas/trap-register.schema.json). It is the strict Draft 2020-12 schema for this register: every object rejects unknown properties, every task row is selected by a task-specific definition, and the array-level `contains` guards require exactly one row for each approved task ID. The offline validator still performs packet/matrix checks that require external artifacts and therefore cannot be reduced to JSON Schema alone.
+The machine-readable contract is [`fetchproof/schemas/trap-register.schema.json`](../../../fetchproof/schemas/trap-register.schema.json). It is the strict Draft 2020-12 schema for this register: every object rejects unknown properties, every task row is selected by a task-specific definition, and the array-level `contains` guards require exactly one row for each approved task ID. The offline validator still performs packet/matrix checks that require external artifacts and therefore cannot be reduced to JSON Schema alone.
 
 ```json
 {

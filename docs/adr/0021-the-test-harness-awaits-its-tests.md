@@ -10,7 +10,7 @@
 
 ## Context
 
-`runPending` in `research-kit/test/harness.mjs` ran each registered test with `fn()`
+`runPending` in `fetchproof/test/harness.mjs` ran each registered test with `fn()`
 inside a `try`, caught a synchronous `throw`, and printed `ok` when nothing was caught.
 An `async` test does not throw synchronously — it returns a pending promise. So `ok` was
 printed the instant the test *started*, before any assertion inside it had run, and
@@ -62,7 +62,7 @@ late rejection cannot crash the runner afterwards.**
   harness's own module-level `registered` and `created` arrays. Serial execution is now
   a pinned property — a test asserts that two tests are never inside at once and that
   completion order equals registration order even when the first test is the slowest.
-- **A watchdog per test** — `RESEARCH_KIT_TEST_TIMEOUT`, default 60 000 ms. An awaited
+- **A watchdog per test** — `FETCHPROOF_TEST_TIMEOUT`, default 60 000 ms. An awaited
   test that never settles would otherwise hang the suite printing nothing, which is the
   same trap the commit gate fell into before C3 gave it a watchdog, and worse here: the
   suite is the instrument you trust to tell you about other failures. The bound was

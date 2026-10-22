@@ -3,7 +3,7 @@
 **Status:** Approval-ready candidate  
 **Specification version:** 1.0.0  
 **Date:** 2026-09-16  
-**Audience:** Research-kit maintainers, benchmark authors, independent graders, release reviewers, and operators responsible for Firecrawl spend  
+**Audience:** Fetchproof maintainers, benchmark authors, independent graders, release reviewers, and operators responsible for Firecrawl spend  
 **Purpose:** Define a repeatable benchmark that determines whether the researcher produces correct, supported, constraint-complete research at an acceptable cost  
 **Scope:** Benchmark design, task authoring, execution protocol, scoring, adjudication, reporting, and release criteria  
 **Excluded:** Benchmark implementation, repair of researcher defects, vendor selection, automated LLM judging, and changes to product code or machine configuration
@@ -914,7 +914,7 @@ Reviewers approve this specification only if all answers are yes:
 
 ## 21. Approval boundary
 
-Approval of this document approves the benchmark behavior and scoring contract only. It does not authorize implementation, paid live runs, credential use, changes to the research kit, or deployment. Those require a separate implementation plan and explicit execution approval.
+Approval of this document approves the benchmark behavior and scoring contract only. It does not authorize implementation, paid live runs, credential use, changes to Fetchproof, or deployment. Those require a separate implementation plan and explicit execution approval.
 
 ## 22. Version 1.0 blocker resolution
 

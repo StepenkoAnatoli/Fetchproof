@@ -11,7 +11,7 @@ see each other:
 
 | Definition | What it knew |
 |---|---|
-| `research-kit/template/` | file content |
+| `fetchproof/template/` | file content |
 | `test/harness.mjs · makeProject()` | layout, including a `research/raw/.gitkeep` nothing else created |
 | `bin/new-project.mjs` | its own `walk()`, its own `{{TOKEN}}` substitution |
 | `lib/gate.mjs · MARKERS` | four paths, existence only |
@@ -33,7 +33,7 @@ nonsense verdicts downstream instead of a named problem.
 
 ## Decision
 
-`research-kit/lib/scaffold.mjs` owns the canonical project shape as data (`LAYOUT`), and
+`fetchproof/lib/scaffold.mjs` owns the canonical project shape as data (`LAYOUT`), and
 every consumer derives from it:
 
 - `GATE_MARKERS` — the four opt-in markers, declared once; `lib/gate.mjs · isGated()`

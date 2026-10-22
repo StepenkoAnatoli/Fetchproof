@@ -28,7 +28,7 @@ The report is canonical JSON under profile `researcher-benchmark-c14n-v1`. It ha
   "gateId": "GL-1",
   "benchmarkVersion": "1.0.0",
   "matrixVersion": "1.0.0",
-  "registerSchemaId": "research-kit/trap-register-v1",
+  "registerSchemaId": "fetchproof/trap-register-v1",
   "inputHashes": {
     "benchmarkSpecSha256": "<64 lowercase hex>",
     "matrixSha256": "<64 lowercase hex>",

@@ -728,7 +728,7 @@ CHANGELOG.md             what changed in each release
 QUICKSTART.md            the GitHub route with one token
 START_HERE.md            the operator page, as a scaffolded project receives it
 LICENSE, LICENSES/, NOTICE, REUSE.toml   the licence of the code, and the one the captured pages are under
-BUNDLE_INDEX.md, RESEARCH_REPORT.md      the archive this repository was received as, frozen (ADR-0028)
+BUNDLE_INDEX.md, RESEARCH_REPORT.md      the archive this repository was received as, frozen (ADR-0028; renamed once, ADR-0189)
 ```
 
 ## Documentation

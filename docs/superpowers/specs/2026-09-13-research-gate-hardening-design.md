@@ -8,7 +8,7 @@
 
 ## 1. Problem
 
-The research kit (`~/.agents/research-kit`, source in this project under `research-kit/`)
+Fetchproof (`~/.agents/fetchproof`, source in this project under `fetchproof/`)
 installs a Discovery Contract and a `preflight.mjs` gate. Two defects make that gate weaker
 than it looks:
 
@@ -93,7 +93,7 @@ Claude PreToolUse┘        │
 | `githooks/pre-commit` | new | `node <kit>/bin/gate.mjs --gate commit`; propagates the block |
 | `hooks/claude-pretooluse.mjs` | new | Parses the PreToolUse payload from stdin, emits `permissionDecision` |
 | `bin/install-hooks.mjs` | new | Installs/removes both gates; validates and repairs the Claude settings file |
-| `~/.agents/research-kit.config.json` | new | Machine-level knobs: `failOpen`, `claudeGate`. Deliberately **outside** the deployed tree so `install.mjs` can never clobber it |
+| `~/.agents/fetchproof.config.json` | new | Machine-level knobs: `failOpen`, `claudeGate`. Deliberately **outside** the deployed tree so `install.mjs` can never clobber it |
 | `bin/research.mjs` | changed | One ledger entry per fetch attempt (success and failure) |
 | `bin/preflight.mjs` | changed | Adds the provenance checks in §6 |
 | `bin/doctor.mjs` | changed | Reports gate health: hooksPath, hook presence, chain integrity, override count |
@@ -103,7 +103,7 @@ Claude PreToolUse┘        │
 
 ### Blast radius
 
-- One machine-wide git setting: `core.hooksPath` → `~/.agents/research-kit/githooks`.
+- One machine-wide git setting: `core.hooksPath` → `~/.agents/fetchproof/githooks`.
 - One file outside this project: `~/.claude/settings.json`, **backed up before writing**, and
   only after separate approval.
 - The kit itself, and this project's `docs/` and `research/`.
@@ -209,7 +209,7 @@ appends with a single write, so a crash cannot interleave two entries.
 ## 7. Failure handling
 
 The governing rule: **a broken gate must not brick the machine.** Default is fail-open,
-loud, and visible to `doctor`; `~/.agents/research-kit.config.json` can set `failOpen: false`.
+loud, and visible to `doctor`; `~/.agents/fetchproof.config.json` can set `failOpen: false`.
 
 | Failure | Behaviour |
 |---|---|

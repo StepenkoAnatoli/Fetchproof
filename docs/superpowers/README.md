@@ -10,6 +10,9 @@ The original records are kept as historical documents. Their referenced artifact
 are not prerequisites for running the current kit, and their missing targets are
 outside the ADR link check. The record of the received bundle is described in
 [ADR-0028](../adr/0028-the-bundle-is-a-received-state-not-a-live-constraint.md).
+The received records that spelled the kit's former name were renamed with it on
+2026-10-22, and nothing else in them changed
+([ADR-0189](../adr/0189-the-archives-planning-documents-are-renamed-and-their-digests-rewritten-once.md)).
 
 For the current implementation, read the [architecture map](../ARCHITECTURE.md),
 [decision index](../adr/README.md) and [kit README](../../fetchproof/README.md).
@@ -19,5 +22,5 @@ scope and status.
 The related [2026-09-16 snapshot review](../researcher-review-2026-09-16.md)
 names `docs/audit-2026-09-16-probes.mjs`, which is not retained in this repository.
 Its command and link record the review's past inputs, rather than a script shipped
-with the current kit. The received review itself stays byte-identical to the
-archive; this guide supplies the current context.
+with the current kit. The received review itself is kept as the archive held it,
+apart from the kit's name (ADR-0189); this guide supplies the current context.

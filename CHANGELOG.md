@@ -63,6 +63,12 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   corpus again with the new kit. A package's ID starts with `FP-` (was `RK-`). The schemas' identifiers are `fetchproof/<name>-v1`, and an FI
   sidecar conformance packet must name `fetchproof/fi-signoff-sidecar-v1` and
   `fetchproof/fi-evidence-manifest-v1`.
+- The 44 planning documents of the archive received on 2026-09-17 that spelled the kit's former
+  name are renamed too (ADR-0189, superseding ADR-0028 and ADR-0186 in part), and nothing else in
+  them changed. `BUNDLE_INDEX.md`'s 44 rows for them now hold the digests of the renamed files;
+  the received digests are in its history (`git show 7470287:BUNDLE_INDEX.md`). `bundle.mjs` and
+  `doctor` report what they did before: 66 of 80 unchanged, 14 changed as expected. One path is
+  kept as written, `e7f4d76:research-kit/lib/finding.mjs`, because it names a commit's tree.
 - `handoff OK` now says how old the snapshot is: the line ends with `captures fetched
   2026-09-13..2026-10-02 (oldest 37 days)`, the first and last days on which the captures the
   evidence rows name were fetched, and the age of the oldest. A row a later capture of the same

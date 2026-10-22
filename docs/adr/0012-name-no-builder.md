@@ -56,8 +56,8 @@ documented place, and every one of them is a default the machine can override.**
 
 3. **Anchors are DEFAULTS, never constants.** The machine config overrides
    `editGate.settingsPath`, `skillRoots`, and `projectSkillDir`; the environment
-   variable `RESEARCH_KIT_EDIT_GATE_SETTINGS` overrides the settings path for a single
-   invocation, the same precedence `RESEARCH_KIT_CONFIG` already has. `runtimePaths()`
+   variable `FETCHPROOF_EDIT_GATE_SETTINGS` overrides the settings path for a single
+   invocation, the same precedence `FETCHPROOF_CONFIG` already has. `runtimePaths()`
    and `skillLocations()` are the readers, so the installer, doctor, and `--into` bind
    to the same answer and cannot drift. There is no setup command and no migration:
    an existing install keeps the exact behaviour it has today, because the anchors are
@@ -84,7 +84,7 @@ documented place, and every one of them is a default the machine can override.**
 
 6. **A retired environment variable is reported, never honoured — and never left
    silent.** `CLAUDE_SETTINGS_PATH` is read for exactly one purpose: `doctor` names
-   it, says it is ignored, and names its replacement (`RESEARCH_KIT_EDIT_GATE_SETTINGS`)
+   it, says it is ignored, and names its replacement (`FETCHPROOF_EDIT_GATE_SETTINGS`)
    — and only when the replacement is not set, because an operator who set the new
    variable has already answered the question. It is **not** honoured: an export
    lives in the operator's shell, where no kit write can reach it, so honouring it
