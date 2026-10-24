@@ -194,6 +194,43 @@ test('auto-build carries the kit note that governs it, and the router points at 
   assert.ok(route && route[1].includes('references/fetchproof.md'), 'the router does not point auto-build at its note');
 });
 
+test('every references/*.md a shipped skill names is shipped where it says (ADR-0190)', () => {
+  // lead-orchestrator 1.x named three references it did not ship, and auto-build pointed at two
+  // of them: an agent that followed the text found nothing. A name resolves in the skill whose
+  // file names it, or in the skill named just before it ("lead-orchestrator's `references/x.md`").
+  // "its references/x.md" points at a skill named earlier in the sentence, and an HTML comment
+  // records history (the name a file was received under), so neither is checked.
+  const set = names();
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith('.md') ? [path.join(dir, e.name)] : []);
+  const missing = [];
+  for (const skill of set) {
+    for (const file of walk(path.join(SET, skill))) {
+      const text = fs.readFileSync(file, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+      for (const m of text.matchAll(/(?:\b([a-z][a-z0-9-]*)'s\s+|\b(its)\s+)?`?(references\/[\w.-]+\.md)/g)) {
+        if (m[2]) continue;
+        const owner = m[1] && set.includes(m[1]) ? m[1] : skill;
+        if (!fs.existsSync(path.join(SET, owner, m[3]))) missing.push(`${path.relative(SET, file)} names ${owner}/${m[3]}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('lead-orchestrator\'s kit note answers what 2.0 sends there (ADR-0190)', () => {
+  // 2.0's Phase 0 reads the research folder convention from the note's "Readiness", which its
+  // own integration reference used to carry; and its description triggers on "continue" and
+  // "resume", as resume-from-disk's does, while Phase R starts a fresh run when none exists.
+  const dir = path.join(SET, 'lead-orchestrator');
+  const note = fs.readFileSync(path.join(dir, 'references', 'fetchproof.md'), 'utf8');
+  const section = (title) => note.split(/^## /m).find((s) => s.startsWith(title)) ?? '';
+  const skill = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  assert.match(skill, /references\/fetchproof\.md`, "Readiness"/, 'Phase 0 no longer points at Readiness');
+  assert.match(section('1. Readiness'), /\*\*Research folder\.\*\*[\s\S]*new-project\.mjs/);
+  assert.match(skill.split('\n---')[0], /"resume"/, 'the description no longer triggers on resume');
+  assert.match(section('2. Which skill'), /`resume-from-disk`/);
+});
+
 test('deploy leaves a same-named skill that is not the kit\'s as it is, and drift ignores it', async () => {
   const { deploy, deployedDrift } = await import('../lib/installer.mjs');
   const root = tempDir('fetchproof-skillset-own-');

@@ -1,7 +1,7 @@
 # ADR-0146: The kit ships a skill set and a role-aware router
 
 - **Date:** 2026-10-06
-- **Status:** accepted
+- **Status:** superseded in part by ADR-0190 (lead-orchestrator's received baseline is the owner's account copy of version 2.0, which ships the two references decision 3 noted as missing; auto-build's ledger pointer names lead-orchestrator's `references/run-ledger.md` again; break-test takes one lesson from the account copy; the rest stands)
 - **Area:** lifts the feature freeze (ADR-0117) for one item: **the kit ships a skill set
   plus a role-aware router skill, deployed by the existing `install.mjs` path.** No
   command, flag, transport, provider, check or configuration key is added; `skillRoots`

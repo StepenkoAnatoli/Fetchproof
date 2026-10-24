@@ -1,6 +1,6 @@
 # Probe recipes
 
-<!-- Modified by Fetchproof on 2026-10-20: the kit's old name, Research-Kit, is Fetchproof here, as are the paths and variables that spelled it (ADR-0186). Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
+<!-- Modified by Fetchproof on 2026-10-20: the kit's old name, Research-Kit, is Fetchproof here, as are the paths and variables that spelled it (ADR-0186). Modified by Fetchproof on 2026-10-22: the parallel-shell row is added to "What the first run taught", from the owner's claude.ai account copy of 2026-10-03, which has it and SkillsMDs does not (ADR-0190). Received baseline: StepenkoAnatoli/SkillsMDs at 3f2d2fc. -->
 
 Shell recipes that were run, as written here, during the skill's first complete run (MoonAliza, Linux container, 2026-10-03). Adapt names and runners to the project; keep the shape. `$S` is one absolute scratch directory outside the checkout that holds every throwaway clone, cache and log.
 
@@ -157,4 +157,5 @@ Each rule added to SKILL.md on 2026-10-03, and the observation behind it.
 | Report: probe defects, environment, probes-run table, repo-relative repro commands | The first offline result would otherwise have been reported as three findings; scratch paths in commands were useless to the reader. |
 | Principle 7 and the *External facts* section: a tool's behaviour is fetched through Fetchproof, not recalled | Two facts the probes could not settle (what npm 11 does with an uncovered install script; whether esbuild's skipped postinstall matters on Windows) had shaped a recommendation. Closed from the owner's pages in a nested kit project (`docs/research/2026-10-03-break-test-external-facts/`, gate PASS, keyless); see `references/fetchproof.md`. |
 | Fetchproof rule 2: read doctor's whole verdict | `doctor` at the repository root raised a critical the research did not need: a private-key block in `tests/fixtures/github-tls/leaf.key`. |
+| Section 0 item 4: absolute paths; parallel shell calls share a working directory | Three edits issued in parallel wrote nothing: another call had changed the shared shell's directory first, and their relative paths pointed nowhere. Re-run with absolute paths. |
 | Fix step 6: follow the repository's commit convention | AGENTS.md prescribes a five-part body ("What changed / Why / ... / What you got wrong and fixed"); the fix commits use it. |
