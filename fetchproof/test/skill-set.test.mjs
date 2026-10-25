@@ -231,6 +231,76 @@ test('lead-orchestrator\'s kit note answers what 2.0 sends there (ADR-0190)', ()
   assert.match(section('2. Which skill'), /`resume-from-disk`/);
 });
 
+// ADR-0196 (2026-10-25). A builder sub-agent has no access to the lead's conversation, so the
+// kit's research-to-code rules reached a parallel builder only if the lead happened to paste
+// them: the received builder template carries the unit's E-nn list (agent-briefs.md, section 4)
+// but only "implement ... from the brief's claims", and Phase 2's task statement names a brief,
+// not a row. And the research phase was the one place principle 4 ("No agent reviews its own
+// work") did not reach: one researcher collects, rewrites, grades and declares the review. The
+// kit note carries all of it, never the received text (ADR-0146, ADR-0190), so these read the
+// note's own items, with line wrapping folded to single spaces, and fail when a line of one goes.
+const BRIEFS = '5. Briefs and reviewers';
+const kitNoteSection = () => fs.readFileSync(path.join(SET, 'lead-orchestrator', 'references', 'fetchproof.md'), 'utf8')
+  .split(/^## /m).find((s) => s.startsWith(BRIEFS)) ?? '';
+/** The top-level `- **<label>...` item of that section, up to the next one, whitespace folded. */
+function kitNoteItem(label) {
+  const s = kitNoteSection();
+  const at = s.indexOf(`\n- **${label}`);
+  if (at < 0) return '';
+  const rest = s.slice(at + 1);
+  const end = rest.slice(1).search(/\n- \*\*/);
+  return (end < 0 ? rest : rest.slice(0, end + 1)).replace(/\s+/g, ' ');
+}
+
+test('lead-orchestrator\'s kit note puts the E-## rows, cite-in-code and contract-tests in every builder brief (ADR-0196)', () => {
+  assert.ok(kitNoteSection(), `the kit note has no "## ${BRIEFS}" section`);
+  assert.match(kitNoteItem('Phase 2'), /task statement names the `E-##` rows/, 'Phase 2\'s task statement no longer names E-## rows');
+  const builder = kitNoteItem('Builder brief');
+  assert.ok(builder, 'no **Builder brief.** item');
+  assert.match(builder, /pastes/, 'the builder item no longer says the brief pastes the rules');
+  assert.match(builder, /the unit's `E-##` rows/, 'the builder brief no longer carries the unit\'s E-## rows');
+  assert.match(builder, /`cite-in-code` rule[^.]*`E-##` comment/, 'the builder brief no longer carries the cite-in-code rule');
+  assert.match(builder, /`contract-tests` rule[^.]*red-first[^.]*`E-##: /, 'the builder brief no longer carries the contract-tests rule');
+});
+
+test('lead-orchestrator\'s kit note has a research reviewer with five checks and no gate token (ADR-0196)', () => {
+  const reviewer = kitNoteItem('Research reviewer');
+  assert.ok(reviewer, 'no **Research reviewer.** item');
+  for (const [what, re] of [
+    ['fresh context', /fresh-context sub-agent/],
+    ['read-only on research/', /read-only on `research\/`/],
+    ['never sees the researcher\'s conversation', /never sees the researcher's conversation/],
+    ['runs after PASS, before handoff', /after preflight PASS and before handoff/],
+    ['check: the quote supports the claim', /quote supports the claim as written/],
+    ['check: scope, tier, region and version', /scope, tier, region and version/],
+    ['check: qualifiers clipped by an ellipsis or outside the quote', /clipped by an ellipsis or [^;]*just outside the quote/],
+    ['check: every number appears in the quote', /every number in the claim appears in the quote/],
+    ['check: the source owns the fact', /source owns the fact/],
+    ['findings go to RUN.md and the researcher', /`RUN\.md`[^;]*back to the researcher/],
+    ['the researcher\'s three remedies', /changes the claim, adds evidence or marks the unknown `KNOWN-UNKNOWN`/],
+    ['the reviewer never edits research/', /never edits `research\/`/],
+    ['no gate token, no approval condition', /No gate token, no approval condition/],
+    ['the gate commands behave as today', /preflight, `brief\.mjs --state` and handoff behave exactly as/],
+  ]) assert.match(reviewer, re, `the research reviewer item no longer says: ${what}`);
+});
+
+test('lead-orchestrator\'s kit note gives the spec reviewer a research-conformance duty (ADR-0196)', () => {
+  const spec = kitNoteItem('Spec reviewer');
+  assert.ok(spec, 'no **Spec reviewer** item');
+  assert.match(spec, /Phase 4b/, 'the duty is no longer placed in Phase 4b');
+  assert.match(spec, /research-derived constant or behaviour[^.]*traces to an `E-##` row whose quote supports it/);
+  assert.match(spec, /missing or unsupported trace is a finding/);
+});
+
+test('the router names the default build path, and lead-orchestrator as optional, for parallel units (ADR-0196)', () => {
+  const text = router();
+  const step3 = text.slice(text.indexOf('## Step 3'), text.indexOf('## Skill table')).replace(/\s+/g, ' ');
+  assert.match(step3, /default build path is `build-from-brief` with `day-one-tasks`, `cite-in-code` and `contract-tests`/);
+  const row = table(text, 'Step 3: route by task (once building is allowed)').find(([, use]) => use.startsWith('`lead-orchestrator`'));
+  assert.ok(row, 'the task table no longer routes to lead-orchestrator');
+  assert.match(row[1], /optional[^|]*parallel/, 'the lead-orchestrator route no longer says it is optional, for parallel units');
+});
+
 test('deploy leaves a same-named skill that is not the kit\'s as it is, and drift ignores it', async () => {
   const { deploy, deployedDrift } = await import('../lib/installer.mjs');
   const root = tempDir('fetchproof-skillset-own-');

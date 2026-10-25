@@ -5,6 +5,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Changed: lead-orchestrator's kit note carries the research rules to builders and reviewers**
+  (ADR-0196). Its section 5 makes every builder brief in a Fetchproof project carry the unit's
+  E-## rows and the `cite-in-code` and `contract-tests` rules. It adds a research reviewer, which
+  checks quote support, scope, clipped qualifiers, numbers and source ownership, with no gate
+  token and no approval condition. It also gives the Phase 4b spec reviewer a research-conformance
+  duty. The router names `build-from-brief` with `day-one-tasks`, `cite-in-code` and
+  `contract-tests` as the default build path, and marks lead-orchestrator optional, for parallel
+  units.
+
 - **Fixed: the short-quote floor reads the text the matcher reads** (ADR-0191).
   `citations/quote-too-short` now counts words, weight and length on the compared text. Before,
   `[quote: [Free plan](https://…#free-plan-details)]`, `**Free** plan` padded with zero-width
