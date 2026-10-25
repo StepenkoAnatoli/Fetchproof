@@ -1445,3 +1445,49 @@ test('cites-gone-page fails under every evidence policy, and with --strict', () 
     }
   }
 });
+
+// ---------------------------------------------------------------- quote-survived-refresh's readers (ADR-0193)
+//
+// Plan v0.4 §7.4: a citation whose quoted words survived the refresh still cites the old row, so
+// the old row is not history - not "superseded and relied on by nothing" (`isReleasedHistory`) -
+// and every reader that asks keeps answering as it did when the citation reopened. The state is
+// built through the real collector: E-01 (firecrawl-cli), refreshed by http-keyless as E-02, which
+// U-1 is moved to with a quote; then refreshed again by firecrawl-cli as E-03, which holds it.
+
+const RECHECK_SENTENCE = 'The free plan allows 10 requests per minute and includes 1,000 credits.';
+const RECHECK_PAGE = `# Limits\n\n${`${RECHECK_SENTENCE} `.repeat(30)}`;
+
+function survivedThroughKeyless() {
+  const dir = makePassingProject(tempDir('fp-recheck-readers-'), { date: '2026-10-01' });
+  const fetch = (transportName, date) => {
+    const result = collectOne(dir, LIMITS_URL, {
+      runScrape: (url) => ({ ok: true, url, title: 'Limits', markdown: RECHECK_PAGE, statusCode: 200, transport: transportName,
+        cmd: `stub scrape ${url}`, completeness: 'full', omitted: '' }),
+      corpus: readCorpus(dir), force: true, type: 'P', transportName, date, maxRateLimitRetries: 0, sleep: () => {},
+    });
+    assert.equal(result.status, 'collected', `the refresh was not collected: ${result.reason}`);
+    return result.entry.file;
+  };
+  const keyless = fetch('http-keyless', '2026-10-20');
+  corrupt(dir, PATHS.evidence, (text) => text.replace(new RegExp(`^(\\| E-02 \\|.*\\| )[^|]*( \\| ${keyless} \\|)$`, 'm'),
+    `$1${RECHECK_SENTENCE} [quote: ${RECHECK_SENTENCE}]$2`));
+  corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01', '| CLOSED | E-02'));
+  fetch('firecrawl-cli', '2026-10-22');
+  const corpus = snapshot(dir);
+  assert.deepEqual(corpus.unknowns[0].cites, ['E-02'], 'the fixture did not move U-1 to E-02');
+  const state = runCheck('evidence-supersession', corpus).filter((f) => f.row === 'U-1');
+  assert.deepEqual(state.map((f) => [f.rule, f.superseded, f.by]), [['quote-survived-refresh', 'E-02', 'E-03']],
+    `the fixture is not the quote-survived state, so it proves nothing: ${JSON.stringify(state)}`);
+  return corpus;
+}
+
+test('transport-provenance still reports a superseded row whose quote survived: it is cited, so it is not history', () => {
+  const findings = runCheck('transport-provenance', survivedThroughKeyless());
+  assert.deepEqual(findings.filter((f) => f.rule === 'transport-not-metered').map((f) => [f.row, f.transport]), [['E-02', 'http-keyless']],
+    `E-02 carries U-1's claim and was not a metered fetch: ${JSON.stringify(findings)}`);
+});
+
+test('hygiene treats the quote-survived refresh as a refresh: no duplicate-url, no uncited capture', () => {
+  const findings = runCheck('hygiene', survivedThroughKeyless());
+  assert.deepEqual(findings.filter((f) => f.rule === 'duplicate-url' || f.rule === 'uncited-capture'), [], JSON.stringify(findings));
+});

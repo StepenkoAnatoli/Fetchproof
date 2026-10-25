@@ -10,7 +10,8 @@ import { verifyHandoff, handoffRemedy, HANDOFF_REMEDY, lineEndingRemedy, altered
 import { readCorpus } from '../lib/corpus.mjs';
 import { runDoctor } from '../lib/doctor.mjs';
 import { appendFetch } from '../lib/provenance.mjs';
-import { writeRaw } from '../lib/collect.mjs';
+import { writeRaw, collectOne } from '../lib/collect.mjs';
+import { runCheck } from '../lib/checks.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 
 describe('handoff');
@@ -595,6 +596,28 @@ test('a row a later capture superseded is history, not the snapshot\'s age', () 
   const dir = datedProject('2026-09-13', '2026-10-19', { url: 'https://example.invalid/docs/limits' });
   const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
   assert.equal(report.ok, true, report.findings.map((f) => f.detail).join('; '));
+  assert.equal(report.rows, 2, 'the superseded row is still counted as a row');
+  assert.deepEqual(report.fetched, { from: '2026-10-19', to: '2026-10-19', oldestDays: 1 });
+});
+
+// ADR-0193, plan v0.4 §7.4: a superseded row whose quoted words survived the refresh is still
+// superseded - the newer capture is the current reading - so its first fetch is not the
+// snapshot's age, as it was not when the citation reopened.
+test('a superseded row whose quote survived the refresh is still history, not the snapshot\'s age', () => {
+  const sentence = 'The free plan allows 10 requests per minute and includes 1,000 credits.';
+  const dir = makePassingProject(tempDir('fp-handoff-recheck-'), { date: '2026-09-13' });
+  corrupt(dir, PATHS.evidence, (text) => text.replace(`| ${sentence} |`, `| ${sentence} [quote: ${sentence}] |`));
+  const result = collectOne(dir, 'https://example.invalid/docs/limits', {
+    runScrape: (url) => ({ ok: true, url, title: 'Limits', markdown: `# Limits
+
+${`${sentence} `.repeat(30)}`, statusCode: 200,
+      transport: 'firecrawl-cli', cmd: `stub scrape ${url}`, completeness: 'full', omitted: '' }),
+    corpus: readCorpus(dir), force: true, type: 'P', transportName: 'firecrawl-cli', date: '2026-10-19', maxRateLimitRetries: 0, sleep: () => {},
+  });
+  assert.equal(result.status, 'collected', `the refresh was not collected: ${result.reason}`);
+  const state = runCheck('evidence-supersession', readCorpus(dir)).filter((f) => f.row === 'U-1').map((f) => [f.rule, f.superseded, f.by]);
+  assert.deepEqual(state, [['quote-survived-refresh', 'E-01', 'E-02']], `the fixture is not the quote-survived state: ${JSON.stringify(state)}`);
+  const report = verifyHandoff(dir, { now: new Date('2026-10-20T12:00:00.000Z') });
   assert.equal(report.rows, 2, 'the superseded row is still counted as a row');
   assert.deepEqual(report.fetched, { from: '2026-10-19', to: '2026-10-19', oldestDays: 1 });
 });

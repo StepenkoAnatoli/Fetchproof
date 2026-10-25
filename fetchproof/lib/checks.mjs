@@ -717,25 +717,144 @@ function lastFetchByUrl(entries) {
   return last;
 }
 
+// What the recheck can say, and what it cannot: it ends every reopen of a superseded citation
+// (ADR-0193), so no reader takes a pass, or a reopen's reason, for more than it measured.
+const REFRESH_LIMIT = 'Refresh confirmation detects whether the quoted words are still in the new capture, never whether the claim is still true.';
+
+/**
+ * The body of the capture a row's Raw cell NAMES (`ownCapture`): `{ capture, body }`, or
+ * `{ problem }` saying why there is nothing to read. Never `captureOf`'s fallback for a blank
+ * cell - the URL's newest capture - because for an old row that IS the replacement's capture,
+ * and the old quote would be "found" in the very page it is compared with (plan v0.4 §2). A
+ * file that is gone or unreadable is a problem, never an empty page that "lacks" the words.
+ */
+function namedCaptureBody(corpus, row) {
+  if (!row.raw) return { problem: `${row.id} names no capture in its Raw cell, and the recheck reads only the capture a row names` };
+  const capture = ownCapture(corpus, row);
+  const text = capture ? readText(resolve(corpus.root, capture.file)) : null;
+  if (text === null) return { problem: `${row.id} names ${row.raw}, which is not on disk or could not be read as a capture` };
+  return { capture, body: parseCapture(text).body };
+}
+
+/** The ledger's scrape that wrote `file` - the position `ledgerRank` gives it - or null. */
+function scrapeOf(corpus, rank, file) {
+  const at = rank.get(file);
+  return at === undefined ? null : corpus.ledger.entries[at];
+}
+
+/**
+ * Why a quote found in the old row's capture is missing from the replacement's, as far as the
+ * ledger can tell (plan v0.4 §7.3; Testimonium's drift attribution). It only EXPLAINS a reopen:
+ * it is asked after the reopen is decided and can never turn one into a pass, because here the
+ * risky output is the pass - it removes a re-read. The first cause that matches is named, from
+ * fields the ledger and the capture already carry. Unmeasured: when ADR-0193 was written no real
+ * refresh had lost a quote.
+ */
+function driftAttribution(corpus, rank, old, replacement, capture) {
+  const was = scrapeOf(corpus, rank, old.raw);
+  const now = scrapeOf(corpus, rank, replacement.raw);
+  // The ledger hashes the whole capture file, so equal hashes are one file's bytes, and a quote
+  // found in one is found in the other: an honest corpus never gets here. Equal hashes over
+  // files that differ mean a capture was edited after its fetch, which provenance fails.
+  if (was?.bodySha256 && was.bodySha256 === now?.bodySha256) {
+    return 'The ledger records the same bytes for both captures, yet the words are in one and not the other: '
+      + 'one of them was changed after its fetch, and provenance names which.';
+  }
+  if (was?.sourceSha256 && was.sourceSha256 === now?.sourceSha256) {                 // ADR-0140
+    return 'The page\'s source is unchanged; the capture differs because the conversion did. '
+      + 'This is not a defect in your research. Re-read before concluding anything about the page.';
+  }
+  const before = was?.transport || ownCapture(corpus, old)?.transport || '';
+  const after = now?.transport || capture.transport || '';
+  if (before && after && before !== after) {
+    return `Captured by ${before} then, ${after} now. A transport change alone can lose a quote.`;
+  }
+  if (capture.completeness === 'partial' || now?.completeness === 'partial') {
+    const omitted = capture.omitted || now?.omitted || '';
+    return `${replacement.id}'s capture is partial; the words may be in the part not captured${omitted ? `: ${omitted}` : ''}.`;
+  }
+  if (capture.bytes < MIN_CAPTURE_CHARS) {
+    return `${replacement.id}'s capture is ${capture.bytes} bytes, too thin to tell. The recheck could not look. This is not evidence the words are gone.`;
+  }
+  return 'The page changed, or the converter changed without being recorded. Both are possible.';
+}
+
+/**
+ * The quote-level recheck of one citation of a superseded row (ADR-0193, plan v0.4 §7.1):
+ * `{ survived: true, file }`, or `{ reason }` to reopen.
+ *
+ * One state passes: every usable quote anchor of the old row - quote-too-short excluded, measured
+ * on the compared text (ADR-0191) - is found in the old row's OWN capture (the baseline,
+ * Testimonium's rule: a quote its own page never held proves nothing about the new one) and in
+ * the replacement row's OWN capture body, which is readable and not an HTTP error page. Every
+ * other state is a reason to reopen, and a state added later defaults to one: the pass is the
+ * output that removes a re-read. The first such state is ADR-0194's: a refresh after the
+ * replacement found the page gone (`gone`), and a page that is gone is not one whose words
+ * survived, whatever its last capture held.
+ */
+function quoteRecheck(corpus, rank, id, replacement, gone) {
+  const old = corpus.evidence.find((row) => row.id.toUpperCase() === id.toUpperCase());
+  if (!old) return { reason: `${id} is not in the evidence table, so it has nothing to recheck.` };
+  const anchors = quoteAnchors(old.finding);
+  if (!anchors.length) return { reason: `${old.id} carries no quote to recheck.` };
+  const usable = anchors.filter((anchor) => !quoteTooShort(anchor));
+  if (!usable.length) return { reason: `Every quote ${old.id} carries is too short to anchor anything (quote-too-short), so none can be rechecked.` };
+  if (gone) return { reason: `A refresh on ${gone.day} found the page gone (HTTP ${gone.status}), so no capture of it is current.` };
+
+  const baseline = namedCaptureBody(corpus, old);
+  if (baseline.problem) return { reason: `${baseline.problem}, so its quote has no baseline to recheck.` };
+  const unfounded = usable.find((anchor) => !anchorFound(anchor.fragments, baseline.body));
+  if (unfounded) {
+    return { reason: `${old.id}'s quote "${unfounded.quote}" is not in its own capture ${baseline.capture.file}, so it has no baseline to recheck against.` };
+  }
+
+  const fresh = namedCaptureBody(corpus, replacement);
+  if (fresh.problem) return { reason: `${fresh.problem}, so the recheck could not look.` };
+  const file = fresh.capture.file;
+  // An error page kept as a capture (before 2026-09-28) can hold the words - a cached copy, a
+  // "this page has moved" notice quoting it - and is still not the page.
+  const status = Number(fresh.capture.statusCode);
+  if (Number.isInteger(status) && status >= 400) {
+    return { reason: `${replacement.id}'s capture ${file} is an HTTP ${status} page - words found on an error page are not the page's.` };
+  }
+  const lost = usable.find((anchor) => !anchorFound(anchor.fragments, fresh.body));
+  if (!lost) return { survived: true, file };
+  return { reason: `${old.id}'s quote "${lost.quote}" is not in ${replacement.id}'s capture ${file}. `
+    + driftAttribution(corpus, rank, old, replacement, fresh.capture) };
+}
+
 function evidenceSupersession(corpus) {
   const out = [];
   const superseded = supersededRows(corpus);
+  const rank = ledgerRank(corpus.ledger?.entries);
+  const lastByKey = lastFetchByUrl(corpus.ledger?.entries);
+  const rowOf = (id) => corpus.evidence.find((e) => e.id.toUpperCase() === id.toUpperCase());
 
+  // A citation of a superseded row reopens (ADR-0026) unless its quoted words survived the
+  // refresh (ADR-0193). Either way the citation stays where it is: moving it is the act of
+  // somebody who re-read the page.
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
       const replacement = superseded.get(id.toUpperCase());
       if (!replacement) continue;
+      const recheck = quoteRecheck(corpus, rank, id, replacement, goneAfterScrape(corpus, rowOf(id), rank, lastByKey));
+      if (recheck.survived) {
+        out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
+          `${id}'s quoted words occur in ${replacement.id}'s capture ${recheck.file}. `
+          + `That says the words survived, not that the claim still holds. Re-read ${replacement.id} when you next touch ${unknown.id}.`,
+          { row: unknown.id, line: unknown.line, superseded: id, by: replacement.id, capture: recheck.file }));
+        continue;
+      }
       out.push(finding('fail', 'evidence-supersession', 'cites-superseded-row',
         `${unknown.id} rests on ${id}, which has been superseded by ${replacement.id} - a fresher capture of the same URL `
-        + `(${replacement.retrieved}). Re-read it, then move the citation or record why the earlier reading still holds.`,
+        + `(${replacement.retrieved}). Re-read it, then move the citation or record why the earlier reading still holds. `
+        + `${recheck.reason} ${REFRESH_LIMIT}`,
         { row: unknown.id, line: unknown.line, superseded: id, by: replacement.id }));
     }
   }
 
   // Not a supersession - nothing replaced the row - so its own name (ADR-0194), and it is
   // asked whether or not anything was re-collected.
-  const rank = ledgerRank(corpus.ledger?.entries);
-  const lastByKey = lastFetchByUrl(corpus.ledger?.entries);
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
       const row = corpus.evidence.find((e) => e.id.toUpperCase() === id.toUpperCase());
@@ -1147,7 +1266,7 @@ export const CHECKS = Object.freeze([
   { name: 'unknown-closure', about: 'every CLOSED unknown rests on a real, fresh, primary row', run: unknownClosure },
   { name: 'subtopic-coverage', about: 'the map covers every universal dimension, and states a status for each', run: subtopicCoverage },
   { name: 'capture-completeness', about: 'no closed unknown rests solely on a partial capture', run: captureCompleteness },
-  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced', run: evidenceSupersession },
+  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced, unless its quoted words survived the refresh (ADR-0193)', run: evidenceSupersession },
   { name: 'collection-attempts', about: 'a known-unknown was reached for before it was declared unreachable', run: collectionAttempts },
   { name: 'hygiene', about: 'duplicate rows, uncited captures, unparseable dates', run: hygiene },
   { name: 'corpus-shape', about: 'the corpus parses and the shape is there', run: corpusShape },
