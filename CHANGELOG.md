@@ -5,6 +5,13 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the short-quote floor reads the text the matcher reads** (ADR-0191).
+  `citations/quote-too-short` now counts words, weight and length on the compared text. Before,
+  `[quote: [Free plan](https://…#free-plan-details)]`, `**Free** plan` padded with zero-width
+  spaces, and a formatting-only fragment beside `free plan` all cleared the floor while anchoring
+  two words; they now warn. A quote with no compared text keeps its earlier result, so no failure
+  is removed. The unused `quoteChars` export is removed.
+
 - **Added: decision research on punctuation spacing**
   (`docs/decisions/2026-10-25-punctuation-spacing/`, for ADR-0192). It measures, on the same pages,
   what the keyless converter and Firecrawl write around punctuation beside inline tags. Keyless

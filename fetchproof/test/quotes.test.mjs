@@ -5,7 +5,7 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
-import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
+import { quoteAnchors, normalizeForMatch, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
 
@@ -110,10 +110,11 @@ test('a long quote of few words is specific: the short-quote warning is about le
     'a quote of one 75-character token, found word for word, was warned as anchoring almost nothing');
   assert.ok(judged.some((f) => /1 quote/.test(f.detail)), 'it is counted as an anchored quote');
 
-  // The floor is on short AND few: the helper measures characters across the fragments, and a
-  // token one character under the floor still warns.
+  // The floor is on short AND few, and a token one character under it still warns. The length
+  // is the compared text's (ADR-0191), so the pin is on the predicate, not on a raw count.
   const under = 'x'.repeat(MIN_QUOTE_CHARS - 1);
-  assert.equal(quoteChars(quoteAnchors(`[quote: ${under}]`)[0]), MIN_QUOTE_CHARS - 1);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${under}]`)[0]), true);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${'x'.repeat(MIN_QUOTE_CHARS)}]`)[0]), false);
   assert.equal(quotedToken(under, `Short. [quote: ${under}]`).find((f) => f.rule === 'quote-too-short')?.severity, 'warn',
     'one character under the floor, one word: still almost nothing');
   const at = 'y'.repeat(MIN_QUOTE_CHARS);
@@ -328,4 +329,66 @@ test('a spaced fragment of three words in a script without word spaces is still 
   const altered = quotedToken(page, 'Pro price. [quote: 每月 25 美元]');
   assert.equal(altered.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(altered));
   assert.equal(altered.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(altered));
+});
+
+// ADR-0191 (2026-10-25, plan section 5.1): the floor was measured on the RAW fragment, while
+// anchorFound compares the normalized one. `[Free plan](https://...#free-plan-details)` is 65 raw
+// characters, so it was not short, and it anchored `free plan`, which occurs on every pricing
+// page; zero-width spaces padded `**Free** plan` past the floor the same way, and so did a
+// formatting-only fragment beside a two-word one. The floor now reads the text the matcher reads.
+test('the short-quote floor is measured on the compared text, not the raw marker', () => {
+  const link = '[Free plan](https://vendor.example.com/pricing#free-plan-details)';
+  const padded = `**Free**${'​'.repeat(35)} plan`;
+  for (const [name, quote] of [
+    ['a Markdown link whose URL is long', link],
+    ['emphasis padded with zero-width spaces', padded],
+    ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... free plan`],
+    ['an invisible fragment beside two words', `${'​'.repeat(40)} ... free plan`],
+    ['plain two words', 'Free plan'],
+  ]) {
+    assert.ok(quote.length >= MIN_QUOTE_CHARS || name === 'plain two words', `${name}: the case clears the raw floor`);
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), true, `${name}: anchors only "free plan"`);
+    const judged = quoted(`Free tier. [quote: ${quote}]`);
+    assert.equal(judged.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', `${name}: ${JSON.stringify(judged)}`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: a warning, never a new failure`);
+  }
+  // A raw length made of characters the comparison drops does not count either.
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${'x'.repeat(MIN_QUOTE_CHARS - 1)}__]`)[0]), true);
+
+  // ADR-0126's case keeps its exemption: a long token of one word is as specific as a sentence.
+  const manifest = `"dependencies":{"yaml":"^2.9.0","commander":"^14.0.20","firecrawl":"^4.40.0","undici":"^7.16.0","semver":"^7.7.3","zod":"^4.1.12"}`;
+  assert.equal(manifest.length, 130);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${manifest}]`)[0]), false);
+  assert.deepEqual(quotedToken(manifest, `Pinned deps. [quote: ${manifest}]`)
+    .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [], 'the 130-character token is checked and found');
+});
+
+// ADR-0191's one branch: an anchor with NO compared text is measured raw, exactly as before it.
+// Measured on compared text it would be short, and the check's `continue` after the warning
+// would turn the four long formatting-only quotes' quote-not-found failure (2026-10-08) into a
+// warning - the lenient direction, which B1 must not take.
+test('a quote with no compared text keeps the raw measure, so its result does not move', () => {
+  for (const [raw, short] of [
+    ['*'.repeat(40), false],
+    ['​'.repeat(40), false],
+    ['**** **** ****', false],
+    [`[](https://x.invalid/${'q'.repeat(40)})`, false],
+    ['***', true],
+    ['​​', true],
+    ['** ... __', true],
+  ]) {
+    const [anchor] = quoteAnchors(`[quote: ${raw}]`);
+    assert.equal(anchor.fragments.map(normalizeForMatch).join(''), '', `${JSON.stringify(raw)} has no compared text`);
+    assert.equal(quoteTooShort(anchor), short, `${JSON.stringify(raw)}: short only as it was on raw text`);
+  }
+});
+
+// The pre-mortem of ADR-0191: NFKC folds full-width forms and the half-width katakana before the
+// weight is taken. A full-width figure is not a character of an unspaced script on either side,
+// so the CJK verdicts of ADR-0176 and F1 hold when the figure is written full-width.
+test('full-width forms fold without moving a script-without-spaces verdict', () => {
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 月額 １，９８０ 円]')[0]), false, 'three words on spaces, as `月額 1,980 円`');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 月額１，９８０円]')[0]), true, 'one figure and three characters, as `月額1,980円`');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回ま ... 上限]')[0]), false);
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回 ... 上限]')[0]), true);
 });

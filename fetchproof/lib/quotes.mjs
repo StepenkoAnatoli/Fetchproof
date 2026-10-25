@@ -197,9 +197,24 @@ export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
  * spaces and by weight. Weighed alone, a spaced fragment such as `每月 20 美元` - three words on
  * spaces, checked before - was one word and four characters, so it warned and an altered figure
  * in it passed (second review of the 2026-10-19 sweep, F1).
+ *
+ * Every count is taken on the COMPARED text, `normalizeForMatch(f)`, the text `anchorFound`
+ * looks for (ADR-0191). Counted on the raw marker, `[Free plan](https://vendor.example.com/
+ * pricing#free-plan-details)` was 65 characters and not short, yet it anchored `free plan`;
+ * zero-width spaces padded `**Free** plan` past the floor the same way, and a formatting-only
+ * fragment beside `free plan` made the whole quote specific (plan section 5.1, 2026-10-25). A
+ * fragment that compares as nothing anchors nothing, so it is short.
+ *
+ * One branch: an anchor with NO compared text at all is measured on its raw fragments, as it
+ * was before ADR-0191. Measured on compared text it would be short, and the check stops at the
+ * short warning, so the long formatting-only quotes that fail `quote-not-found` today (forty
+ * `*`, 2026-10-08) would only warn. B1 adds warnings and removes no failure, so their verdict,
+ * and the short warning on `***`, stay what they were.
  */
 export function quoteTooShort(anchor) {
-  return anchor.fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+  const compared = anchor.fragments.map((f) => normalizeForMatch(f));
+  const measured = compared.some(Boolean) ? compared : anchor.fragments;
+  return measured.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
     && fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
     && f.length < MIN_QUOTE_CHARS);
 }
@@ -209,9 +224,4 @@ function fragmentWeight(fragment) {
   const unspaced = fragment.match(UNSPACED_CHARACTER)?.length ?? 0;
   const words = fragment.replace(UNSPACED_CHARACTER, ' ').split(/\s+/).filter(Boolean).length;
   return words * CHARS_PER_WORD + unspaced;
-}
-
-/** Characters in a quote, across its fragments: what MIN_QUOTE_CHARS was measured against. */
-export function quoteChars(anchor) {
-  return anchor.fragments.join(' ').length;
 }
