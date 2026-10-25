@@ -5,6 +5,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Added: a refresh baseline and a movement script** (`docs/measurements/2026-10-refresh-baseline/`,
+  plan §4.2-4.3). It records what the gate says about every corpus at `ab2e605`: 41 corpora, 417
+  rows, 517 quote anchors and 27 refreshes. `movement.mjs` prints every anchor, finding or verdict
+  that a later matcher or gate change moves.
+
 - **Breaking: the kit is renamed Fetchproof** (ADR-0186). The folder `research-kit/` is now
   `fetchproof/`, so every command is `node fetchproof/bin/<script>`; the deployed kit lives in
   `~/.agents/fetchproof`, its machine configuration in `~/.agents/fetchproof.config.json`, and every
