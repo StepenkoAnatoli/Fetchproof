@@ -114,7 +114,7 @@ function unwrap(quote) {
  * distinctions). It undoes what a capture does to a sentence and nothing more: compatibility
  * forms (the "fi" ligature), the invisible formatting characters a page's own tooling inserts,
  * curly quotes and long dashes, Markdown link syntax, emphasis, backticks and backslash escapes,
- * runs of whitespace, and case.
+ * runs of whitespace, case, and the space a transport writes beside punctuation (ADR-0192).
  */
 export function normalizeForMatch(text) {
   return String(text ?? '')
@@ -141,7 +141,22 @@ export function normalizeForMatch(text) {
     .replace(/[*_`\\]/g, '')
     .replace(/\s+/g, ' ')
     .toLowerCase()
-    .trim();
+    .trim()
+    // The two transports space punctuation beside an inline tag differently (ADR-0192; research
+    // docs/decisions/2026-10-25-punctuation-spacing, E-01/E-02 keyless against E-08/E-09
+    // Firecrawl, measured 2026-10-25). The keyless converter writes a space on both sides of
+    // every tag it strips, so `<span>2019</span>.` reads `2019 .`; Firecrawl writes `2019.`, and
+    // writes `( [Mexico](...)` where the keyless converter writes `([Mexico](...)`. A quote copied
+    // from one capture was quote-not-found in the other transport's capture of the same page.
+    // So whitespace goes BEFORE a closing mark and AFTER an opening one, and never after a
+    // closing mark: `1.5` and `1. 5`, `15` and `1,5`, `1000` and `1,000` stay distinct (the
+    // plan's pins, tested). The merges it accepts - `1 .5` = `1.5`, `at .claude` = `at.claude` -
+    // are pinned as KNOWN MERGE; no number had that shape in the repository's 430 captures. Not
+    // covered, each a decision of its own: quote marks, the space after `.` in tokenized code
+    // (`re . escape`), the space before `(`, and whitespace Firecrawl drops beside no mark.
+    // Applied last, to both sides, so the floor (ADR-0191) and `anchorFound` read the same text.
+    .replace(/\s+([.,;:!?%)\]}])/g, '$1')
+    .replace(/([([{])\s+/g, '$1');
 }
 
 /**

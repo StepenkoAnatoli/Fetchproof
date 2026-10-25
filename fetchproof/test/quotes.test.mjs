@@ -448,3 +448,118 @@ test('full-width forms fold without moving a script-without-spaces verdict', () 
   assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回ま ... 上限]')[0]), false);
   assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回 ... 上限]')[0]), true);
 });
+
+// ADR-0192 (2026-10-25, plan section 5.3): the two transports space punctuation beside an inline
+// tag differently. The keyless converter writes a space on both sides of every tag it strips
+// (`<span>`, `<sup>`, a Sphinx code token), so a mark right after one is spaced; Firecrawl writes
+// none before a closing mark, and one after `(` or `[` when a link or emphasis follows. A quote
+// copied from one transport's capture was quote-not-found against the other's capture of the
+// same page. Each case below is a short synthetic string in the shape the research measured
+// (docs/decisions/2026-10-25-punctuation-spacing, E-01/E-02 keyless against E-08/E-09
+// Firecrawl), with only the one mark's spacing differing. Guard: the mark is in the rule's set
+// in `normalizeForMatch`; take it out of the set and its case is not found.
+const SPACED_MARKS = [
+  // [mark, keyless shape, Firecrawl shape, where the shape was measured]
+  ['.', 'archived on 3 May 2024 . Retrieved 9 June 2024 .', 'archived on 3 May 2024. Retrieved 9 June 2024.', 'E-02/E-09 citation dates'],
+  [',', 'as in *alpha* , *beta* and gamma', 'as in _alpha_, _beta_ and gamma', 'E-02/E-09 primo, secondo'],
+  [';', 'as in *alpha* ; it is similar', 'as in _alpha_; it is similar', 'E-02/E-09 primo, secondo'],
+  [':', "if key == 'x' : return none", "if key == 'x': return none", "E-01/E-08 == '-' :"],
+  ['!', 'the field {value !r} is shown', 'the field {value!r} is shown', 'E-01/E-08 value !r'],
+  ['?', 'the lazy form ` a+ ? ` matches less', 'the lazy form `a+?` matches less', 'E-01/E-08 a Sphinx code span keeps its spaces'],
+  ['%', 'a rise of 50 % in one year', 'a rise of 50% in one year', 'E-02/E-09 a no-break-space span Firecrawl drops'],
+  [')', '(for example *a rise* ), but often', '(for example _a rise_), but often', 'E-02/E-09 50 %* ),'],
+  [']', 'the [optional *pos* ] argument', 'the [optional _pos_] argument', 'E-01/E-08 a signature built of em and span'],
+  ['}', 'on line {lineno } of the file', 'on line {lineno} of the file', 'E-01/E-08 { line_num }'],
+  ['(', 'spoken in the north ([Sonora](../s) and the coast)', 'spoken in the north ( [Sonora](https://x.invalid/s) and the coast)', 'E-01/E-09 Firecrawl spaces ( before a link'],
+  ['[', 'the optional [ *pos*] argument', 'the optional [_pos_] argument', 'E-01 [ , * pos'],
+  ['{', 'formatted as { value} in the log', 'formatted as {value} in the log', 'E-01/E-08 { value !r}'],
+];
+
+for (const [mark, keyless, firecrawl, measured] of SPACED_MARKS) {
+  test(`ADR-0192: a quote matches across the transports' spacing at \`${mark}\` (${measured})`, () => {
+    assert.notEqual(keyless, firecrawl, 'the two shapes differ in the raw text');
+    assert.equal(anchorFound([keyless], `Before it. ${firecrawl} After it.`), true,
+      `keyless spacing in the quote, Firecrawl spacing in the capture, at ${mark}`);
+    assert.equal(anchorFound([firecrawl], `Before it. ${keyless} After it.`), true,
+      `Firecrawl spacing in the quote, keyless spacing in the capture, at ${mark}`);
+    assert.equal(normalizeForMatch(keyless), normalizeForMatch(firecrawl), `one compared text at ${mark}`);
+  });
+}
+
+// The plan's own pins (section 5.3): the rule removes whitespace only BEFORE a closing mark and
+// only AFTER an opening one, never after a closing mark, so a space after a point or a comma
+// still separates two numbers. Guard: no space after a closing mark is removed; add that
+// removal to the rule and every pair here merges.
+test("ADR-0192: the spacing rule never joins two numbers - the plan's four pins stay distinct", () => {
+  for (const [a, b] of [
+    ['the disk holds 1.5 GB of logs', 'the disk holds 1. 5 GB of logs'],
+    ['a fee of 15 units per call', 'a fee of 1,5 units per call'],
+    ['up to 1000 requests per day', 'up to 1,000 requests per day'],
+    ['a fee of 1,5 units per call', 'a fee of 1, 5 units per call'],
+  ]) {
+    assert.notEqual(normalizeForMatch(a), normalizeForMatch(b), `${a} | ${b}`);
+    assert.equal(anchorFound([a], `x ${b} y`), false, `${a} is not found in ${b}`);
+    assert.equal(anchorFound([b], `x ${a} y`), false, `${b} is not found in ${a}`);
+  }
+  // The plan's case: the Firecrawl-shaped and the keyless-shaped capture of one page both
+  // match the one quote, and its figure keeps its comma.
+  const quote = 'The free tier allows 1,000 requests. Paid plans start at $5 a month.';
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows **1,000** requests. Paid plans start at $5 a month. More.'), true, 'Firecrawl shape');
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows 1,000 requests . Paid plans start at $5 a month . More.'), true, 'keyless shape');
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows 1000 requests . Paid plans start at $5 a month . More.'), false, 'not 1000');
+});
+
+// The merges the rule accepts. A space BEFORE a closing mark goes, so a mark that starts a token
+// joins the word before it. Across the repository's 430 captures no number is written
+// `<digit> .<digit>` or `<digit> ,<digit>`; `.claude` paths are the common case (ADR-0192;
+// research Decision, "Where the rule would merge text it should not"). Pinned so that narrowing
+// the rule is a decision, not an accident. Guard: the removal of whitespace before a closing mark.
+test('ADR-0192 KNOWN MERGE: 1 .5 = 1.5, 1 ,5 = 1,5 and at .claude = at.claude', () => {
+  for (const [a, b] of [
+    ['a ratio of 1 .5 units', 'a ratio of 1.5 units'],
+    ['a ratio of 1 ,5 units', 'a ratio of 1,5 units'],
+    ['the skills live at .claude/skills now', 'the skills live at.claude/skills now'],
+  ]) {
+    assert.equal(normalizeForMatch(a), normalizeForMatch(b), `KNOWN MERGE: ${a} | ${b}`);
+    assert.equal(anchorFound([b], `x ${a} y`), true, `KNOWN MERGE: ${b} is found in ${a}`);
+  }
+});
+
+// What the rule must NOT rescue (ADR-0192; research Decision, "What the rule does NOT cover"):
+// quote marks are outside the set; the keyless converter's space AFTER `.` in tokenized code
+// stays; the space BEFORE `(` stays; whitespace Firecrawl drops where there is no mark stays.
+// Each would be a separate, deliberate widening. Guards, one per pair: `'` is in neither set (the
+// two gloss pairs each differ on one side of a quote mark only, so each fails if `'` joins the
+// closing or the opening set; the measured f-string shape also differs where no rule reaches);
+// no space after a closing mark is removed; `(` is only an opening mark; only whitespace beside
+// a mark of the set is removed.
+test('ADR-0192: the spacing rule does not rescue quote marks, `re . escape`, `search (` or dropped whitespace', () => {
+  for (const [keyless, firecrawl, why] of [
+    ["a gloss ('an increase ') here", "a gloss ('an increase') here", 'a space before a closing straight quote'],
+    ["a gloss (' an increase') here", "a gloss ('an increase') here", 'a space after an opening straight quote'],
+    ["raise error ( f ' {value} ' ) here", "raise error(f'{value}') here", 'straight quotes in a tokenized f-string'],
+    ['then calls re . escape on the chars', 'then calls re.escape on the chars', 'the space after . in tokenized code'],
+    ['returns pattern.search (string) first', 'returns pattern.search(string) first', 'the space before ('],
+    ['U+00B6 ¶ PILCROW SIGN is', 'U+00B6¶PILCROW SIGN is', 'whitespace Firecrawl drops beside no mark'],
+  ]) {
+    assert.equal(anchorFound([keyless], `x ${firecrawl} y`), false, `${why}: not found`);
+    assert.equal(anchorFound([firecrawl], `x ${keyless} y`), false, `${why}: not found, reverse`);
+  }
+});
+
+// The gate's view of plan section 7.5 case 12 ("Firecrawl to keyless, the quote lost only to
+// spacing"): a quote copied from a Firecrawl capture is checked against a keyless capture of
+// the same page, and the reverse. Before ADR-0192 it was quote-not-found, a failure under every
+// policy; now it is found. Guard: the spacing rule in `normalizeForMatch`.
+test('ADR-0192: the citations check finds a quote whose capture came through the other transport', () => {
+  const firecrawl = 'Retrieved 16 May 2024. The limit is 50% of the quota (per key), as in _alpha_, _beta_; see {value!r}.';
+  const keyless = 'Retrieved 16 May 2024 . The limit is 50 % of the quota ( per key ) , as in *alpha* , *beta* ; see {value !r} .';
+  for (const [capture, quote, name] of [
+    [keyless, firecrawl, 'Firecrawl quote, keyless capture'],
+    [firecrawl, keyless, 'keyless quote, Firecrawl capture'],
+  ]) {
+    const judged = quotedToken(capture, `Quota rule. [quote: ${quote}]`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: ${JSON.stringify(judged)}`);
+    assert.ok(judged.some((f) => f.severity === 'pass' && /1 quote/.test(f.detail)), `${name}: counted as found`);
+  }
+});

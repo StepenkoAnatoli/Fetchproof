@@ -5,6 +5,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **The quote matcher ignores the spacing beside punctuation** (ADR-0192, plan 5.3 B2; lifts the
+  hold and the freeze for this one item by the owner's ruling of 2026-10-25). A `[quote: ...]`
+  copied from a Firecrawl capture now matches a keyless capture of the same page, and the reverse,
+  where the two differ only by the space the keyless converter writes beside a stripped inline tag.
+  `normalizeForMatch` removes whitespace before `. , ; : ! ? % ) ] }` and after `( [ {`, never
+  after a closing mark: `1.5`/`1. 5`, `15`/`1,5`, `1000`/`1,000` stay distinct. Lenient only. No
+  verdict of the 41 baseline corpora moves.
+
 - **Added: `measure.mjs` reports quote coverage.** It counts how many CLOSED unknowns cite at least
   one row with a usable quote found in its capture (`quoteCoverage` in `--json`). A report line; it
   never gates. Across the 41 baseline corpora it is 108 / 183 (ADR-0195).
