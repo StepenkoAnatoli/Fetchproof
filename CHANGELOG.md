@@ -5,6 +5,13 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Added: decision research on punctuation spacing**
+  (`docs/decisions/2026-10-25-punctuation-spacing/`, for ADR-0192). It measures, on the same pages,
+  what the keyless converter and Firecrawl write around punctuation beside inline tags. Keyless
+  spaces all ten closing marks and `( [ {`. Firecrawl spaces only after `(` or `[` before a link
+  or emphasis, and drops whitespace held in a span. The brief lists what the proposed rule does not
+  cover and where it merges text.
+
 - **Added: the pre-registered study of the quote-level recheck**
   (`docs/decisions/2026-10-25-refresh-recheck-study/`, plan §12). It fixes the question, the arms,
   the six tasks over five page-change kinds, the three headline numbers and the decision rules
