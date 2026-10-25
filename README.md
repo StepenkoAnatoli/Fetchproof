@@ -479,9 +479,14 @@ snapshot is. The `handoff OK` line ends with the days the captures were fetched,
 recorded at its fetch; the `Retrieved` column of `research/EVIDENCE.md` gives each row's date. A builder who suspects a fact has changed
 reports which one, and the collector re-checks it (the `freshness-recheck` skill). Once the
 collector has re-collected a page that changed, the gate fails with `cites-superseded-row`
-until the claim is re-read and its citation moved to the new capture; a re-check that finds a
-cited page gone (HTTP 404 or 410) fails with `cites-gone-page` until the claim is re-researched
-or its row's Finding records the status.
+until the claim is re-read and its citation moved to the new capture, unless the old row's
+quoted words (`[quote: ...]`) survived the refresh (ADR-0193): then the citation passes
+`quote-survived-refresh`, which says only that the words are still there, not that the claim
+still holds - re-read it anyway. A reopen says why, and for a lost quote it names a likely cause
+from the ledger (a transport change, a partial capture, a conversion change); that drift
+attribution is a heuristic whose accuracy is unmeasured, since no real refresh has yet lost a
+quote. A re-check that finds a cited page gone (HTTP 404 or 410) fails with `cites-gone-page`
+until the claim is re-researched or its row's Finding records the status.
 
 A builder who finds a fact missing reports which one and lets the collector fetch it. A
 page fetched by hand is not evidence in this kit.

@@ -55,22 +55,28 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
    - R is in the evidence table and carries at least one quote anchor;
    - at least one anchor is usable - not `quote-too-short`, measured on the compared text
      (ADR-0191) - and only usable anchors are rechecked;
-   - no refresh after the replacement found the page gone (ADR-0194's `goneAfterScrape`);
+   - no refresh after the replacement found the page gone (ADR-0194's `goneAfterScrape`), asked of
+     the ledger alone: ADR-0194's exemption for a Finding that names the status does not apply
+     here, because the old row's text cannot say whether a later fetch failed (U8 review F3);
    - R's Raw cell names a capture that is on disk and readable, and every usable anchor is found in
      its body (the baseline rule);
    - N's Raw cell names a capture that is on disk and readable, and is not an HTTP 4xx/5xx page,
      even if its body holds the words (a capture kept before 2026-09-28);
    - every usable anchor is found in N's capture body.
    The pass says: "E-01's quoted words occur in E-03's capture `<file>`. That says the words
-   survived, not that the claim still holds. Re-read E-03 when you next touch U-01." It carries
-   `row`, `line`, `superseded`, `by` and `capture`.
+   survived, not that the claim still holds. Re-read E-03 when you next touch U-01.", then the
+   limit line of decision 6. It carries `row`, `line`, `superseded`, `by` and `capture`.
 2. **Only a row's OWN capture is read** - the file its Raw cell names, through `ownCapture`. Never
    `captureOf`'s fallback for a blank cell, the URL's newest capture: for an old row that is the
    replacement's capture, and the old quote would be found in the page it is compared with. A
    missing or unreadable file is a reason to reopen, never an empty page that lacks the words.
 3. **The design rule: only the state above passes.** A state added later defaults to the reopen.
 4. **The citation is never moved or rewritten.** After a pass the unknown still cites R. Moving it
-   remains the act of somebody who re-read the page; the pass tells them which page to read.
+   remains the act of somebody who re-read the page; the pass names the page to read. Preflight
+   prints a pass, and so its "Re-read N" advice, only with `--show-pass` and in `--json`; its
+   default output shows only the verdict line, and the commit gate carries failures only. This is
+   a known limit, recorded for the owner (U8 review F2): printing survived passes by default is a
+   preflight output change outside this plan.
 5. **The reopen says why.** `cites-superseded-row`'s detail keeps ADR-0026's sentence and adds the
    reason: no quote, every quote too short, no baseline, the replacement names no capture or its
    file is missing, an error page, the page gone since, or the quote that is missing. For a missing
@@ -80,11 +86,12 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
    with what it omitted, a capture under `MIN_CAPTURE_CHARS` (could not look), otherwise "the page
    changed, or the converter changed without being recorded". The attribution is asked after the
    reopen is decided and can never turn it into a pass.
-6. **Every reopen of a superseded citation ends with one line:** "Refresh confirmation detects
-   whether the quoted words are still in the new capture, never whether the claim is still true."
-   Assumption, stated here: the plan's "every refresh report ends with one line" is met by this
-   check's pass and reopen details, which are what preflight and the gate print after a refresh;
-   `research.mjs` is out of this run's scope and is unchanged.
+6. **Every pass and every reopen of a superseded citation ends with one line:** "Refresh
+   confirmation detects whether the quoted words are still in the new capture, never whether the
+   claim is still true." Assumption, stated here: the plan's "every refresh report ends with one
+   line" is met by this check's pass and reopen details. A reopen is printed by default; a pass
+   only with `--show-pass` and in `--json` (decision 4), so in the default output the line ends
+   reopens only. `research.mjs` is out of this run's scope and is unchanged.
 7. **Every other reader is unchanged** (plan §7.4). The old row is still cited, so it is not
    released history: transport-provenance still reports it, hygiene treats the pair as a refresh
    (no `duplicate-url`, no `uncited-capture`), `evidence-context` still shows "SUPERSEDED BY", and
@@ -116,6 +123,10 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
 
 - A refresh whose quoted words survived no longer blocks the gate for the citations resting on
   those quotes; unquoted and every other state reopen exactly as before, with a reason.
+- Freshness is a separate question. An old row whose words survived but whose capture is older
+  than the age limit still warns `unknown-closure/stale-evidence` beside the pass - naming the
+  fresher capture and saying to re-read it and move the citation - and fails under `--strict`,
+  which promotes every warning (U8 review F5).
 - Known gap, pinned as `KNOWN GAP`: a redesign that keeps the sentence under a heading that changes
   its meaning ("Enterprise only") passes. A string check cannot see it; plan §12 measures the cost.
 - Known gap: quote markers `quoteAnchors` cannot read are `citations`' failure, not this check's.

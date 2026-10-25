@@ -694,8 +694,18 @@ function isReleasedHistory(corpus, row, superseded = supersededRows(corpus)) {
  *
  * A row whose Finding names the status itself has said so, and is not flagged: the exemption
  * `raw-error-status` makes for a corpus that cites a 404 on purpose (a string check).
+ *
+ * `findingExempts: false` asks only the ledger's question - did the newest fetch after this
+ * row's capture find the page gone - for the quote recheck (ADR-0193). Its question is whether
+ * any capture of the page is current, and the old row's Finding cannot answer it: with the
+ * exemption, a row whose Finding named "HTTP 404" as content passed `quote-survived-refresh`
+ * with no finding at all on a page the newest fetch found gone (found 2026-10-25, U8 review F3).
+ * Dropping it there costs nothing in the case the exemption exists for, a row that documents an
+ * error page: the recheck runs only where a row N replaced it, and a fetch the page answered with
+ * an error writes no N (the collector refuses error pages since 2026-09-28) or, kept before
+ * that, an error-page capture the recheck reopens anyway. `cites-gone-page` keeps the exemption.
  */
-function goneAfterScrape(corpus, row, rank, lastByKey) {
+function goneAfterScrape(corpus, row, rank, lastByKey, { findingExempts = true } = {}) {
   if (!row?.url) return null;
   const own = rank.get(row.raw || captureOf(corpus, row)?.file);
   if (own === undefined) return null;
@@ -704,7 +714,8 @@ function goneAfterScrape(corpus, row, rank, lastByKey) {
   const entry = corpus.ledger.entries[last];
   if (entry.op !== 'fail') return null;
   const status = goneStatus(entry.error);
-  if (status === null || new RegExp(`\\b${status}\\b`).test(row.finding)) return null;
+  if (status === null) return null;
+  if (findingExempts && new RegExp(`\\b${status}\\b`).test(row.finding)) return null;
   return { status, day: String(entry.at ?? '').slice(0, 10) };
 }
 
@@ -717,8 +728,10 @@ function lastFetchByUrl(entries) {
   return last;
 }
 
-// What the recheck can say, and what it cannot: it ends every reopen of a superseded citation
-// (ADR-0193), so no reader takes a pass, or a reopen's reason, for more than it measured.
+// What the recheck can say, and what it cannot: it ends every pass and every reopen of a
+// superseded citation (ADR-0193), so no reader takes a pass, or a reopen's reason, for more than
+// it measured. Until 2026-10-25 (U8 review F2) it ended reopens only, and the pass - shown with
+// --show-pass and in --json, not in preflight's default output - did not carry it.
 const REFRESH_LIMIT = 'Refresh confirmation detects whether the quoted words are still in the new capture, never whether the claim is still true.';
 
 /**
@@ -789,8 +802,8 @@ function driftAttribution(corpus, rank, old, replacement, capture) {
  * the replacement row's OWN capture body, which is readable and not an HTTP error page. Every
  * other state is a reason to reopen, and a state added later defaults to one: the pass is the
  * output that removes a re-read. The first such state is ADR-0194's: a refresh after the
- * replacement found the page gone (`gone`), and a page that is gone is not one whose words
- * survived, whatever its last capture held.
+ * replacement found the page gone (`gone`, asked without ADR-0194's Finding exemption), and a
+ * page that is gone is not one whose words survived, whatever its last capture held.
  */
 function quoteRecheck(corpus, rank, id, replacement, gone) {
   const old = corpus.evidence.find((row) => row.id.toUpperCase() === id.toUpperCase());
@@ -837,11 +850,13 @@ function evidenceSupersession(corpus) {
     for (const id of unknown.cites) {
       const replacement = superseded.get(id.toUpperCase());
       if (!replacement) continue;
-      const recheck = quoteRecheck(corpus, rank, id, replacement, goneAfterScrape(corpus, rowOf(id), rank, lastByKey));
+      const gone = goneAfterScrape(corpus, rowOf(id), rank, lastByKey, { findingExempts: false });
+      const recheck = quoteRecheck(corpus, rank, id, replacement, gone);
       if (recheck.survived) {
         out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
           `${id}'s quoted words occur in ${replacement.id}'s capture ${recheck.file}. `
-          + `That says the words survived, not that the claim still holds. Re-read ${replacement.id} when you next touch ${unknown.id}.`,
+          + `That says the words survived, not that the claim still holds. Re-read ${replacement.id} when you next touch ${unknown.id}. `
+          + REFRESH_LIMIT,
           { row: unknown.id, line: unknown.line, superseded: id, by: replacement.id, capture: recheck.file }));
         continue;
       }

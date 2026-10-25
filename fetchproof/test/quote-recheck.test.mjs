@@ -93,6 +93,9 @@ function survived(dir, what) {
   assert.equal(mine.length, 1, `${what}: ${JSON.stringify(findings)}`);
   assert.equal(mine[0].rule, 'quote-survived-refresh', `${what} reopened: ${mine[0].detail}`);
   assert.equal(mine[0].severity, 'pass');
+  // A pass ends with the limit line too (U8 review F2, RUN.md D-v): shown with --show-pass or in
+  // --json, it is the line that says what the pass did not measure.
+  assert.ok(mine[0].detail.endsWith(LIMIT_LINE), `a pass must end with what the recheck can and cannot say: ${mine[0].detail}`);
   assert.equal(findings.filter((f) => f.severity === 'fail').length, 0, JSON.stringify(findings));
   return mine[0];
 }
@@ -113,7 +116,7 @@ test('recheck 1: every usable quote is still in a changed page - quote-survived-
   const pass = survived(dir, 'two usable quotes, both in the new capture');
   assert.deepEqual([pass.superseded, pass.by, pass.capture], ['E-01', 'E-02', entry.file]);
   assert.equal(pass.detail, `E-01's quoted words occur in E-02's capture ${entry.file}. `
-    + 'That says the words survived, not that the claim still holds. Re-read E-02 when you next touch U-1.');
+    + `That says the words survived, not that the claim still holds. Re-read E-02 when you next touch U-1. ${LIMIT_LINE}`);
   assert.deepEqual(fs.readFileSync(resolve(dir, PATHS.discovery)), discovery, 'the recheck moved or rewrote a citation');
   assert.deepEqual(fs.readFileSync(resolve(dir, PATHS.evidence)), evidence, 'the recheck rewrote the evidence table');
   assert.deepEqual(readCorpus(dir).unknowns[0].cites, ['E-01'], 'U-1 must still cite E-01: moving it is the researcher\'s act');
@@ -218,18 +221,21 @@ test('recheck 11: a link-syntax two-word quote (B1, ADR-0191) is too short - reo
 });
 
 // U9 (B2, ADR-0192) makes the matcher ignore spacing before closing punctuation; it landed first
-// (2d831ca), so the quote survives. Before it this line read 'cites-superseded-row'; the transport
-// assertion below runs only while the outcome is a reopen.
+// (2d831ca), so the quote survives. Before it this line read 'cites-superseded-row'.
 const TRANSPORT_SPACING_OUTCOME = 'quote-survived-refresh';
+const TRANSPORT_LINE = 'Captured by firecrawl-cli then, http-keyless now. A transport change alone can lose a quote.';
 
-test('recheck 12: Firecrawl to keyless, the quote lost only to a space before the full stop - outcome pinned, the transport named', () => {
+test('recheck 12: Firecrawl to keyless, the quote lost only to a space before the full stop - outcome pinned', () => {
   const dir = quotedProject();
   refresh(dir, `# Limits\n\n${'The free plan allows 10 requests per minute and includes 1,000 credits . '.repeat(30)}`, { transportName: 'http-keyless' });
   const { findings, mine } = about(dir);
   assert.equal(mine.length, 1, JSON.stringify(findings));
   assert.equal(mine[0].rule, TRANSPORT_SPACING_OUTCOME, mine[0].detail);
+  // Dormant while the outcome is the pass (since ADR-0192), and kept: a matcher change that makes
+  // this a reopen again must still name the transport. Case 3 is pinned on its own by "7.3 case 3"
+  // below (U8 review F1: with only this branch, removing case 3 left the suite green).
   if (mine[0].rule === 'cites-superseded-row') {
-    assert.ok(mine[0].detail.includes('Captured by firecrawl-cli then, http-keyless now. A transport change alone can lose a quote.'), mine[0].detail);
+    assert.ok(mine[0].detail.includes(TRANSPORT_LINE), mine[0].detail);
   }
 });
 
@@ -317,6 +323,28 @@ test('the words survived into the replacement, then a later refresh found the pa
   assert.equal(findings.some((f) => f.rule === 'quote-survived-refresh'), false, JSON.stringify(findings));
 });
 
+// The same state, with the old row's Finding naming the status as content ("return HTTP 404").
+// ADR-0194 exempts such a row from cites-gone-page (the row said so itself), and until 2026-10-25
+// (U8 review F3, RUN.md D-v) the recheck asked the same exempting question, so the citation PASSED
+// with no finding at all on a page the newest fetch found gone. The recheck asks something else -
+// did a fetch after the replacement fail - which the old row's text cannot answer. cites-gone-page
+// and its exemption are unchanged, so here it stays silent and the reopen is the only finding.
+test('the old Finding names HTTP 404 as content, the words survived, then a refresh answered 404 - reopen, not a pass', () => {
+  const dir = quotedProject([SENTENCE], { finding: `${FINDING} Unknown plan ids return HTTP 404.` });
+  refresh(dir, SAME_PAGE);
+  const result = collectOne(dir, LIMITS_URL, {
+    runScrape: (url) => ({ ok: true, url, title: 'Not Found', markdown: '# Not Found', statusCode: 404, transport: 'firecrawl-cli', cmd: 'stub', completeness: 'full', omitted: '' }),
+    corpus: readCorpus(dir), force: true, type: 'P', transportName: 'firecrawl-cli', date: DAY3, maxRateLimitRetries: 0, sleep: () => {},
+  });
+  assert.equal(result.status, 'failed', 'the collector kept the 404 as a capture');
+  assert.match(rowOf(dir, 'E-01').finding, /\b404\b/, 'E-01\'s Finding must name the status, or this proves nothing');
+  const detail = reopened(dir, 'a page found gone after the replacement, under a Finding that names 404');
+  // The day is the fail entry's real time, not the stubbed DAY3 (a fail records when it ran).
+  assert.ok(detail.includes('found the page gone (HTTP 404), so no capture of it is current.'), detail);
+  const { findings } = about(dir);
+  assert.equal(findings.some((f) => f.rule === 'cites-gone-page'), false, `ADR-0194's exemption must be unchanged: ${JSON.stringify(findings)}`);
+});
+
 // Plan §7.3 case 1: the ledger hashes the whole capture file (`bodySha256`), so two fetches with
 // equal hashes are one file's bytes, and a quote found in one is found in the other. Assert it
 // never reaches the attribution: the honest equal case passes. A ledger that claims equal bytes
@@ -337,6 +365,16 @@ test('7.3 case 1: equal bodySha256 never reaches the attribution - one capture n
   fs.appendFileSync(resolve(forged, PATHS.evidence), `| E-02 | ${DAY2} | P | ${LIMITS_URL} | Withdrawn. | ${entry.file} |\n`);
   assert.ok(reopened(forged, 'a forged equal hash').includes('The ledger records the same bytes for both captures, yet the words are in one and not the other: '
     + 'one of them was changed after its fetch, and provenance names which.'));
+});
+
+// Plan §7.3 case 3. Recheck 12 named the transport only while its outcome was a reopen; ADR-0192
+// made it a pass, so until 2026-10-25 (U8 review F1) nothing failed when this case was removed.
+// Here the sentence is really gone and only the transport differs, so case 3 is the first match.
+test('7.3 case 3: the quote is really gone and the transport changed - the reopen names both transports', () => {
+  const dir = quotedProject();
+  refresh(dir, `# Limits\n\n${'Rate limits are listed on the account page now. '.repeat(30)}`, { transportName: 'http-keyless' });
+  const detail = reopened(dir, 'a lost quote across transports');
+  assert.ok(detail.includes(TRANSPORT_LINE), detail);
 });
 
 // ---------------------------------------------------------------- the real fixture (Mandate C3)

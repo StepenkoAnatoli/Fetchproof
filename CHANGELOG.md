@@ -8,11 +8,12 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 - **Added: `evidence-supersession/quote-survived-refresh`** (ADR-0193). A citation of a superseded
   row passes when every usable quote of the old row is found in that row's own capture and in the
   replacing row's own capture. That capture must be readable, must not be an error page, and must
-  not be followed by a refresh that found the page gone. Every other state still fails
-  `cites-superseded-row`, which now says why, gives a drift attribution for a lost quote, and ends
-  "Refresh confirmation detects whether the quoted words are still in the new capture, never whether
-  the claim is still true." No citation is moved. The attribution is unmeasured: no real refresh has
-  yet lost a quote (ADR-0193).
+  not be followed by a refresh that found the page gone, whatever the old row's Finding says. Every
+  other state still fails `cites-superseded-row`, which now says why and gives a drift attribution
+  for a lost quote. The pass and every such failure end "Refresh confirmation detects whether the
+  quoted words are still in the new capture, never whether the claim is still true." The pass, with
+  its advice to re-read the new row, shows with `--show-pass` and in `--json`. No citation is moved.
+  The attribution is unmeasured: no real refresh has yet lost a quote (ADR-0193).
 
 - **The quote matcher ignores the spacing beside punctuation** (ADR-0192, plan 5.3 B2; lifts the
   hold and the freeze for this one item by the owner's ruling of 2026-10-25). A `[quote: ...]`
