@@ -1,13 +1,17 @@
-// The keyless extractor finds tag pairs in linear time, and finds exactly what the regexes found.
+// The keyless extractor finds tag pairs in linear time, and finds exactly what the regex form of
+// its rules finds.
 //
 // Found 2026-09-30 (break-test, PR #176): the lazy pair regexes - `<div\b[^>]*>([\s\S]*?)</div>`
 // and a dozen like it - were quadratic on unclosed tags. Each opening tag with no closing tag
 // after it scanned to the end of the page and failed, and the next one scanned again: 9.4 s for
 // 391 KB of `<div>word`, 13 s for 156 KB of `<script`, in the collecting process, after the
-// fetch's own timeout had passed. The scanner that replaced them (tagPairs) must change the
-// COST and nothing else, so the old regex extractor is kept as an oracle and both are run over
-// thousands of generated pages that lean on the edges: unclosed and stray tags, upper case,
-// a '>' inside a quoted attribute, several hrefs in one tag, comments, entities.
+// fetch's own timeout had passed. The scanner that replaced them (tagPairs) changed the COST and
+// nothing else, so the old regex extractor was kept as an oracle. The rules have changed since -
+// entities decoded once (G3, 2026-10-03), tags that end outside quoted attribute values (B3 and
+// its review, 2026-10-25) - each time in both, written independently, so the oracle is now the
+// regex form of the current rules, not the extractor as it was. Both are run over thousands of
+// generated pages that lean on the edges: unclosed and stray tags, upper case, a '>' inside a
+// quoted attribute, several hrefs in one tag, a '<' that starts no tag, comments, entities.
 
 import { test, describe, assert } from './harness.mjs';
 import * as linear from '../lib/http-transport.mjs';
@@ -23,12 +27,15 @@ function rng(seed) {
 
 const TAGS = ['div', 'DIV', 'main', 'article', 'section', 'p', 'a', 'A', 'b', 'strong', 'em', 'i', 'code', 'li', 'tr', 'td', 'th',
   'h1', 'h2', 'H3', 'h6', 'title', 'script', 'style', 'svg', 'form', 'template', 'span', 'br', 'table', 'ul'];
-const WORDS = ['limit', 'quota', 'requests', 'per', 'minute', 'the', 'free', 'plan', '1,000', '&amp;', '&#x41;', '&lt;', 'caveat', 'x>y', "it's", '"q"'];
+const WORDS = ['limit', 'quota', 'requests', 'per', 'minute', 'the', 'free', 'plan', '1,000', '&amp;', '&#x41;', '&lt;', 'caveat', 'x>y', "it's", '"q"',
+  // A '<' that starts no tag, before a quoted '>' (B3 review, F2, 2026-10-25).
+  '<= "x > y"', '< 3'];
 const ATTRS = ['', ' class="x"', ' href="/docs"', " href='https://a.example/p'", ' href="https://b.example/q" class="result-link"',
   ' class="result-link" href="https://c.example"', ' href="x>y"', ' data-v="a>b" href="/z"', ' href="/1" href="/2"', ' HREF="https://d.example"', ' id=main',
   // Quoted values that hide a '>' and tags, an apostrophe in an unquoted value, and a quote that
-  // never closes (B3, 2026-10-25).
-  " title=O'Brien", ' alt="x > <b>y</b>"', " data-x = 'a > b'", ' title="unclosed'];
+  // never closes (B3, 2026-10-25); a quoted '>' after the href, and before it (its review, F1).
+  " title=O'Brien", ' alt="x > <b>y</b>"', " data-x = 'a > b'", ' title="unclosed', ' href="/q" title="p > q"',
+  ' title="r > s" href="/t"'];
 
 function page(next) {
   const pick = (list) => list[Math.floor(next() * list.length)];
@@ -121,6 +128,19 @@ test('extraction time grows linearly with a page of unclosed tags, not quadratic
     'quoted > in attributes': (n) => '<span title="a > b">word '.repeat(n),
     'unterminated quote after a run of <': (n) => `${'<i word '.repeat(n)}title="x> ${'<b>tail</b> '.repeat(n)}`,
     'a quote in every tag, closed by the next tag': (n) => '<b title="x> word '.repeat(n),
+    // The passes that read a tag by name end it as the stripper does (2026-10-25, review of the B3
+    // fix, F1). A pair with no closing tag is tried again from the next character, so tags start
+    // inside one another: along one long tag, and inside a quoted value of the tag before.
+    // Without the tag ends remembered by '=', each of these list items scans every attribute after
+    // it - 30 s for 10,000, so a quarter as many here.
+    'attributes of one long tag, each the start of a list item': (n) => `${"<li y='a' ".repeat(n / 4)}>`,
+    // Without the href hits listed once, each link after one inside a value lists the long tag's
+    // hits again.
+    'links inside quoted values of one long link': (n) => `${"<a href='/x' t='<a href=/y>' ".repeat(n / 8)}>`,
+    // Without the closing tags listed once, a closing tag for the long tag is searched for again,
+    // from its end to the end of the page, after each list item inside it. The text after is one
+    // long word, which the other passes read quickly, so that search is most of the work.
+    'closed list items inside quoted values, text after': (n) => `${"<li t='<li></li>' ".repeat(n / 16)}>${'x'.repeat(20 * n)}`,
   };
   const BOUND = 4;
   const slow = [];

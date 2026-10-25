@@ -1,6 +1,9 @@
-// The keyless extractor as it was before 2026-09-30: lazy pair REGEXES, quadratic on unclosed
-// tags. Kept as the oracle for test/http-linear.test.mjs - the linear scanner that replaced them
-// must produce the same capture from the same page. Test fixture only; never imported by lib/.
+// The keyless extractor's rules in their regex form: lazy pair REGEXES, quadratic on unclosed
+// tags, as the extractor was written before 2026-09-30, and changed since with the converter's
+// rules - entities decoded once (G3, 2026-10-03) and tags that end outside quoted attribute values
+// (B3 and its review, 2026-10-25). Kept as the oracle for test/http-linear.test.mjs: the linear
+// scanner must produce the same capture from the same page as this reading of the same rules,
+// written independently of it. Test fixture only; never imported by lib/.
 /* eslint-disable */
 const BLOCK_DROP = /<(script|style|noscript|svg|iframe|form|template)\b[\s\S]*?<\/\1>/gi;
 
@@ -8,8 +11,51 @@ const BLOCK_DROP = /<(script|style|noscript|svg|iframe|form|template)\b[\s\S]*?<
 // `'…'` value that opens right after `=`, where `/<[^>]+>/g` took the first '>' of all. Written
 // as a regex on its own, not taken from lib/, so the two readings check each other. A quote whose
 // partner has no '>' after it fails the quoted branch, and the regex backtracks to reading it as
-// text - the converter's "a quote that ends no tag is no quote".
-const TAG = /<(?:=[\t\n\f\r ]*"[^"]*"|=[\t\n\f\r ]*'[^']*'|[^>])+>/g;
+// text - the converter's "a quote that ends no tag is no quote". Only a '<' then a letter, '/',
+// '!' or '?' reads quoted values; any other (`a <= "x > y"` in text) ends at its first '>', as
+// `/<[^>]+>/g` read it (F2 of the review). The quoted branch and `[^>]` overlap at '=', so with
+// no '>' left the regex tries every split of a run of `=""` before it fails - about 2x per `=""`,
+// harmless on the generated pages, which never end in such a run.
+const QUOTED = String.raw`=[\t\n\f\r ]*"[^"]*"|=[\t\n\f\r ]*'[^']*'`;
+const TAG = new RegExp(String.raw`<(?:(?=[A-Za-z/!?])(?:${QUOTED}|[^>])+|[^>]+)>`, 'g');
+
+// A pair, `<name ...>BODY</name>`, whose opening tag ends where TAG ends one (2026-10-25, review
+// of the B3 fix): the rest of the tag is read inside a lookahead, which JavaScript never
+// backtracks into, and then consumed by its backreference. Without that, a pair with no closing
+// tag after its real '>' would back into reading a quote as text and end at a '>' inside the
+// quoted value instead - the very leak. `names` is an alternation and `close` the closing tag's
+// source, the opening name's by default; `m.groups.body` is the body.
+const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`<(?<name>${names})\b(?=(?<rest>(?:${QUOTED}|[^>])*>))\k<rest>(?<body>[\s\S]*?)${close}`, 'gi');
+
+/**
+ * The <a> pairs whose opening tag, read as TAG reads it, holds `attribute` (a regex source whose
+ * groups are the caller's), at the RIGHTMOST place it matches inside the tag, as
+ * `<a\b[^>]*href=...` backtracked to it. A loop around regexes, because one regex cannot say
+ * "inside the tag that lookahead read"; it does what the engine does with a pair regex: fail at
+ * this `<a` and try again from the next character. Quadratic, which a fixture may be.
+ */
+function linkPairs(html, attribute) {
+  const pairs = [];
+  const open = /<a\b/gi;
+  const tagAt = new RegExp(TAG.source, 'y');
+  const inside = new RegExp(String.raw`^<a\b[\s\S]*${attribute}`, 'i');
+  for (let pos = 0; ;) {
+    open.lastIndex = pos;
+    const m = open.exec(html);
+    if (!m) break;
+    tagAt.lastIndex = m.index;
+    const tag = tagAt.exec(html);
+    if (!tag) break;                                   // no '>' after this '<a': none after a later one
+    const hit = inside.exec(tag[0].slice(0, -1));
+    const close = /<\/a>/gi;
+    close.lastIndex = m.index + tag[0].length;
+    const c = hit && close.exec(html);
+    if (!c) { pos = m.index + 1; continue; }
+    pairs.push({ index: m.index, end: c.index + c[0].length, hit, body: html.slice(m.index + tag[0].length, c.index) });
+    pos = c.index + c[0].length;
+  }
+  return pairs;
+}
 
 /**
  * One numeric character reference. HTML reads 0, a surrogate, and anything past U+10FFFF
@@ -40,7 +86,7 @@ export function decodeEntities(text) {
  * So this returns the chosen block AND what it left behind, and the caller grades
  * honestly on both.
  */
-const BLOCKS = /<(article|main|section|div)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+const BLOCKS = pair('article|main|section|div');
 const SEMANTIC_MIN_WORDS = 100;
 
 /**
@@ -54,8 +100,8 @@ const SEMANTIC_MIN_WORDS = 100;
  * 17,385-character <main> around it; Firecrawl captured the same page whole.
  */
 function declaredContent(html) {
-  const candidates = [...html.matchAll(/<(main|article)\b[^>]*>([\s\S]*?)<\/\1>/gi)]
-    .map((m) => m[2])
+  const candidates = [...html.matchAll(pair('main|article'))]
+    .map((m) => m.groups.body)
     .filter((inner) => wordsOf(inner) >= SEMANTIC_MIN_WORDS);
   if (!candidates.length) return null;
   return candidates.reduce((best, inner) => (wordsOf(inner) > wordsOf(best) ? inner : best));
@@ -76,12 +122,12 @@ export function mainContent(html) {
     // graded every keyless docs capture `partial` (20 such blocks on the Docs page above).
     // A block of prose outside <main> is still reported: that is where a caveat box would be.
     const dropped = [...outside.matchAll(BLOCKS)]
-      .map((m) => ({ words: wordsOf(m[2]), text: m[2] }))
+      .map((m) => ({ words: wordsOf(m.groups.body), text: m.groups.body }))
       .filter((entry) => entry.words >= 5 && linkShare(entry.text) < 0.5);
     return { html: declared, dropped, chosenWords: wordsOf(declared), totalWords: wordsOf(cleaned), basis: 'declared' };
   }
 
-  const blocks = [...cleaned.matchAll(BLOCKS)].map((m) => m[2]);
+  const blocks = [...cleaned.matchAll(BLOCKS)].map((m) => m.groups.body);
 
   // Selection considers only substantial blocks; the DROP analysis considers them all.
   // Filtering short blocks out of both is how a 60-character caveat box - exactly the
@@ -100,7 +146,7 @@ export function mainContent(html) {
   // chosen block holds under a quarter of the page's words and the page's sections hold at
   // least half, the sections are taken together, in order.
   const totalWords = wordsOf(cleaned);
-  const sections = [...cleaned.matchAll(/<section\b[^>]*>([\s\S]*?)<\/section>/gi)].map((m) => m[0]);
+  const sections = [...cleaned.matchAll(pair('section'))].map((m) => m[0]);
   const sectionWords = sections.reduce((sum, s) => sum + wordsOf(s), 0);
   let basis = 'densest';
   if (sections.length >= 3 && wordsOf(best) < totalWords / 4 && sectionWords >= totalWords / 2) {
@@ -122,7 +168,7 @@ export function mainContent(html) {
 function linkShare(html) {
   const total = wordsOf(html);
   if (!total) return 0;
-  const linked = [...String(html).matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)].reduce((sum, m) => sum + wordsOf(m[1]), 0);
+  const linked = [...String(html).matchAll(pair('a'))].reduce((sum, m) => sum + wordsOf(m.groups.body), 0);
   return linked / total;
 }
 
@@ -141,10 +187,11 @@ export function htmlToMarkdown(html) {
   text = text.replace(BLOCK_DROP, ' ');
   text = text.replace(/<!--[\s\S]*?-->/g, ' ');
   // Entities decoded once, at the end, as the linear converter does since 2026-10-03 (G3).
-  text = text.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level, body) => `\n\n${'#'.repeat(Number(level))} ${inline(body, { decode: false })}\n\n`);
-  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, body) => `\n- ${inline(body, { decode: false })}`);
-  text = text.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (_, row) => {
-    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((m) => inline(m[1], { decode: false }));
+  // The groups object is the last argument of a replacer when a regex has named groups.
+  text = text.replace(pair('h[1-6]'), (...m) => `\n\n${'#'.repeat(Number(m.at(-1).name[1]))} ${inline(m.at(-1).body, { decode: false })}\n\n`);
+  text = text.replace(pair('li'), (...m) => `\n- ${inline(m.at(-1).body, { decode: false })}`);
+  text = text.replace(pair('tr'), (...m) => {
+    const cells = [...m.at(-1).body.matchAll(pair('t[dh]', String.raw`<\/t[dh]>`))].map((c) => inline(c.groups.body, { decode: false }));
     return cells.length ? `\n| ${cells.join(' | ')} |` : '\n';
   });
   text = text.replace(/<br\s*\/?>/gi, '\n');
@@ -155,35 +202,38 @@ export function htmlToMarkdown(html) {
 
 function inline(html, { decode = true } = {}) {
   const finish = (text) => (decode ? decodeEntities(text) : text);
+  let linked = '';
+  let kept = 0;
+  for (const link of linkPairs(String(html), String.raw`href=["']([^"']*)["']`)) {
+    const label = link.body.replace(TAG, '').trim();
+    linked += String(html).slice(kept, link.index) + (decodeEntities(label).trim() ? `[${label}](${link.hit[1]})` : '');
+    kept = link.end;
+  }
   return finish(
-    String(html)
-      .replace(/<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, body) => {
-        const label = body.replace(TAG, '').trim();
-        return decodeEntities(label).trim() ? `[${label}](${href})` : '';
-      })
-      .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
-      .replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
-      .replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    (linked + String(html).slice(kept))
+      .replace(pair('strong|b'), '**$<body>**')
+      .replace(pair('em|i'), '*$<body>*')
+      .replace(pair('code'), '`$<body>`')
       .replace(TAG, ' '),
   ).replace(/[ \t]{2,}/g, ' ').trim();
 }
 
 export function titleOf(html) {
-  const tag = String(html).match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
-  if (tag) return decodeEntities(tag[1]).replace(/\s+/g, ' ').trim();
-  const h1 = String(html).match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
-  return h1 ? inline(h1[1]) : '';
+  const [tag] = String(html).matchAll(pair('title'));
+  if (tag) return decodeEntities(tag.groups.body).replace(/\s+/g, ' ').trim();
+  const [h1] = String(html).matchAll(pair('h1'));
+  return h1 ? inline(h1.groups.body) : '';
 }
 
-/** The two result-link loops of the keyless search, as they were. */
+/** The two result-link loops of the keyless search, their tags read as every other tag. */
 export function searchLinks(body) {
   const results = [];
-  for (const m of String(body ?? '').matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*class=["']result-link["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-    results.push({ href: m[1], title: inline(m[2]) });
+  for (const link of linkPairs(String(body ?? ''), String.raw`href=["']([^"']+)["'][^>]*class=["']result-link["']`)) {
+    results.push({ href: link.hit[1], title: inline(link.body) });
   }
   if (!results.length) {
-    for (const m of String(body ?? '').matchAll(/<a\b[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-      results.push({ href: m[1], title: inline(m[2]) });
+    for (const link of linkPairs(String(body ?? ''), String.raw`href=["'](https?:\/\/[^"']+)["']`)) {
+      results.push({ href: link.hit[1], title: inline(link.body) });
     }
   }
   return results;

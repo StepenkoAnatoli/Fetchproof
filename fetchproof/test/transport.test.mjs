@@ -388,6 +388,55 @@ test('a quoted attribute value holding tags counts as one tag when the densest b
   assert.equal(chosen.chosenWords, 301);
 });
 
+// Found 2026-10-25 (review of the B3 fix, F1): B3 made only the tag stripper read quoted values.
+// Every tag a conversion pass reads by name still ended at its first '>': a list item, a heading,
+// a table cell, bold, italic and code, a link, and the title. So the same
+// `title="Tier 3 > unlimited API requests"` on an <li> still left `unlimited API requests">` in
+// the capture, and an <a> whose quoted '>' came before its href lost the link. Each of them now
+// ends its opening tag where the stripper does.
+test('a ">" inside a quoted attribute value ends no tag a conversion pass reads', () => {
+  const tier = 'title="Tier 3 > unlimited API requests"';
+  const md = (html) => httpKeyless.htmlToMarkdown(html);
+  assert.equal(md(`<ul><li ${tier}>Tier 3</li></ul>`), '- Tier 3', 'a list item');
+  assert.equal(md(`<h2 ${tier}>Plans</h2>`), '## Plans', 'a heading');
+  assert.equal(md(`<table><tr><td ${tier}>Tier 3</td></tr></table>`), '| Tier 3 |', 'a table cell');
+  assert.equal(md(`<p>See <strong ${tier}>Tier 3</strong> now.</p>`), 'See **Tier 3** now.', 'bold');
+  assert.equal(md(`<p>See <em data-x='a > b'>Tier 3</em> or <code data-x="a > b">npm i</code>.</p>`), 'See *Tier 3* or `npm i`.', 'italic and code');
+  assert.equal(md(`<p>See <a href="/x" ${tier}>label</a> now.</p>`), 'See [label](/x) now.', 'a link with the value after its href');
+  assert.equal(md(`<p>See <a ${tier} href="/x">label</a> now.</p>`), 'See [label](/x) now.', 'a link with the value before its href is still a link');
+  assert.equal(httpKeyless.titleOf('<title data-x="a > b">Name</title>'), 'Name', 'the <title>');
+  assert.equal(httpKeyless.titleOf('<h1 data-x="a > b">Name</h1>'), 'Name', 'the <h1> a page without a <title> is named by');
+});
+
+// The same defect one level up (F1): the block mainContent keeps is the body of a <div>, <main>
+// or <article> found by its opening tag, and that tag ended at its first '>' too, so the capture
+// began with the rest of the attribute.
+test('the block mainContent keeps begins after its opening tag, past a quoted ">"', () => {
+  const words = (word, n) => `${word} `.repeat(n);
+  const densest = httpKeyless.mainContent(`<html><body><div data-tip="a > hidden-div">${words('alpha', 150)}</div>`
+    + `<div>${'<b>x</b> '.repeat(40)}</div></body></html>`);
+  assert.equal(densest.basis, 'densest');
+  assert.match(densest.html, /^alpha /, 'the densest <div> begins with its own text');
+  const declared = httpKeyless.mainContent(`<html><body><div>${words('nav', 20)}</div>`
+    + `<main data-x="a > hidden-main">${words('gamma', 150)}</main></body></html>`);
+  assert.equal(declared.basis, 'declared');
+  assert.match(declared.html, /^gamma /, 'the declared <main> begins with its own text');
+});
+
+// Found 2026-10-25 (review of the B3 fix, F2): B3 read a quoted value after any '<', and in text
+// `a <= "x > y" and more text` read `="x > y"` as one, so the "tag" ran on to the '>' after the
+// next '"' and took the rest of the sentence with it. Only a '<' that starts a tag as HTML does - a
+// letter, '/', '!' or '?' after it - reads quoted values; any other ends at its first '>', as
+// before B3. That reading still strips `<= "x >`, as it always did: reading such a '<' as text,
+// as a browser does, would also change a capture already in the corpus (`<\/jats:title>` in a
+// Crossref record's abstract), so it is not this fix.
+test('a "<" that starts no tag reads no quoted value, and the sentence after it survives', () => {
+  assert.equal(httpKeyless.htmlToMarkdown('<p>a <= "x > y" and more text</p><p>next</p>'), 'a y" and more text\n\n next');
+  assert.equal(httpKeyless.htmlToMarkdown('<p>if (a <= "x") return;</p>'), 'if (a <= "x") return;');
+  assert.equal(httpKeyless.htmlToMarkdown(`<p>a <b title="x > y">bold</b> and <!-- note="x > y" --> <?pi a="x > y"?>c</p>`), 'a **bold** and c',
+    "a tag, a comment and a processing instruction still read their quoted values");
+});
+
 test('a page that marks its content with <main> is believed over a denser fragment', () => {
   // Found 2026-09-27: on a GitHub Docs page the keyless extractor kept the 262-character
   // summary and dropped the 17,385-character <main> around it - words-per-tag favours a

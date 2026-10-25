@@ -27,10 +27,12 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   never gates. Across the 41 baseline corpora it is 108 / 183 (ADR-0195).
 
 - **Fixed: keyless captures no longer leak attribute text** (plan B3). A `>` inside a quoted
-  attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends the tag, so the rest
-  of the value is no longer kept as page text. A quote opens only after `=`; one that never closes
-  falls back to the old rule, and the converter stays linear. Existing captures are records and
-  are not rewritten.
+  attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends a tag. That holds in
+  the tag stripper and in every pass that reads a tag by name: list items, headings, cells, bold,
+  italic, code, links, the content block and the title. A link whose quoted `>` comes before its
+  href is still a link. A quote opens only after `=`, and only inside a tag that starts the way HTML
+  starts one, so `a <= "x > y"` keeps its sentence. A quote that never closes falls back to the old
+  rule, and the converter stays linear. Existing captures are not rewritten.
 
 - **Added: `evidence-supersession/cites-gone-page`** (ADR-0194). A cited row fails when a refresh
   after its scrape found the page gone (HTTP 404 or 410). This holds under every policy; a Finding
