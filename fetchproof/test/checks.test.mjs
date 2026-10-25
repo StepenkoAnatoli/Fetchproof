@@ -11,6 +11,7 @@ import { readCorpus, captureOf } from '../lib/corpus.mjs';
 import { CHECKS, CHECK_NAMES, runCheck, runChecks, supersededRows } from '../lib/checks.mjs';
 import { verifyLedger, rebuildLedger, appendFetch } from '../lib/provenance.mjs';
 import { renderBrief } from '../lib/brief.mjs';
+import { runPreflight } from '../lib/preflight.mjs';
 import { UNIVERSAL_DIMENSIONS, coverageOfUniversals } from '../lib/dimensions.mjs';
 
 describe('checks');
@@ -1261,4 +1262,186 @@ test('hygiene: an adopted URL alias pasted as another row differs from a recorde
   assert.deepEqual([...supersededRows(corpus)].map(([id, current]) => [id, current.id]), [['E-01', 'E-02']]);
   assert.equal(runCheck('hygiene', corpus).some((f) => f.rule === 'duplicate-url'), false);
   assert.deepEqual(corpus.evidence.slice(1).map((row) => row.url), [alias, ...distinct], 'the captured URL spellings must remain visible');
+});
+
+// ---------------------------------------------------------------- cites-gone-page (ADR-0194)
+//
+// Found 2026-10-25 (plan v0.4 §8): a refresh that the page answered 404 or 410 leaves an
+// `op: 'fail'` ledger entry and nothing else - no capture, no row - so `supersededRows` saw no
+// replacement, the old row stayed current, and a claim resting on a deleted page passed the
+// gate: the quiet failure ADR-0026 exists to prevent. Each refresh below goes through the real
+// collector (`collectOne`) with only the page's answer stubbed - the network boundary - so the
+// fail entry the gate reads is worded exactly as the collector words one.
+
+const LIMITS_URL = 'https://example.invalid/docs/limits';
+const COLLECTOR_404 = 'the page answered HTTP 404 (Not Found) - an error page is not evidence';
+/** Re-collect the fixture's page through the real collector; `answer` is what the page said. */
+function refreshAnswered(dir, answer, { transportName = 'stub-transport', url: asked = LIMITS_URL } = {}) {
+  return collectOne(dir, asked, {
+    runScrape: (url) => ({ url, transport: transportName, cmd: `stub scrape ${url}`, completeness: 'full', omitted: '', ...answer }),
+    corpus: readCorpus(dir), force: true, type: 'P', transportName, maxRateLimitRetries: 0, sleep: () => {},
+  });
+}
+const errorPage = (statusCode, title = 'Not Found') => ({ ok: true, title, markdown: `# ${title}`, statusCode });
+const transportError = (error) => ({ ok: false, error });
+const pageBack = { ok: true, title: 'Limits', statusCode: 200,
+  markdown: `# Limits\n\n${'The free plan now allows 20 requests per minute and includes 500 credits. '.repeat(30)}` };
+const goneFindings = (dir) => runCheck('evidence-supersession', snapshot(dir)).filter((f) => f.rule === 'cites-gone-page');
+const lastFailDay = (dir) => readCorpus(dir).ledger.entries.filter((e) => e.op === 'fail').pop().at.slice(0, 10);
+
+test('cites-gone-page: a refresh the page answered 404, after the cited row\'s scrape, fails the citation', () => {
+  const dir = makePassingProject();
+  assert.equal(refreshAnswered(dir, errorPage(404)).status, 'failed', 'the stub did not produce the collector\'s fail entry');
+  assert.equal(snapshot(dir).chain.ok, true, 'the fail entry must sit on an intact chain');
+  const findings = runCheck('evidence-supersession', snapshot(dir));
+  const gone = findings.filter((f) => f.rule === 'cites-gone-page');
+  assert.equal(gone.length, 1, JSON.stringify(findings));
+  assert.equal(gone[0].severity, 'fail');
+  assert.equal(gone[0].detail, `U-1 rests on E-01. A refresh on ${lastFailDay(dir)} found the page gone (HTTP 404). `
+    + 'Re-research U-1 or record why the earlier reading still holds.');
+  assert.deepEqual([gone[0].row, gone[0].cited, gone[0].status], ['U-1', 'E-01', 404]);
+  assert.equal(findings.some((f) => f.severity === 'pass'), false,
+    'a pass beside the failure says nothing was re-collected, which the failure contradicts');
+});
+
+test('cites-gone-page: a 410 in the keyless wording, by another transport than the row\'s, fails too', () => {
+  const dir = makePassingProject();
+  refreshAnswered(dir, transportError('HTTP 410 - the server said: "this page was removed"'), { transportName: 'http-keyless' });
+  const gone = goneFindings(dir);
+  assert.equal(gone.length, 1);
+  assert.match(gone[0].detail, /found the page gone \(HTTP 410\)/);
+});
+
+test('cites-gone-page: a refresh asked under another spelling of the URL is the same page, by urlKey', () => {
+  const dir = makePassingProject();
+  refreshAnswered(dir, errorPage(404), { url: 'http://www.example.invalid/docs/limits/#reading' });
+  assert.equal(readCorpus(dir).ledger.entries.at(-1).url, 'http://www.example.invalid/docs/limits/#reading', 'the fail was not recorded under the other spelling');
+  assert.equal(goneFindings(dir).length, 1, 'a 404 under another spelling of the cited URL was missed');
+});
+
+test('cites-gone-page: a blank Raw cell still finds the row\'s own scrape, by the capture its URL names', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (text) => text.replace(/\| (research\/raw\/[^|]+\.md) \|(\r?\n)$/, '|  |$2'));
+  assert.equal(readCorpus(dir).evidence[0].raw, '', 'the fixture did not blank the Raw cell, so it proves nothing');
+  refreshAnswered(dir, errorPage(404));
+  assert.equal(goneFindings(dir).length, 1, 'a blank Raw cell hid the gone page');
+});
+
+test('cites-gone-page: a busy server, a standing refusal, a rate limit or the kit\'s own refusal is not gone', () => {
+  const answers = {
+    'a 500': errorPage(500, 'Internal Server Error'),
+    'a 503 from the keyless route': transportError('HTTP 503 - the server said: "try later"'),
+    'a standing 403': errorPage(403, 'Forbidden'),
+    'a 401': errorPage(401, 'Unauthorized'),
+    'a 429': errorPage(429, 'Too Many Requests'),
+    'GitHub\'s rate-limited 403': transportError('HTTP 403 - the server said: "API rate limit exceeded for 203.0.113.9"'),
+    'a 404 worded as a rate limit': transportError('HTTP 404 - the server said: "rate limit exceeded, retry after 30s"'),
+    'a timeout': transportError('the page did not answer within 60 s'),
+    'an unanchored 404': transportError('404 not found'),
+    'over the size a capture may hold': transportError('the page\'s text is 41.0 MB, over the 10 MB a capture may hold - not kept'),
+  };
+  for (const [what, answer] of Object.entries(answers)) {
+    const dir = makePassingProject();
+    assert.equal(refreshAnswered(dir, answer).status, 'failed', `${what}: the collector did not record a failure`);
+    assert.deepEqual(goneFindings(dir), [], `${what} was read as a page that is gone`);
+  }
+});
+
+test('cites-gone-page: a 404 the page recovered from is history - the row scraped after it, or a later scrape, stands', () => {
+  // The page came back: the 404 sits BEFORE the cited row's own scrape.
+  const back = makePassingProject();
+  refreshAnswered(back, errorPage(404));
+  assert.equal(refreshAnswered(back, pageBack).status, 'collected');
+  corrupt(back, PATHS.discovery, (text) => text.replace('| CLOSED | E-01', '| CLOSED | E-02'));
+  assert.deepEqual(goneFindings(back), [], 'a 404 before the cited row\'s scrape was read as gone');
+
+  // The old row is still cited, and a successful scrape came after the 404: the ledger's last
+  // word on the URL is a page, so this is a supersession (ADR-0026), not a gone page.
+  const later = makePassingProject();
+  refreshAnswered(later, errorPage(404));
+  refreshAnswered(later, pageBack);
+  const findings = runCheck('evidence-supersession', snapshot(later));
+  assert.equal(findings.some((f) => f.rule === 'cites-gone-page'), false, JSON.stringify(findings));
+  assert.ok(findings.some((f) => f.rule === 'cites-superseded-row' && f.superseded === 'E-01'), JSON.stringify(findings));
+});
+
+test('cites-gone-page: the ledger\'s order decides "after", not the entries\' dates', () => {
+  // Until 2026-10-04 a scrape entry was stamped with midnight of its day while a fail carried
+  // the real time, so on one day the dates put a morning 404 AFTER the scrape that followed
+  // it. The ledger is append-only and hash-chained: its position is the order of the fetches.
+  const dir = makePassingProject();
+  const first = readCorpus(dir).ledger.entries[0];
+  const day = first.at.slice(0, 10);
+  appendFetch(dir, { op: 'fail', url: LIMITS_URL, transport: 'stub-transport', cmd: 'stub', error: COLLECTOR_404, at: `${day}T09:00:00.000Z` });
+  appendFetch(dir, { ...first, at: `${day}T00:00:00.000Z` });
+  assert.equal(snapshot(dir).chain.ok, true, JSON.stringify(snapshot(dir).chain.problems));
+  assert.deepEqual(goneFindings(dir), [], 'a scrape recorded after the 404 lost to its midnight date');
+
+  // And the other way: a 404 recorded after the scrape is gone, whatever date it carries.
+  const late = makePassingProject();
+  appendFetch(late, { op: 'fail', url: LIMITS_URL, transport: 'stub-transport', cmd: 'stub', error: COLLECTOR_404, at: '2000-01-01T00:00:00.000Z' });
+  assert.equal(goneFindings(late).length, 1, 'a 404 recorded after the scrape was dated out of the question');
+});
+
+test('cites-gone-page: a 404 recorded before the row\'s own scrape is not gone, even as its URL\'s last entry', () => {
+  // Defensive: in an honest ledger the cited row's scrape is one of its URL's entries, so the
+  // last of them cannot precede it. A row whose own fetch is recorded under a URL that urlKey
+  // does not join to the row's cell is the shape where only the "after" test decides.
+  const dir = makePassingProject();
+  const first = readCorpus(dir).ledger.entries[0];
+  appendFetch(dir, { op: 'fail', url: LIMITS_URL, transport: 'stub-transport', cmd: 'stub', error: COLLECTOR_404 });
+  appendFetch(dir, { ...first, url: 'https://example.invalid/docs/limits-moved', at: undefined });
+  assert.deepEqual(goneFindings(dir), [], 'a 404 before the row\'s own scrape was read as gone');
+});
+
+test('cites-gone-page: a row nobody cites is history, and the check passes', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01: 10 requests per minute, 1,000 credits |', '| KNOWN-UNKNOWN | day one: read the limits page |'));
+  assert.equal(readCorpus(dir).unknowns[0].cites.length, 0, 'the fixture still cites E-01, so it proves nothing');
+  refreshAnswered(dir, errorPage(404));
+  const findings = runCheck('evidence-supersession', snapshot(dir));
+  assert.deepEqual(findings.filter((f) => f.severity !== 'pass'), [], JSON.stringify(findings));
+  assert.ok(findings.some((f) => f.severity === 'pass'), 'the check said nothing at all');
+});
+
+test('cites-gone-page: a row whose Finding names the status has said so, as raw-error-status allows', () => {
+  const named = makePassingProject();
+  corrupt(named, PATHS.evidence, (text) => text.replace('| The free plan allows', '| The page now answers 404; it said the free plan allows'));
+  refreshAnswered(named, errorPage(404));
+  assert.deepEqual(goneFindings(named), [], 'a row that names the 404 was flagged');
+
+  // The exemption is for THIS status: a row naming 410 has not said the page answered 404.
+  const other = makePassingProject();
+  corrupt(other, PATHS.evidence, (text) => text.replace('| The free plan allows', '| Once answered 410; the free plan allows'));
+  refreshAnswered(other, errorPage(404));
+  assert.equal(goneFindings(other).length, 1, 'a row naming another status was exempted');
+});
+
+test('cites-gone-page: a page gone after an earlier refresh fails the row that superseded the first', () => {
+  const dir = makePassingProject();
+  assert.equal(refreshAnswered(dir, pageBack).status, 'collected');
+  corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01', '| CLOSED | E-02'));
+  refreshAnswered(dir, errorPage(410, 'Gone'));
+  const findings = runCheck('evidence-supersession', snapshot(dir));
+  const gone = findings.filter((f) => f.rule === 'cites-gone-page');
+  assert.deepEqual(gone.map((f) => [f.row, f.cited, f.status]), [['U-1', 'E-02', 410]], JSON.stringify(findings));
+  assert.ok(findings.some((f) => f.rule === 'superseded-and-released'), 'the released history row lost its pass');
+});
+
+test('cites-gone-page fails under every evidence policy, and with --strict', () => {
+  const dir = makePassingProject();
+  refreshAnswered(dir, errorPage(404));
+  for (const evidencePolicy of ['pluralist', 'strict']) {
+    const home = tempDir('fp-gone-policy-');
+    const config = path.join(home, 'config.json');
+    fs.writeFileSync(config, JSON.stringify({ evidencePolicy }));
+    const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: home, FETCHPROOF_CONFIG: config };
+    for (const strict of [false, true]) {
+      const verdict = runPreflight(dir, { env, strict });
+      assert.equal(verdict.evidencePolicy, evidencePolicy, 'the config did not select the policy, so this proves nothing');
+      const gone = verdict.findings.filter((f) => f.rule === 'cites-gone-page');
+      assert.deepEqual(gone.map((f) => f.severity), ['fail'], `evidencePolicy=${evidencePolicy} strict=${strict}`);
+      assert.equal(verdict.pass, false, `evidencePolicy=${evidencePolicy} strict=${strict} passed a gone page`);
+    }
+  }
 });

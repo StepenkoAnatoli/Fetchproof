@@ -15,6 +15,7 @@ import { verifyLedger } from './provenance.mjs';
 import { readPrior, onDiskOf, unrecordedDetail, PRIOR_PATH } from './prior.mjs';
 import { quoteAnchors, anchorFound, quoteTooShort, quoteTooShortOnRaw, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
+import { goneStatus } from './fetch-failure.mjs';
 
 const VALID_STATUSES = ['CLOSED', 'KNOWN-UNKNOWN'];
 const MIN_CAPTURE_CHARS = 200;
@@ -671,12 +672,54 @@ function isReleasedHistory(corpus, row, superseded = supersededRows(corpus)) {
   return !corpus.unknowns.some((u) => u.cites.some((c) => c.toUpperCase() === row.id.toUpperCase()));
 }
 
+/**
+ * The page behind a cited row, when a later refresh found it gone (ADR-0194): `{ status, day }`,
+ * or null.
+ *
+ * A refresh the page answered 404 or 410 writes an `op: 'fail'` ledger entry and nothing else -
+ * no capture, no row - so `supersededRows`, which sees rows, saw no replacement, the old row
+ * stayed current, and a claim resting on a deleted page passed the gate: the quiet failure
+ * ADR-0026 exists to prevent (found 2026-10-25, plan v0.4 §8).
+ *
+ * Gone means: the LAST ledger entry for the row's URL (a scrape or a fail, by urlKey, whichever
+ * transport ran it) is a failure the collector's own `standingFailure` reads as gone, recorded
+ * after the scrape that wrote the row's capture. "Last" and "after" are ledger POSITION, not the
+ * entries' dates: the ledger is append-only and hash-chained, so its order is the order the
+ * fetches happened, while until 2026-10-04 a scrape entry carried midnight of its day and a
+ * fail the real time, so dates put a morning 404 after the scrape that followed it. A page that
+ * came back - a scrape after the 404 - is current again, and a refresh that replaced the row is
+ * `cites-superseded-row`'s to report. A row whose capture no fetch recorded has no scrape to be
+ * after; provenance fails it already. A blank Raw cell is the capture its URL names, as
+ * `supersededRows` ranks it.
+ *
+ * A row whose Finding names the status itself has said so, and is not flagged: the exemption
+ * `raw-error-status` makes for a corpus that cites a 404 on purpose (a string check).
+ */
+function goneAfterScrape(corpus, row, rank, lastByKey) {
+  if (!row?.url) return null;
+  const own = rank.get(row.raw || captureOf(corpus, row)?.file);
+  if (own === undefined) return null;
+  const last = lastByKey.get(urlKey(row.url));
+  if (last === undefined || last <= own) return null;
+  const entry = corpus.ledger.entries[last];
+  if (entry.op !== 'fail') return null;
+  const status = goneStatus(entry.error);
+  if (status === null || new RegExp(`\\b${status}\\b`).test(row.finding)) return null;
+  return { status, day: String(entry.at ?? '').slice(0, 10) };
+}
+
+/** Each URL's last scrape-or-fail ledger entry: urlKey -> its position in the ledger. */
+function lastFetchByUrl(entries) {
+  const last = new Map();
+  (entries ?? []).forEach((e, i) => {
+    if ((e?.op === 'scrape' || e?.op === 'fail') && e.url) last.set(urlKey(e.url), i);
+  });
+  return last;
+}
+
 function evidenceSupersession(corpus) {
   const out = [];
   const superseded = supersededRows(corpus);
-  if (!superseded.size) {
-    return [finding('pass', 'evidence-supersession', 'supersession', 'no evidence row has been re-collected')];
-  }
 
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
@@ -689,11 +732,28 @@ function evidenceSupersession(corpus) {
     }
   }
 
+  // Not a supersession - nothing replaced the row - so its own name (ADR-0194), and it is
+  // asked whether or not anything was re-collected.
+  const rank = ledgerRank(corpus.ledger?.entries);
+  const lastByKey = lastFetchByUrl(corpus.ledger?.entries);
+  for (const unknown of corpus.unknowns) {
+    for (const id of unknown.cites) {
+      const row = corpus.evidence.find((e) => e.id.toUpperCase() === id.toUpperCase());
+      const gone = goneAfterScrape(corpus, row, rank, lastByKey);
+      if (!gone) continue;
+      out.push(finding('fail', 'evidence-supersession', 'cites-gone-page',
+        `${unknown.id} rests on ${id}. A refresh on ${gone.day} found the page gone (HTTP ${gone.status}). `
+        + `Re-research ${unknown.id} or record why the earlier reading still holds.`,
+        { row: unknown.id, line: unknown.line, cited: id, status: gone.status }));
+    }
+  }
+
   for (const [id, replacement] of superseded) {
     if (corpus.unknowns.some((u) => u.cites.some((c) => c.toUpperCase() === id))) continue;
     out.push(finding('pass', 'evidence-supersession', 'superseded-and-released',
       `${id} was superseded by ${replacement.id} and is cited by nothing - kept as history`));
   }
+  if (!out.length) out.push(finding('pass', 'evidence-supersession', 'supersession', 'no evidence row has been re-collected'));
   return out;
 }
 

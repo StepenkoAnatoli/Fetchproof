@@ -5,6 +5,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Added: `evidence-supersession/cites-gone-page`** (ADR-0194). A cited row fails when a refresh
+  after its scrape found the page gone (HTTP 404 or 410). This holds under every policy; a Finding
+  that names the status is exempt. The failure classifier now lives in `lib/fetch-failure.mjs`,
+  shared by the collector and the gate.
+
 - **Changed: lead-orchestrator's kit note carries the research rules to builders and reviewers**
   (ADR-0196). Its section 5 makes every builder brief in a Fetchproof project carry the unit's
   E-## rows and the `cite-in-code` and `contract-tests` rules. It adds a research reviewer, which
