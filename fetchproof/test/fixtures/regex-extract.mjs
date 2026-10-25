@@ -4,6 +4,13 @@
 /* eslint-disable */
 const BLOCK_DROP = /<(script|style|noscript|svg|iframe|form|template)\b[\s\S]*?<\/\1>/gi;
 
+// One tag, as the converter strips it since 2026-10-25 (B3): the first '>' outside a `"…"` or
+// `'…'` value that opens right after `=`, where `/<[^>]+>/g` took the first '>' of all. Written
+// as a regex on its own, not taken from lib/, so the two readings check each other. A quote whose
+// partner has no '>' after it fails the quoted branch, and the regex backtracks to reading it as
+// text - the converter's "a quote that ends no tag is no quote".
+const TAG = /<(?:=[\t\n\f\r ]*"[^"]*"|=[\t\n\f\r ]*'[^']*'|[^>])+>/g;
+
 /**
  * One numeric character reference. HTML reads 0, a surrogate, and anything past U+10FFFF
  * as U+FFFD: String.fromCodePoint THROWS on the last, so one malformed entity crashed the
@@ -120,12 +127,12 @@ function linkShare(html) {
 }
 
 function wordsOf(html) {
-  return decodeEntities(String(html).replace(/<[^>]+>/g, ' ')).split(/\s+/).filter(Boolean).length;
+  return decodeEntities(String(html).replace(TAG, ' ')).split(/\s+/).filter(Boolean).length;
 }
 
 function density(html) {
-  const tags = (html.match(/<[^>]+>/g) ?? []).length + 1;
-  const words = decodeEntities(html.replace(/<[^>]+>/g, ' ')).split(/\s+/).filter(Boolean).length;
+  const tags = (html.match(TAG) ?? []).length + 1;
+  const words = decodeEntities(html.replace(TAG, ' ')).split(/\s+/).filter(Boolean).length;
   return words / tags;
 }
 
@@ -151,13 +158,13 @@ function inline(html, { decode = true } = {}) {
   return finish(
     String(html)
       .replace(/<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, body) => {
-        const label = body.replace(/<[^>]+>/g, '').trim();
+        const label = body.replace(TAG, '').trim();
         return decodeEntities(label).trim() ? `[${label}](${href})` : '';
       })
       .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
       .replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
       .replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
-      .replace(/<[^>]+>/g, ' '),
+      .replace(TAG, ' '),
   ).replace(/[ \t]{2,}/g, ' ').trim();
 }
 

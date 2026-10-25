@@ -25,7 +25,10 @@ const TAGS = ['div', 'DIV', 'main', 'article', 'section', 'p', 'a', 'A', 'b', 's
   'h1', 'h2', 'H3', 'h6', 'title', 'script', 'style', 'svg', 'form', 'template', 'span', 'br', 'table', 'ul'];
 const WORDS = ['limit', 'quota', 'requests', 'per', 'minute', 'the', 'free', 'plan', '1,000', '&amp;', '&#x41;', '&lt;', 'caveat', 'x>y', "it's", '"q"'];
 const ATTRS = ['', ' class="x"', ' href="/docs"', " href='https://a.example/p'", ' href="https://b.example/q" class="result-link"',
-  ' class="result-link" href="https://c.example"', ' href="x>y"', ' data-v="a>b" href="/z"', ' href="/1" href="/2"', ' HREF="https://d.example"', ' id=main'];
+  ' class="result-link" href="https://c.example"', ' href="x>y"', ' data-v="a>b" href="/z"', ' href="/1" href="/2"', ' HREF="https://d.example"', ' id=main',
+  // Quoted values that hide a '>' and tags, an apostrophe in an unquoted value, and a quote that
+  // never closes (B3, 2026-10-25).
+  " title=O'Brien", ' alt="x > <b>y</b>"', " data-x = 'a > b'", ' title="unclosed'];
 
 function page(next) {
   const pick = (list) => list[Math.floor(next() * list.length)];
@@ -111,6 +114,13 @@ test('extraction time grows linearly with a page of unclosed tags, not quadratic
     'unclosed <li>': (n) => '<li>item '.repeat(n),
     'unclosed <a href>': (n) => '<a href="/x">link '.repeat(n),
     'tags with no >': (n) => '<li <a <div '.repeat(n),
+    // The tag stripper skips quoted attribute values (2026-10-25, B3). A quote that never closes
+    // ends nothing: the tag falls back to its first '>'. Failing the tag there instead, and
+    // trying the next '<', would look for the quote's partner again from every '<' before it,
+    // each time through the rest of the page.
+    'quoted > in attributes': (n) => '<span title="a > b">word '.repeat(n),
+    'unterminated quote after a run of <': (n) => `${'<i word '.repeat(n)}title="x> ${'<b>tail</b> '.repeat(n)}`,
+    'a quote in every tag, closed by the next tag': (n) => '<b title="x> word '.repeat(n),
   };
   const BOUND = 4;
   const slow = [];

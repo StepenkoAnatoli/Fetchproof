@@ -5,6 +5,12 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: keyless captures no longer leak attribute text** (plan B3). A `>` inside a quoted
+  attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends the tag, so the rest
+  of the value is no longer kept as page text. A quote opens only after `=`; one that never closes
+  falls back to the old rule, and the converter stays linear. Existing captures are records and
+  are not rewritten.
+
 - **Added: `evidence-supersession/cites-gone-page`** (ADR-0194). A cited row fails when a refresh
   after its scrape found the page gone (HTTP 404 or 410). This holds under every policy; a Finding
   that names the status is exempt. The failure classifier now lives in `lib/fetch-failure.mjs`,

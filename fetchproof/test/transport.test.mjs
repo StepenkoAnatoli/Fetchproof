@@ -355,6 +355,39 @@ test('comparison text inside a link label in a paragraph or a div survives, deco
   assert.equal(httpKeyless.htmlToMarkdown('<p>&#38;lt;b&#38;gt;</p>'), '&lt;b&gt;');
 });
 
+// Found 2026-10-25 (reasoning-layer plan, B3): the tag stripper ended a tag at the first '>',
+// even inside a quoted attribute value. `<span title="Tier 3 > unlimited API requests">` left
+// `unlimited API requests">` in the keyless capture - text no reader of the page sees, which the
+// quote check then accepts as quotable. A tag ends at the first '>' outside a `"…"` or `'…'`
+// value; a quote opens a value only right after `=`, as in HTML, so `title=O'Brien` opens none.
+test('a ">" inside a quoted attribute value does not end the tag', () => {
+  assert.equal(httpKeyless.htmlToMarkdown('<p>Plans: <span title="Tier 3 > unlimited API requests">Tier 3</span> has 100 requests a day.</p>'),
+    'Plans: Tier 3 has 100 requests a day.');
+  assert.equal(httpKeyless.htmlToMarkdown(`<div title=O'Brien><span data-x='A > <p>INJECTED</p> B'>Visible</span></div>`), 'Visible',
+    "an unquoted value with an apostrophe opens no quote, and a single-quoted value hides its '>' and its tags");
+  // The other two places the stripper runs: a link's label, and a title taken from the <h1>.
+  assert.equal(httpKeyless.htmlToMarkdown('<p>See <a href="/x"><img alt="a > b">label</a> now.</p>'), 'See [label](/x) now.');
+  assert.equal(httpKeyless.titleOf('<h1><span title="a > b">Name</span></h1>'), 'Name');
+  // R3 still survives beside a quoted '>', written as a page writes it; and a bare '<' in text,
+  // with an apostrophe and quotes after its '>', opens no quote that would swallow them.
+  const md = httpKeyless.htmlToMarkdown(`<ul><li>It's rare: <span title='p > q'>p</span> &lt; 0.001 and x &gt; 3.</li><li>Raw: p < 0.001 and x > 3. Ask O'Brien about "q".</li></ul>`);
+  assert.match(md, /^- It's rare: p < 0\.001 and x > 3\.$/m, 'R3');
+  assert.match(md, /^- Raw: .* Ask O'Brien about "q"\.$/m, 'the text after a bare <');
+});
+
+// The stripper's tag count is the denominator of the words-per-tag score that picks the densest
+// block. A quoted value holding tags is one tag, not one per '<' in it: counted the old way, the
+// 200 `<i></i>` inside this attribute buried the block of prose under the shorter one.
+test('a quoted attribute value holding tags counts as one tag when the densest block is picked', () => {
+  const prose = `<div>${'alpha '.repeat(300)}<span data-x='${'<i></i>'.repeat(200)}'>end</span></div>`;
+  const other = `<div>${'beta '.repeat(120)}<b>x</b></div>`;
+  const chosen = httpKeyless.mainContent(`<html><body>${prose}${other}</body></html>`);
+  assert.equal(chosen.basis, 'densest');
+  assert.match(chosen.html, /alpha/, 'the block of prose is the densest');
+  assert.doesNotMatch(chosen.html, /beta/);
+  assert.equal(chosen.chosenWords, 301);
+});
+
 test('a page that marks its content with <main> is believed over a denser fragment', () => {
   // Found 2026-09-27: on a GitHub Docs page the keyless extractor kept the 262-character
   // summary and dropped the 17,385-character <main> around it - words-per-tag favours a

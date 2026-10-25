@@ -152,16 +152,73 @@ function tagPairs(text, { open, tag = 'attributes', close }) {
 }
 
 /**
- * `text.replace(/<[^>]+>/g, by)`, and the number of tags it replaced. After the last '>' no tag
- * can end, and there each '<' made the regex scan to the end of the page and fail - quadratic in
- * a run of `<li <a ...` with no '>' (found 2026-09-30). So it runs only up to that last '>'.
+ * Every tag replaced by `by`, and the number of tags replaced. A tag is a '<', at least one
+ * character, and the first '>' outside a quoted attribute value - as `/<[^>]+>/g` read it, except
+ * that a '>' inside `"…"` or `'…'` does not end the tag. Found 2026-10-25 (reasoning-layer plan,
+ * B3): `<span title="Tier 3 > unlimited API requests">` left `unlimited API requests">` in the
+ * capture, text no reader of the page sees and that the quote check then accepted.
+ *
+ * A quote opens a value only right after `=` and optional whitespace, as in HTML: the apostrophe
+ * of `title=O'Brien` is part of an unquoted value, and one in text opens nothing. A quote whose
+ * partner does not come before the last '>' could end no tag, so it is no quote: the tag ends at
+ * its first '>' as before. Failing the tag there instead, and trying the next '<', would look for
+ * that quote's partner again from every '<' before it, each time to the end of the page.
+ *
+ * After the last '>' no tag can end, and there each '<' made the regex scan to the end of the page
+ * and fail - quadratic in a run of `<li <a ...` with no '>' (found 2026-09-30). So no tag starts
+ * at or after that last '>'. Every other scan ends at a '>' and the next resumes after it, and a
+ * quote's partner is looked up once per quote that opens. A quote with no partner before the last
+ * '>' is the last of its kind before it, so that lookup - the one that can run past the tag -
+ * fails at most once for each kind of quote. Linear.
  */
 function stripTags(text, by) {
   const last = text.lastIndexOf('>');
   if (last === -1) return { text, tags: 0 };
+  const scan = { text, last, gt: nextOf(text, '>'), eq: nextOf(text, '=') };
+  let out = '';
   let tags = 0;
-  const head = text.slice(0, last + 1).replace(/<[^>]+>/g, () => { tags += 1; return by; });
-  return { text: head + text.slice(last + 1), tags };
+  let kept = 0;
+  for (let at = text.indexOf('<'); at !== -1 && at < last; ) {
+    const end = tagEnd(scan, at);
+    if (end === -1) { at = text.indexOf('<', at + 1); continue; }
+    out += text.slice(kept, at) + by;
+    tags += 1;
+    kept = end + 1;
+    at = text.indexOf('<', kept);
+  }
+  return { text: out + text.slice(kept), tags };
+}
+
+/**
+ * The next `ch` at or after a position, remembered while the scan moves forward, as `tagPairs`
+ * remembers the next '>': a tag with no '=' before its '>' costs two lookups and no regex.
+ * Reading every tag through a sticky regex and an array of parts made extraction 1.3-2x slower
+ * than the regex it replaced, and the http-linear timing test 30-80% longer (measured 2026-10-25).
+ */
+function nextOf(text, ch) {
+  let from = -1;
+  let at = -1;
+  return (pos) => {
+    if (from === -1 || pos < from || (at !== -1 && pos > at)) { from = pos; at = text.indexOf(ch, pos); }
+    return at;
+  };
+}
+
+const QUOTE_OPENS = /=[\t\n\f\r ]*["']/y;
+
+/** Where the tag opened by the '<' at `at` ends, or -1 for `<>`: no tag, as `[^>]+` needs one character. */
+function tagEnd({ text, last, gt, eq }, at) {
+  if (text[at + 1] === '>') return -1;
+  let i = at + 1;
+  for (;;) {
+    // Every step lands at or before the last '>', so a '>' is always ahead.
+    const close = gt(i);
+    const equals = eq(i);
+    if (equals === -1 || equals > close) return close;
+    QUOTE_OPENS.lastIndex = equals;
+    const partner = QUOTE_OPENS.test(text) ? text.indexOf(text[QUOTE_OPENS.lastIndex - 1], QUOTE_OPENS.lastIndex) : -1;
+    i = partner !== -1 && partner < last ? partner + 1 : equals + 1;
+  }
 }
 
 /** `text.replace(pairRegex, fn)`, through tagPairs. */
