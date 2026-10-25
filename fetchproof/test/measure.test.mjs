@@ -145,6 +145,20 @@ test('quote coverage: an unknown citing two usable rows, or one row twice, count
   assert.deepEqual(coverage(dir), [1, 1]);
 });
 
+test('quote coverage: a row with one usable found quote counts, whatever else it carries', () => {
+  // The plan's wording, kept on purpose: "at least one row with a usable quote found". The
+  // invented quote beside the real one fails the gate on this row (quote-not-found), and the
+  // closure still counts: coverage asks whether a reader has one quote to check, not what the
+  // gate makes of the row (U10 review F1, 2026-10-25). Counting only rows the gate passes would
+  // be a rule change and needs its own record (ADR-0195, decision 4).
+  const dir = coverageProject({
+    rows: { 'E-01': `[quote: ${QUOTE}] [quote: The paid plan allows 99 requests per minute]` },
+    unknowns: [['U-1', 'CLOSED', 'E-01']],
+  });
+  assert.deepEqual(measureCorpus(dir).quotesFound, { count: 1, of: 2, percent: 50 }, 'one real quote, one invented');
+  assert.deepEqual(coverage(dir), [1, 1]);
+});
+
 test('quote coverage: an OPEN or KNOWN-UNKNOWN unknown is not in M, even citing a usable row', () => {
   const dir = coverageProject({
     rows: { 'E-01': `[quote: ${QUOTE}]` },

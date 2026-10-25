@@ -6,7 +6,7 @@
   `renderMeasure`'s new line), `fetchproof/bin/measure.mjs` (its help text). No check, finding,
   verdict, flag or exit code changes; `--json` gains one field and renames none.
 - **Prompted by:** the reasoning-layer plan v0.4 (owner-approved), sections 2 ("Quote coverage
-  is not reported") and 9, item R-15.
+  is not reported") and 9, item R-16.
 - **Lifts the hold (ADR-0157) and the freeze (ADR-0117)** for this one item, by the owner's
   ruling of 2026-10-25: "spend credit but in a new chat for 192/195", read as the range
   0192-0195. Unrelated work stays held.
@@ -49,11 +49,20 @@ that reasoning for a report, not its behaviour. No code or fixture of it is copi
    - **found in its capture:** `anchorFound(anchor.fragments, parseCapture(...).body)` over the
      capture `captureOf` resolves - exactly the `citations` check's resolution and order.
    An unknown citing two quoted rows, or one row twice, is one closure. An unreadable marker
-   (#319) is not a usable quote.
+   (#319) is not a usable quote. A quote the check still compares because it is long on its
+   raw text (ADR-0191 review F1, 2026-10-25) but which warns quote-too-short - `[Free
+   plan](https://...)` - is not usable here either. That is deliberate: "usable" is
+   `quoteTooShort` alone, not the check's skip predicate (`quoteTooShort` and
+   `quoteTooShortOnRaw`), and aligning the two would loosen the line to quotes the gate's own
+   warning says anchor almost nothing.
 4. **Capture resolution: `captureOf`, with its `byUrl` fallback for a blank Raw cell.** That is
    what the `citations` check uses to decide `quote-not-found`, and what `measure.mjs` already
-   used for `quotes found`. A row the gate accepts as a checked quote therefore counts, and one
-   the gate warns or fails on does not. The fallback is a known weakness for a *refresh*
+   used for `quotes found`. A row counts when at least one of its quotes is usable and found,
+   whatever else it carries: a real quote beside an invented one counts, though the gate fails
+   that row (`quote-not-found`), because the plan's wording is "at least one row with a usable
+   quote found" and the line asks whether a reader has a quote to check, not what the gate
+   makes of the row. A row whose quotes all warn or fail does not count. Counting only rows the
+   gate passes would be a rule change and needs its own record. The fallback is a known weakness for a *refresh*
    recheck (the old capture vouches for itself, plan section 2), but here it describes the
    corpus as the gate judges it today; if the gate's resolution changes, this line follows it,
    because it calls the same function.
@@ -68,7 +77,7 @@ that reasoning for a report, not its behaviour. No code or fixture of it is copi
   rows behind one unknown, would bend a row count either way.
 - **Count any quote marker, found or not, short or not** (the looser reading of "checkable").
   A quote the gate fails or only warns on is not one a reader can rely on; the line must agree
-  with the gate. On today's corpora the two counts agree (below), so the strict reading costs
+  with the gate quote by quote (a row is judged by its best quote, decision 4). On today's corpora the two counts agree (below), so the strict reading costs
   nothing now and will not drift later.
 - **Re-implement the short floor or the matcher here.** ADR-0191 exists because two measures
   of "short" drifted apart; a third would repeat it.
@@ -81,9 +90,11 @@ that reasoning for a report, not its behaviour. No code or fixture of it is copi
 
 ## Consequences
 
-The re-count at the base of this change (`3282cf3` with ADR-0191 applied), over every corpus
+The re-count at `d788545`, the commit that added this line, over every corpus
 `git ls-files '*research/EVIDENCE.md'` lists except `fetchproof/template` (the scaffold, not a
-corpus), with this code:
+corpus), with this code. It was first taken on the builder's base (`3282cf3` with ADR-0191
+applied) and re-counted at `d788545` by the review (2026-10-25), which also carries ADR-0196,
+the ADR-0191 review fix, ADR-0194 and plan B3: every row is identical.
 
 | Corpus | N / M |
 |---|---|
@@ -144,6 +155,11 @@ corpus), with this code:
 - The three 2026-10-25 projects add 7 / 7; they are reported apart because they were collected
   for this run.
 - Each later corpus changes these numbers; the table is a dated measurement, not a target.
+- `measure.mjs` now calls `quoteTooShort` and `anchorFound`, so ADR-0191's Consequences line
+  ("does not call `quoteTooShort`, so its numbers do not move") no longer holds from this
+  change on: a change to ADR-0191's floor or to `normalizeForMatch` moves this line, and the
+  table is re-counted when one lands. ADR-0192 is the next such change; the review re-counted
+  with its matcher applied and every row was unchanged. ADR-0191 stays as dated.
 
 ## Trigger to revisit
 
@@ -151,4 +167,6 @@ corpus), with this code:
   corpus.
 - The gate's capture resolution for quotes changes (for example, `byUrl` is dropped): this
   line follows it, and the table above is re-counted.
+- ADR-0191's short floor (`quoteTooShort`) or the matcher (`normalizeForMatch`, `anchorFound`)
+  changes - ADR-0192 is the next: this line follows it, and the table above is re-counted.
 - The owner asks for the opt-in ratchet, or the owner's 1.0 decision on the freeze (ADR-0117).

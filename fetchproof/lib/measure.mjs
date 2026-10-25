@@ -62,6 +62,14 @@ export function measureCorpus(root, { corpus = null } = {}) {
   // quote - "usable" and "found" exactly as the `citations` check judges them: the row's capture
   // by `captureOf` (the Raw cell, else the URL's newest capture, the gate's own resolution),
   // `parseCapture(...).body`, `quoteTooShort` on the compared text (ADR-0191), `anchorFound`.
+  // Stricter than the check's compare step, on purpose: a quote short on its compared text but
+  // long on its raw text - `[Free plan](https://...)` - is still compared by the check (ADR-0191
+  // review F1, 2026-10-25) yet warns quote-too-short, so it is not usable here. Do not swap in
+  // the check's skip predicate (`quoteTooShort && quoteTooShortOnRaw`): that loosens the line
+  // to quotes the gate itself says anchor almost nothing (U10 review F2, 2026-10-25).
+  // A row counts when ONE of its quotes is usable and found, whatever else it carries - an
+  // invented quote beside a real one fails the gate on that row and the closure still counts
+  // (the plan's "at least one row with a usable quote found"; U10 review F1).
   // A per-unknown `some`, so an unknown citing two quoted rows, or one row twice, is one closure.
   // It measures how much of the closure a reader can check against its page in seconds - not
   // whether the quote supports the claim, which needs a judge - and it never gates (ADR-0089).
