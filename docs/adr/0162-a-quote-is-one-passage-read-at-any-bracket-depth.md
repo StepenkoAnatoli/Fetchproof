@@ -3,7 +3,9 @@
 - **Date:** 2026-10-17
 - **Status:** accepted; amended 2026-10-19 (review of the 2026-10-19 sweep): in the
   per-fragment floor a character of a script without word spaces weighs a third of a word, as
-  in ADR-0176, and a fragment is short only when it is short both by that weight and on spaces
+  in ADR-0176, and a fragment is short only when it is short both by that weight and on spaces;
+  amended by ADR-0191 (2026-10-25): each fragment is measured on its compared text, and
+  `quoteChars` is removed
 - **Area:** `fetchproof/lib/quotes.mjs`, `fetchproof/lib/checks.mjs` (ADR-0087). A fix to
   the quote check's own reading, not a new capability: it adds no command, flag, transport,
   provider, configuration key or check.

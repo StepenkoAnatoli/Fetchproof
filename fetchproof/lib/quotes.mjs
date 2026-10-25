@@ -206,15 +206,36 @@ export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
  * fragment that compares as nothing anchors nothing, so it is short.
  *
  * One branch: an anchor with NO compared text at all is measured on its raw fragments, as it
- * was before ADR-0191. Measured on compared text it would be short, and the check stops at the
- * short warning, so the long formatting-only quotes that fail `quote-not-found` today (forty
- * `*`, 2026-10-08) would only warn. B1 adds warnings and removes no failure, so their verdict,
- * and the short warning on `***`, stay what they were.
+ * was before ADR-0191, so the long formatting-only quotes that fail `quote-not-found` (forty
+ * `*`, 2026-10-08) keep exactly that result, with no warning beside it, and `***` keeps its
+ * short warning.
+ *
+ * The verdict this feeds does NOT stop at the warning alone (review of ADR-0191, 2026-10-25,
+ * F1): `checks.mjs` skips the comparison only when `quoteTooShortOnRaw` agrees. Skipped on this
+ * measure alone, `[Enterprise plan](https://...)` - long raw, short compared, invented - went
+ * from failing `quote-not-found` to a warning and a passing gate. So B1 removes no failure:
+ * every quote compared before it is still compared. It is not warnings only, either: NFKC and
+ * case folding can LENGTHEN a fragment (`㍿` folds to `株式会社`), so a few quotes short on raw
+ * text are long on compared text; they lose the warning and are compared now - the strict
+ * direction.
  */
 export function quoteTooShort(anchor) {
   const compared = anchor.fragments.map((f) => normalizeForMatch(f));
-  const measured = compared.some(Boolean) ? compared : anchor.fragments;
-  return measured.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+  return fragmentsShort(compared.some(Boolean) ? compared : anchor.fragments);
+}
+
+/**
+ * Whether the quote is short on its RAW fragments, as written in the Finding cell: the measure
+ * before ADR-0191. The check leaves a short quote uncompared only when this is true too, so a
+ * quote that was compared before ADR-0191 is still compared after it (review F1, 2026-10-25).
+ */
+export function quoteTooShortOnRaw(anchor) {
+  return fragmentsShort(anchor.fragments);
+}
+
+/** Every fragment under all three floors: words on spaces, ADR-0176's weight, and characters. */
+function fragmentsShort(fragments) {
+  return fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
     && fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
     && f.length < MIN_QUOTE_CHARS);
 }

@@ -5,6 +5,7 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
+import { runPreflight } from '../lib/preflight.mjs';
 import { quoteAnchors, normalizeForMatch, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
@@ -338,19 +339,19 @@ test('a spaced fragment of three words in a script without word spaces is still 
 // formatting-only fragment beside a two-word one. The floor now reads the text the matcher reads.
 test('the short-quote floor is measured on the compared text, not the raw marker', () => {
   const link = '[Free plan](https://vendor.example.com/pricing#free-plan-details)';
-  const padded = `**Free**${'​'.repeat(35)} plan`;
+  const padded = `**Free**${'\u200B'.repeat(35)} plan`;
   for (const [name, quote] of [
     ['a Markdown link whose URL is long', link],
     ['emphasis padded with zero-width spaces', padded],
     ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... free plan`],
-    ['an invisible fragment beside two words', `${'​'.repeat(40)} ... free plan`],
+    ['an invisible fragment beside two words', `${'\u200B'.repeat(40)} ... free plan`],
     ['plain two words', 'Free plan'],
   ]) {
     assert.ok(quote.length >= MIN_QUOTE_CHARS || name === 'plain two words', `${name}: the case clears the raw floor`);
     assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), true, `${name}: anchors only "free plan"`);
     const judged = quoted(`Free tier. [quote: ${quote}]`);
     assert.equal(judged.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', `${name}: ${JSON.stringify(judged)}`);
-    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: a warning, never a new failure`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: found in the capture, so a warning only`);
   }
   // A raw length made of characters the comparison drops does not count either.
   assert.equal(quoteTooShort(quoteAnchors(`[quote: ${'x'.repeat(MIN_QUOTE_CHARS - 1)}__]`)[0]), true);
@@ -363,24 +364,79 @@ test('the short-quote floor is measured on the compared text, not the raw marker
     .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [], 'the 130-character token is checked and found');
 });
 
-// ADR-0191's one branch: an anchor with NO compared text is measured raw, exactly as before it.
-// Measured on compared text it would be short, and the check's `continue` after the warning
-// would turn the four long formatting-only quotes' quote-not-found failure (2026-10-08) into a
-// warning - the lenient direction, which B1 must not take.
+// ADR-0191's one branch: an anchor with NO compared text is measured raw, exactly as before it,
+// so the four long formatting-only quotes (2026-10-08) keep their quote-not-found failure with no
+// warning beside it, and `***` keeps its warning: their result does not move at all (D-d).
 test('a quote with no compared text keeps the raw measure, so its result does not move', () => {
   for (const [raw, short] of [
     ['*'.repeat(40), false],
-    ['​'.repeat(40), false],
+    ['\u200B'.repeat(40), false],
     ['**** **** ****', false],
     [`[](https://x.invalid/${'q'.repeat(40)})`, false],
     ['***', true],
-    ['​​', true],
+    ['\u200B\u200B', true],
     ['** ... __', true],
   ]) {
     const [anchor] = quoteAnchors(`[quote: ${raw}]`);
     assert.equal(anchor.fragments.map(normalizeForMatch).join(''), '', `${JSON.stringify(raw)} has no compared text`);
     assert.equal(quoteTooShort(anchor), short, `${JSON.stringify(raw)}: short only as it was on raw text`);
   }
+});
+
+/** The whole gate (every check, through runPreflight) on the passing project with one Finding replaced. */
+function gated(finding) {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (t) => t.replace(
+    '| The free plan allows 10 requests per minute and includes 1,000 credits. |', `| ${finding} |`));
+  const verdict = runPreflight(dir, { env: {} });
+  const quoteRules = verdict.findings.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found')
+    .map((f) => `${f.severity} ${f.rule}`).sort();
+  return { pass: verdict.pass, quoteRules, failures: verdict.failures.map((f) => f.rule) };
+}
+
+// Review of ADR-0191 (2026-10-25, U1 review F1; run decision D-l): the floor moved to the compared
+// text, but the check still stopped at the short warning, so a quote long on its raw fragments
+// and short on the compared ones was no longer compared at all. `[Enterprise plan](https://...)`
+// with no "enterprise plan" in the capture failed quote-not-found before ADR-0191 and passed the
+// gate with a warning after it: a gate failure removed by a change classed as a bug fix in the
+// strict direction. Such a quote now warns AND is compared. Only a quote that was short on its
+// raw fragments too - short before ADR-0191 - is left uncompared, as ADR-0087 always did.
+test('a quote short only on its compared text still warns and is still compared: an invented one fails the gate', () => {
+  for (const [name, quote] of [
+    ['a Markdown link whose URL is long', '[Enterprise plan](https://vendor.example.com/pricing#enterprise-plan-details)'],
+    ['emphasis padded with zero-width spaces', `**Enterprise**${'​'.repeat(35)} plan`],
+    ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... enterprise plan`],
+  ]) {
+    assert.ok(quote.length >= MIN_QUOTE_CHARS, `${name}: the case clears the raw floor, so it was compared before ADR-0191`);
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), true, `${name}: short on the compared text`);
+    const invented = gated(`Enterprise tier exists. [quote: ${quote}]`);
+    assert.deepEqual(invented.quoteRules, ['fail quote-not-found', 'warn quote-too-short'], `${name}: ${JSON.stringify(invented)}`);
+    assert.equal(invented.pass, false, `${name}: the invented quote blocks the gate, as it did before ADR-0191`);
+    assert.deepEqual(invented.failures, ['quote-not-found'], `${name}: and nothing else does`);
+
+    const real = gated(`Free tier exists. [quote: ${quote.replace('Enterprise', 'Free').replace('enterprise', 'free')}]`);
+    assert.deepEqual(real.quoteRules, ['warn quote-too-short'], `${name}, found in the capture: ${JSON.stringify(real)}`);
+    assert.equal(real.pass, true, `${name}, found in the capture: a warning only`);
+  }
+  // Short on the raw text as well: ADR-0087's behaviour, unchanged - warned, never compared.
+  const plain = gated('Enterprise tier exists. [quote: enterprise plan]');
+  assert.deepEqual(plain.quoteRules, ['warn quote-too-short'], JSON.stringify(plain));
+  assert.equal(plain.pass, true, 'a quote short on its raw text is still not compared');
+});
+
+// U1 review F3 (2026-10-25): the compared text is not always the shorter one. NFKC and case
+// folding can lengthen a fragment - `㍿` is one character and folds to `株式会社` - so a quote
+// that was short on its raw text (and so warned and was never compared) is not short on the
+// compared text, and is now compared: an invented one fails. The strict direction, on contrived
+// input; no quote in the 44 committed corpora moves this way.
+test('a quote short on its raw text but long once folded is compared, and fails when invented', () => {
+  const quote = '㍿㍿㍿';
+  assert.ok(quote.length < MIN_QUOTE_CHARS && !/\s/.test(quote), 'one raw word of three characters: short before ADR-0191');
+  assert.equal(normalizeForMatch(quote), '株式会社株式会社株式会社');
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), false, 'twelve Han characters are four words by weight');
+  const invented = gated(`Company form. [quote: ${quote}]`);
+  assert.deepEqual(invented.quoteRules, ['fail quote-not-found'], JSON.stringify(invented));
+  assert.equal(invented.pass, false);
 });
 
 // The pre-mortem of ADR-0191: NFKC folds full-width forms and the half-width katakana before the

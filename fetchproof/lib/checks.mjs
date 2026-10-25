@@ -13,7 +13,7 @@ import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { readPrior, onDiskOf, unrecordedDetail, PRIOR_PATH } from './prior.mjs';
-import { quoteAnchors, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
+import { quoteAnchors, anchorFound, quoteTooShort, quoteTooShortOnRaw, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
 
 const VALID_STATUSES = ['CLOSED', 'KNOWN-UNKNOWN'];
@@ -159,11 +159,15 @@ function citations(corpus) {
         quoted += 1;
         // Short in words AND in characters, per fragment: a long token of one "word" anchors one
         // exact line, and an ellipsis does not turn three one-word fragments into a sentence.
+        // Measured on the compared text (ADR-0191); the comparison is skipped only for a quote
+        // that was short on its raw text too, as before ADR-0191. A quote long raw and short
+        // compared - `[Enterprise plan](https://...)` - warns AND is compared, so an invented one
+        // still fails (review of ADR-0191, F1, 2026-10-25).
         if (quoteTooShort(anchor)) {
           out.push(finding('warn', 'citations', 'quote-too-short',
-            `${row.id} quotes "${anchor.quote}" - no fragment reaches ${MIN_QUOTE_WORDS} words or ${MIN_QUOTE_CHARS} characters, so it anchors almost nothing; quote the sentence the claim rests on`,
+            `${row.id} quotes "${anchor.quote}" - no fragment reaches ${MIN_QUOTE_WORDS} words or ${MIN_QUOTE_CHARS} characters of the compared text (link targets, emphasis and invisible characters do not count), so it anchors almost nothing; quote the sentence the claim rests on`,
             { row: row.id, line: row.line }));
-          continue;
+          if (quoteTooShortOnRaw(anchor)) continue;
         }
         if (!anchorFound(anchor.fragments, body)) {
           out.push(finding('fail', 'citations', 'quote-not-found',
