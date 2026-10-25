@@ -5,6 +5,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Added: the pre-registered study of the quote-level recheck**
+  (`docs/decisions/2026-10-25-refresh-recheck-study/`, plan §12). It fixes the question, the arms,
+  the six tasks over five page-change kinds, the three headline numbers and the decision rules
+  before any trial runs. The hidden suites are listed as "to write before trial 1".
+
 - **Added: a refresh baseline and a movement script** (`docs/measurements/2026-10-refresh-baseline/`,
   plan §4.2-4.3). It records what the gate says about every corpus at `ab2e605`: 41 corpora, 417
   rows, 517 quote anchors and 27 refreshes. `movement.mjs` prints every anchor, finding or verdict
