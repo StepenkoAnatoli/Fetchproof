@@ -862,7 +862,8 @@ function evidenceSupersession(corpus) {
       if (!gone) continue;
       out.push(finding('fail', 'evidence-supersession', 'cites-gone-page',
         `${unknown.id} rests on ${id}. A refresh on ${gone.day} found the page gone (HTTP ${gone.status}). `
-        + `Re-research ${unknown.id} or record why the earlier reading still holds.`,
+        + `Re-research ${unknown.id} or record in ${id}'s Finding that the page now answers HTTP ${gone.status} `
+        + 'and why the earlier reading still holds.',
         { row: unknown.id, line: unknown.line, cited: id, status: gone.status }));
     }
   }
@@ -1266,7 +1267,7 @@ export const CHECKS = Object.freeze([
   { name: 'unknown-closure', about: 'every CLOSED unknown rests on a real, fresh, primary row', run: unknownClosure },
   { name: 'subtopic-coverage', about: 'the map covers every universal dimension, and states a status for each', run: subtopicCoverage },
   { name: 'capture-completeness', about: 'no closed unknown rests solely on a partial capture', run: captureCompleteness },
-  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced, unless its quoted words survived the refresh (ADR-0193)', run: evidenceSupersession },
+  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced, unless its quoted words survived the refresh (ADR-0193), or on a page a refresh found gone (ADR-0194)', run: evidenceSupersession },
   { name: 'collection-attempts', about: 'a known-unknown was reached for before it was declared unreachable', run: collectionAttempts },
   { name: 'hygiene', about: 'duplicate rows, uncited captures, unparseable dates', run: hygiene },
   { name: 'corpus-shape', about: 'the corpus parses and the shape is there', run: corpusShape },

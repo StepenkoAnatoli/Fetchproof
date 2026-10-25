@@ -52,8 +52,11 @@ moves no committed verdict.
    `urlKey`, whichever transport ran it) is a fail that `standingFailure` reads as gone (HTTP
    404 or 410), recorded **after** the scrape that wrote the row's capture, the citation fails:
    "U-4 rests on E-12. A refresh on 2026-11-02 found the page gone (HTTP 404). Re-research U-4
-   or record why the earlier reading still holds." The finding carries `row`, `line`, `cited`
-   and `status`. The date is the fail entry's `at`.
+   or record in E-12's Finding that the page now answers HTTP 404 and why the earlier reading
+   still holds." The finding carries `row`, `line`, `cited` and `status`. The date is the
+   fail entry's `at`. The remedy names the place and the words because only those clear it
+   (decision 4): the same reason written without the status, or written in DISCOVERY.md's
+   Evidence cell, left the gate red (U6 review F4, 2026-10-25).
 2. **Ledger position decides "last" and "after", not dates.** The ledger is append-only and
    hash-chained, so its order is the order the fetches happened. Dates are not: until
    2026-10-04 a scrape entry was stamped with midnight of its day while a fail carried the real
@@ -105,7 +108,20 @@ moves no committed verdict.
 ## Consequences
 
 - A refresh that finds a cited page deleted now blocks the gate until the claim is re-researched,
-  or the row records the status ("the page now answers 404; ...").
+  or the row's Finding records the status ("the page now answers HTTP 404; ...").
+- **A blind spot, kept on purpose.** The exemption (decision 4) matches the status anywhere in
+  the Finding, so a row whose Finding names it as the page's *content* - an API reference saying
+  "unknown keys return HTTP 404", Google's soft-404 definition - can never trip `cites-gone-page`
+  for that status: its page could be deleted and the gate stay green. Measured by the U6 review
+  on 2026-10-25: 8 of the 344 cited rows in the 45 indexed corpora are such rows -
+  `2026-09-21-delivery-architecture` E-10, `2026-09-26-actions-sept-changes` E-05,
+  `2026-09-28-collection-cost-model` E-02, `2026-10-03-gap-audit-corpus` E-02,
+  `2026-10-04-gap-audit-extraction` E-07, E-09 and E-10, and the root's E-13. None of their pages
+  has a gone refresh, so nothing is hidden today. It was not narrowed (to a statement about the
+  page's fate, or a fixed marker such as "now answers HTTP 404") because the plan mandated the
+  `raw-error-status` exemption as it stands, and a narrower marker is a new convention every
+  corpus would have to learn - the owner's call, not this ADR's. The reverse trigger below
+  reopens it.
 - A refresh with a transient failure changes nothing, as before; the next refresh decides.
 - A later transient failure after a 404 (a 500, say) is the URL's last word, so the citation is
   not flagged until a refresh again answers gone. This is the collector's own reading
@@ -118,4 +134,6 @@ moves no committed verdict.
 
 - A cited page whose refresh was gone is reported under a spelling the check did not join.
 - A corpus is found citing a 404 on purpose without naming the status in its Finding.
+- A cited row's Finding names the status as content and its page is found gone (the blind spot
+  under Consequences).
 - The owner's 1.0 decision on the freeze (ADR-0117), or the ADR-0145 comparison reports.

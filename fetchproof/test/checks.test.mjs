@@ -1298,7 +1298,7 @@ test('cites-gone-page: a refresh the page answered 404, after the cited row\'s s
   assert.equal(gone.length, 1, JSON.stringify(findings));
   assert.equal(gone[0].severity, 'fail');
   assert.equal(gone[0].detail, `U-1 rests on E-01. A refresh on ${lastFailDay(dir)} found the page gone (HTTP 404). `
-    + 'Re-research U-1 or record why the earlier reading still holds.');
+    + 'Re-research U-1 or record in E-01\'s Finding that the page now answers HTTP 404 and why the earlier reading still holds.');
   assert.deepEqual([gone[0].row, gone[0].cited, gone[0].status], ['U-1', 'E-01', 404]);
   assert.equal(findings.some((f) => f.severity === 'pass'), false,
     'a pass beside the failure says nothing was re-collected, which the failure contradicts');
@@ -1490,4 +1490,62 @@ test('transport-provenance still reports a superseded row whose quote survived: 
 test('hygiene treats the quote-survived refresh as a refresh: no duplicate-url, no uncited capture', () => {
   const findings = runCheck('hygiene', survivedThroughKeyless());
   assert.deepEqual(findings.filter((f) => f.rule === 'duplicate-url' || f.rule === 'uncited-capture'), [], JSON.stringify(findings));
+});
+
+// ADR-0194 decision 6, and the first two alternatives it rejected: the gate reads "gone" from
+// lib/fetch-failure.mjs, which imports nothing, so that it never loads the collector - and
+// through it a transport - to read a string. Nothing pinned that (U6 review F3, 2026-10-25): an
+// `import './firecrawl.mjs';` added to checks.mjs left checks, architecture-map and repo-hygiene
+// green. So the import graph is read from the source, statically: importing the modules would
+// load them, and could not tell what a module merely reaches. A dynamic `import(` is refused
+// in the closure, because a static reading cannot follow one. child_process is refused below
+// checks.mjs only: preflight's closure spawns local processes - git from gate.mjs, handoff.mjs
+// and machine.mjs, and the suite from the commit gate in gate.mjs - none of them a collector,
+// while no module in either closure may name a network builtin.
+const STATIC_IMPORT = /^\s*(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|^\s*import\s*['"]([^'"]+)['"]/gm;
+const COLLECTOR_OR_TRANSPORT = /collect|firecrawl|transport|research|serpapi|searxng|search-session|browser-guard/;
+const NETWORK_BUILTINS = ['net', 'http', 'https', 'http2', 'tls', 'dgram', 'dns'];
+
+function importClosure(entry) {
+  const modules = new Map(); // file -> { kit: [resolved files], builtins: [names], dynamic }
+  const todo = [entry];
+  while (todo.length) {
+    const file = todo.pop();
+    if (modules.has(file)) continue;
+    const source = fs.readFileSync(file, 'utf8');
+    const kit = [];
+    const builtins = [];
+    for (const m of source.matchAll(STATIC_IMPORT)) {
+      const spec = m[1] ?? m[2];
+      if (!spec.startsWith('.')) { builtins.push(spec.replace(/^node:/, '')); continue; }
+      const target = path.resolve(path.dirname(file), spec);
+      assert.ok(fs.existsSync(target), `${path.relative(KIT_ROOT, file)} imports ${spec}, which the reader could not resolve`);
+      kit.push(target);
+      todo.push(target);
+    }
+    modules.set(file, { kit, builtins, dynamic: /\bimport\s*\(/.test(source) });
+  }
+  return modules;
+}
+
+test('the gate imports no collector or transport, and fetch-failure.mjs imports nothing (ADR-0194)', () => {
+  const failure = importClosure(path.join(KIT_ROOT, 'lib', 'fetch-failure.mjs'));
+  assert.deepEqual([...failure.values()].map((m) => [...m.kit, ...m.builtins, m.dynamic]), [[false]],
+    'lib/fetch-failure.mjs imports something: the gate would load it to read a string');
+
+  for (const [entry, noProcess] of [[path.join(KIT_ROOT, 'lib', 'checks.mjs'), true], [path.join(KIT_ROOT, 'bin', 'preflight.mjs'), false]]) {
+    const closure = importClosure(entry);
+    const names = [...closure.keys()].map((file) => path.relative(KIT_ROOT, file).replace(/\\/g, '/'));
+    const label = path.relative(KIT_ROOT, entry).replace(/\\/g, '/');
+    // The reader must have followed the graph, or every assertion below is vacuous.
+    assert.ok(names.includes('lib/fetch-failure.mjs') && names.includes('lib/corpus.mjs'), `${label}: closure not followed: ${names}`);
+    assert.deepEqual(names.filter((name) => COLLECTOR_OR_TRANSPORT.test(path.basename(name))), [],
+      `${label} reaches a collector or transport module`);
+    const refused = noProcess ? [...NETWORK_BUILTINS, 'child_process'] : NETWORK_BUILTINS;
+    const reached = [...closure].flatMap(([file, m]) => m.builtins.filter((b) => refused.includes(b))
+      .map((b) => `${path.relative(KIT_ROOT, file)} -> ${b}`));
+    assert.deepEqual(reached, [], `${label} reaches a builtin with a route out of the corpus`);
+    assert.deepEqual(names.filter((_, i) => [...closure.values()][i].dynamic), [],
+      `${label}: a dynamic import(), which this static reading cannot follow`);
+  }
 });
