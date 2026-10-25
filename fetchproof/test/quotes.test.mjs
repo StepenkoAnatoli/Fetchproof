@@ -489,7 +489,10 @@ for (const [mark, keyless, firecrawl, measured] of SPACED_MARKS) {
 // The plan's own pins (section 5.3): the rule removes whitespace only BEFORE a closing mark and
 // only AFTER an opening one, never after a closing mark, so a space after a point or a comma
 // still separates two numbers. Guard: no space after a closing mark is removed; add that
-// removal to the rule and every pair here merges.
+// removal to the rule and the two pairs with a space after the mark merge (`1.5` with `1. 5`,
+// `1,5` with `1, 5`). The other two (`15` with `1,5`, `1000` with `1,000`) hold no space at all:
+// they pin that the rule removes no character but whitespace - the comma deletion of ADR-0192's
+// rejected alternatives would merge both (U9 review F6, 2026-10-25).
 test("ADR-0192: the spacing rule never joins two numbers - the plan's four pins stay distinct", () => {
   for (const [a, b] of [
     ['the disk holds 1.5 GB of logs', 'the disk holds 1. 5 GB of logs'],
@@ -562,4 +565,28 @@ test('ADR-0192: the citations check finds a quote whose capture came through the
     assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: ${JSON.stringify(judged)}`);
     assert.ok(judged.some((f) => f.severity === 'pass' && /1 quote/.test(f.detail)), `${name}: counted as found`);
   }
+});
+
+// The floor reads the ruled text (ADR-0192 decision 1, ADR-0191). `quoteTooShort` measures
+// `normalizeForMatch(f)`, the text `anchorFound` looks for, so the spacing rule moves the floor:
+// `free ( plan )` is four words on spaces before the rule and `free (plan)`, two words and 11
+// characters, after it. A real quote of that shape newly warns quote-too-short, and ADR-0195's
+// quote coverage stops counting it as usable; it is still compared, because its raw text clears
+// the floor. One word more, `free (plan) tier`, is three words and not short. Found by the U9
+// review (2026-10-25, F7): with the floor counted on the pre-rule text, every quotes test still
+// passed. Guard: `quoteTooShort` counts on the same normalized text as `anchorFound`; count it on
+// the text before the spacing rule and `free ( plan )` is not short, so this test fails.
+test('ADR-0192: the short-quote floor counts the text after the spacing rule', () => {
+  assert.equal(normalizeForMatch('free ( plan )'), 'free (plan)');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: free ( plan )]')[0]), true, 'two words of the compared text');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: free ( plan ) tier]')[0]), false, 'three words of the compared text');
+
+  const short = quotedToken('The free ( plan ) includes support.', 'Plan name. [quote: free ( plan )]');
+  assert.deepEqual(short.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found').map((f) => `${f.severity} ${f.rule}`),
+    ['warn quote-too-short'], `short on the compared text, long on the raw text: warned, and found: ${JSON.stringify(short)}`);
+  const invented = quotedToken('The free ( plan ) includes support.', 'Plan name. [quote: paid ( plan )]');
+  assert.deepEqual(invented.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found').map((f) => `${f.severity} ${f.rule}`).sort(),
+    ['fail quote-not-found', 'warn quote-too-short'], `still compared, so an invented one fails: ${JSON.stringify(invented)}`);
+  const long = quotedToken('The free ( plan ) tier includes support.', 'Plan name. [quote: free ( plan ) tier]');
+  assert.ok(!long.some((f) => f.severity !== 'pass'), JSON.stringify(long));
 });

@@ -73,6 +73,15 @@ re-implemented from the plan's description.
   alternative and finds the same limit.
 - **Testimonium's comma deletion and number folding (`bn`, `mn`).** Deleting commas merges `15`
   with `1,5`; folding numbers adds leniency a frozen capture does not need. Rejected by the plan.
+- **Running the floor's skip on the pre-rule text** (deciding whether to compare a short quote
+  on the text before this rule, so that a quote at the floor's edge stays compared; Consequences,
+  `quoteTooShort`). It would close the fail-to-warn path at the edge, but the floor would then
+  measure a text `anchorFound` does not search - the split ADR-0191 removed - and every caller
+  would need a second normalized form beside the one they share. The edge needs a quote short on
+  its raw text that NFKC or case folding lengthened to exactly the floor, and none of the 557
+  quote anchors in the 44 tracked corpora is short on its raw text at all (2026-10-25). The lead
+  kept the floor on the compared text (U9 review F2, run decision D-t, 2026-10-25).
+
 Each of the next three is a shape the research saw keep a passage unmatched even with the rule
 ("What the rule does NOT cover"), and put out of scope as needing "its own decision". The merge
 counts in Decision 3 were taken for this set and no wider one, so widening it would first need
@@ -105,23 +114,52 @@ its own merge count. Each is pinned as not found in `quotes.test.mjs`, so wideni
 - **Callers of `normalizeForMatch`**, by grep of `fetchproof/` and `docs/` on 2026-10-25:
   - `anchorFound` (`fetchproof/lib/quotes.mjs`) normalizes both the capture and each fragment,
     so the rule applies on both sides. Its callers: the `citations` check (`lib/checks.mjs`),
-    `lib/measure.mjs` (its quote count can only rise), the movement script, and ADR-0193's
-    recheck when it lands.
-  - `quoteTooShort` (`fetchproof/lib/quotes.mjs`) measures `normalizeForMatch(f)` since ADR-0191,
-    so this change moves the floor too. The words are counted on spaces, so a fragment such as
-    `free ( plan )` counts fewer words with the rule. That can only add a short warning (the
-    strict direction), never remove one, because the rule only removes characters.
+    `lib/measure.mjs`, the movement script, and ADR-0193's recheck when it lands.
+  - `lib/measure.mjs` reads both functions. Its quote count (`quotesFound`) can only rise. Its
+    quote coverage (`quoteCoverage`, ADR-0195) counts a row as usable only when its quote is
+    found AND not `quoteTooShort`, so a found quote the rule makes short (below) stops counting
+    and coverage can fall. Over the 44 tracked corpora neither number moves: no anchor changes
+    `found` or `tooShort` (2026-10-25).
+  - `quoteTooShort` (`fetchproof/lib/quotes.mjs`) measures `normalizeForMatch(f)` since ADR-0191:
+    the floor reads the ruled text, so the rule moves the floor, in both directions. The
+    `citations` check warns `quote-too-short` on it, and skips the comparison only when
+    `quoteTooShortOnRaw` agrees.
+    - **It can add a warning.** Words are counted on spaces, so `free ( plan )` (four words) is
+      `free (plan)` (two words, 11 characters) with the rule. A real quote of that shape newly
+      warns `quote-too-short`, and is still compared, because its raw text clears the floor.
+      Pinned in `quotes.test.mjs` ("the short-quote floor counts the text after the spacing
+      rule").
+    - **At the floor's edge it can remove a comparison.** ADR-0191 compares a quote that is
+      short on its raw text but long on the compared text, which NFKC or case folding
+      lengthened. The rule removes characters from the compared text, so such a quote can drop
+      back under the floor and is not compared again: an invented one goes from
+      `fail quote-not-found` to `warn quote-too-short`. The U9 review's examples are contrived:
+      `İ` nineteen times then ` .` (21 units raw; 40 compared before the rule, because
+      lowercasing writes `İ` as two units, and 39 after it), and `x(´y(´z` (NFKC writes `´` as
+      a space and U+0301; three words before the rule, one after). The edge needs a quote short
+      on its raw text and lengthened to exactly the floor, and none of the 557 quote anchors in
+      the 44 tracked corpora is short on its raw text at all (2026-10-25). The floor stays on
+      the compared text (ADR-0191); running its skip on the pre-rule text is rejected above.
   - `docs/decisions/2026-10-25-punctuation-spacing/measure-spacing.mjs` imports it and applies
     the same two `.replace` calls after it (the regexes are identical). From this ADR on, the
     text it searches for spaced passages already has none, so every count it prints is 0 (run
     2026-10-25). Its numbers in the research brief describe the matcher before this ADR, at the
-    base commit its header names; they stay the record. The project is not edited.
+    base commit its header names; they stay the record. The project is not edited. To
+    reproduce them, run the script from a checkout of the commit before this ADR's
+    (`2d831ca~1`, d788545 on the run branch): `git worktree add --detach <dir> 2d831ca~1`, then,
+    from that worktree's root, `node docs/decisions/2026-10-25-punctuation-spacing/measure-spacing.mjs`.
+    Re-run that way on 2026-10-25, it printed every per-mark count and every join count of the
+    brief; it counted 431 captures where the brief says 430. `normalizeForMatch` there is
+    byte-identical to the one at 8c63e77, the base the header names, which does not yet hold
+    the project. On Windows give the worktree a short path: under a deep folder, git could not
+    write the corpus files ("Filename too long").
   - `quoteAnchors` (the parser) does not call it, so a quote's fragments are split exactly as
     before.
 - **A found quote stays found.** The rule only deletes whitespace that sits beside a mark, and a
   fragment is trimmed, so wherever a fragment occurred in the capture, its normalized form occurs
   in the normalized capture. Gaps between fragments can only shrink, so `MAX_QUOTE_GAP` still
-  holds. The change is lenient: `quote-not-found` can turn into found.
+  holds. For matching the change is lenient: `quote-not-found` can turn into found. The floor
+  that decides whether a quote is compared moves both ways (`quoteTooShort`, above).
 - **Movement over the baseline corpora** (`docs/measurements/2026-10-refresh-baseline/movement.mjs`,
   compare mode, 2026-10-25, on U1's tree with and without this rule): **zero movement in the 41
   baseline corpora.** None of the 517 baseline anchors changes `found` or `tooShort`, so none
@@ -132,8 +170,8 @@ its own merge count. Each is pinned as not found in `quotes.test.mjs`, so wideni
   - `corpus ... added` for `2026-10-25-first-quoted-refresh`, `2026-10-25-punctuation-spacing`
     and `2026-10-25-refresh-recheck-study` (3 lines);
   - `anchor ... added` for their 40 anchors: 39 `found`, and one `quote-too-short`, the
-    research's own `[ [edit](https://...) ]` (E-02 [5]), which compares as `[edit]` with or without the
-    rule;
+    research's own `[ [edit](https://...) ]` (E-02 [5]), which compares as `[edit ]` without the
+    rule and `[edit]` with it, short either way;
   - `refresh ... added` for their 4 superseded pairs.
   That the spacing project's anchors are found either way is expected: each quote was copied
   from the capture it is checked in, so its spacing is that capture's own.
@@ -143,12 +181,49 @@ its own merge count. Each is pinned as not found in `quotes.test.mjs`, so wideni
   crosses transports - the case ADR-0193 creates. The baseline measures that it moves no
   existing verdict, not that it rescues a real one; the research's per-mark counts are that
   measure.
+- **Movement across transports: the superseded pairs.** `movement.mjs` cannot show it: it
+  checks each anchor against its own row's capture, and for the 3 corpora committed after
+  ab2e605 it prints only `added`. ADR-0193's question does move - is an old row's quote found in
+  the capture of the row that replaced it? The 4 superseded pairs in the tracked corpora hold 12
+  quote anchors. The 2 of `2026-10-25-first-quoted-refresh` are found with and without the rule.
+  The 10 of `docs/decisions/2026-10-25-punctuation-spacing` are each Firecrawl's spacing against
+  keyless spacing of the same HTML, and **6 of them go from not found to found**, each the rule
+  working as intended:
+  - E-08 -> E-01, ``Repetition operators or quantifiers (`*`, `+`, `?`, `{m,n}`, etc)``: the
+    keyless capture keeps the spaces inside each code span (`` ` * ` ``); the `(`, `,` and `?`
+    cases.
+  - E-08 -> E-01, ``can be Unicode strings ( [`str`](https://...)``: Firecrawl writes a
+    space after `(` before a link and the keyless capture does not; the `(` case, from the other
+    side.
+  - E-02 -> E-09, `from the original on 28 December 2019 . Retrieved 16 March 2023 .`: a
+    stripped span before `.`; the `.` case.
+  - E-02 -> E-09, `as in *primo* , *secondo* ; it is analogous`: emphasis before `,` and `;`.
+  - E-02 -> E-09, `SQUARE PAASENTO , パーセント ( *pāsento* , from English`: `,` after a word and
+    after emphasis, and the space after `(` before emphasis.
+  - E-02 -> E-09, `*een stijging van 50 %* ), but most of the time`: `%` after the page's own
+    no-break space, which Firecrawl drops (both sides lose it), and `)` after emphasis.
+
+  The other 4 stay not found, each a shape listed under Rejected or Deferred, or not spacing:
+  - E-08 -> E-01, `raise RuntimeError(f'{value!r} unexpected on line {line_num}')`: the quote
+    marks (`f '`, `' )`) and the space before `(`.
+  - E-08 -> E-01, `Pattern.search( _string_\[, _pos_\[, _endpos_\]\])`: the space after `.` in
+    tokenized code (`Pattern. search`) and the space before `(`.
+  - E-02 -> E-09, `' an increase of 50% ' ).`: the quote marks.
+  - E-02 -> E-09, `[ [edit](https://...) ]`: not spacing; E-09's capture has no edit link at all.
+
+  Reproduction: for each pair `supersededRows` (`lib/checks.mjs`) returns, `anchorFound` of the
+  old row's anchors in the replacing row's capture body, with `lib/quotes.mjs` from `2d831ca~1`
+  and from this ADR's commit. The U9 review's scratch script (`pairs-all.mjs`) does this; re-run
+  over all 44 tracked corpora on 2026-10-25, it printed `corpora 44, anchors 557, moved
+  base->head 0; superseded-pair anchors 12, moved 6`.
 
 ## Trigger to revisit
 
 - A real quote is not found because of a shape listed under Rejected or Deferred (quote marks,
   `re . escape`, `search (`, dropped whitespace, `(PDF)`).
 - A real numeric quote is wrongly matched through a KNOWN MERGE (`1 .5`, `1 ,5`).
+- A real quote stops being compared at the floor's edge (Consequences, `quoteTooShort`): reopen
+  the rejected "floor's skip on the pre-rule text".
 - Firecrawl changes its converter (its fork of JohannesKaufmann/html-to-markdown, pinned to a
   2026-03 commit, E-06) or the hosted service is shown to take another path (E-04), so that its
   spacing changes.
