@@ -68,8 +68,9 @@ corpus. On a collector too, use existing captures when they answer the gap.
 The default build path is `build-from-brief` with `day-one-tasks`, `cite-in-code` and
 `contract-tests`. `lead-orchestrator` is optional, for independent units that need parallel
 agents, and is not part of the research-before-build core; when it runs, its builder briefs
-carry those rules (lead-orchestrator's `references/fetchproof.md`, section 5). `auto-build`
-runs through it, so it stays in the set (ADR-0196).
+carry the `cite-in-code` and `contract-tests` rules (lead-orchestrator's
+`references/fetchproof.md`, section 5). `auto-build` runs through it, so it stays in the set
+(ADR-0196).
 
 | Task | Use |
 |---|---|

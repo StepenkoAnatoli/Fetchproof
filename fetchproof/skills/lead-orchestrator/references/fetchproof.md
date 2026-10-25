@@ -83,20 +83,25 @@ A sub-agent sees only its brief, so the kit's research-to-code rules reach it on
   rests on, not only the brief.
 - **Builder brief.** Every builder brief pastes the unit's `E-##` rows (claim, quote and
   source, as `research/EVIDENCE.md` has them), the `cite-in-code` rule - an `E-##` comment on
-  the definition of each research-derived constant - and the `contract-tests` rule - one
-  red-first test per claim the unit implements, named `E-##: ...`, its fixtures from the quote.
+  the definition of each research-derived constant, naming its `EVIDENCE.md` path when the
+  project is not the repository root, since Phase 1b's projects (one per topic) repeat row
+  IDs - and the `contract-tests` rule - one red-first test per claim the unit implements, named
+  `E-##: ...`, its fixtures from the quote.
 - **Research reviewer.** A fresh-context sub-agent, read-only on `research/`, that never sees
-  the researcher's conversation. It runs after preflight PASS and before handoff, where the
-  corpus was collected (on a builder, Phase 1b is `handoff` and `fact-request`, above). For
-  each evidence row that closes an unknown it checks that the quote supports the claim as
-  written; scope, tier, region and version (a paid tier's limit stated as the free tier's, v2
-  wording applied to v3); qualifiers clipped by an ellipsis or sitting just outside the quote;
-  that every number in the claim appears in the quote; and that the source owns the fact (the
-  vendor's page, not a mirror or a write-up). Findings go into the run's `RUN.md` and back to
-  the researcher, who changes the claim, adds evidence or marks the unknown `KNOWN-UNKNOWN`;
-  the reviewer never edits `research/`. No gate token, no approval condition (ADR-0087,
-  ADR-0074): preflight, `brief.mjs --state` and handoff behave exactly as without it, and the
-  reviewer is an agent (ADR-0107). It runs only when this skill or auto-build drives research.
+  the researcher's conversation. It runs where the corpus was collected (on a builder, Phase
+  1b is `handoff` and `fact-request`, above): after preflight PASS, at Phase 1b's exit, before
+  Phase 2 relies on the brief. The brief is already written then; the review is of the corpus
+  behind it. For each evidence row that closes an unknown it checks that the quote supports
+  the claim as written; scope, tier, region and version (a paid tier's limit stated as the
+  free tier's, v2 wording applied to v3); qualifiers clipped by an ellipsis or sitting just
+  outside the quote; that every number in the claim appears in the quote; and that the source
+  owns the fact (the vendor's page, not a mirror or a write-up). Findings go into the run's
+  `RUN.md` and back to the researcher, who changes the claim, adds evidence or marks the
+  unknown `KNOWN-UNKNOWN`; the reviewer never edits `research/`. No gate token, no approval
+  condition (ADR-0087, ADR-0074): preflight, `brief.mjs --state` and handoff behave exactly as
+  without it, and the reviewer is an agent (ADR-0107). It runs only when this skill or
+  auto-build drives research.
 - **Spec reviewer, Phase 4b.** Beside its brief's focus, every research-derived constant or
   behaviour in the diff traces to an `E-##` row whose quote supports it (the `cite-in-code`
-  comment is the trace). A missing or unsupported trace is a finding like any other.
+  comment is the trace, and outside the repository root it names the `EVIDENCE.md` the row is
+  read in). A missing or unsupported trace is a finding like any other.

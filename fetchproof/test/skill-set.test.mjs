@@ -260,6 +260,11 @@ test('lead-orchestrator\'s kit note puts the E-## rows, cite-in-code and contrac
   assert.match(builder, /pastes/, 'the builder item no longer says the brief pastes the rules');
   assert.match(builder, /the unit's `E-##` rows/, 'the builder brief no longer carries the unit\'s E-## rows');
   assert.match(builder, /`cite-in-code` rule[^.]*`E-##` comment/, 'the builder brief no longer carries the cite-in-code rule');
+  // U4 review F2 (2026-10-25): Phase 1b makes one research project per topic, so E-01, E-02 ...
+  // repeat across a run, and cite-in-code's comment names the project's EVIDENCE.md outside the
+  // root; a summary without that part sends a pasting builder to the wrong row.
+  assert.match(builder, /`E-##` comment[^.]*naming its `EVIDENCE\.md` path when the project is not the repository root/,
+    'the builder brief\'s cite-in-code rule no longer names the EVIDENCE.md path outside the root');
   assert.match(builder, /`contract-tests` rule[^.]*red-first[^.]*`E-##: /, 'the builder brief no longer carries the contract-tests rule');
 });
 
@@ -270,7 +275,9 @@ test('lead-orchestrator\'s kit note has a research reviewer with five checks and
     ['fresh context', /fresh-context sub-agent/],
     ['read-only on research/', /read-only on `research\/`/],
     ['never sees the researcher\'s conversation', /never sees the researcher's conversation/],
-    ['runs after PASS, before handoff', /after preflight PASS and before handoff/],
+    // U4 review F4 (2026-10-25): "before handoff" read as both phase 1's hand-off and handoff.mjs.
+    ['runs after PASS, at Phase 1b\'s exit, before Phase 2 relies on the brief',
+      /after preflight PASS, at Phase 1b's exit, before Phase 2 relies on the brief/],
     ['check: the quote supports the claim', /quote supports the claim as written/],
     ['check: scope, tier, region and version', /scope, tier, region and version/],
     ['check: qualifiers clipped by an ellipsis or outside the quote', /clipped by an ellipsis or [^;]*just outside the quote/],
@@ -282,6 +289,14 @@ test('lead-orchestrator\'s kit note has a research reviewer with five checks and
     ['no gate token, no approval condition', /No gate token, no approval condition/],
     ['the gate commands behave as today', /preflight, `brief\.mjs --state` and handoff behave exactly as/],
   ]) assert.match(reviewer, re, `the research reviewer item no longer says: ${what}`);
+  // Found 2026-10-25 in the U4 review (F1): every line above checks that words are present, so a
+  // sentence added beside them - "Phase 2 does not start ... until the reviewer has signed off
+  // every row" - made the role the approval condition ADR-0074 and ADR-0107 refuse, and this test
+  // stayed green. The item may say what the reviewer is not ("no approval condition"); it may not
+  // make anything wait for the reviewer's sign-off or approval. It is a word list: a gate phrased
+  // in other words still passes, and review carries the rest.
+  assert.doesNotMatch(reviewer, /sign(?:s|ed|ing)?[- ]?off|until the reviewer|approv(?!al condition)/i,
+    'the research reviewer item makes its review a sign-off or an approval condition (ADR-0074, ADR-0107)');
 });
 
 test('lead-orchestrator\'s kit note gives the spec reviewer a research-conformance duty (ADR-0196)', () => {
@@ -290,12 +305,17 @@ test('lead-orchestrator\'s kit note gives the spec reviewer a research-conforman
   assert.match(spec, /Phase 4b/, 'the duty is no longer placed in Phase 4b');
   assert.match(spec, /research-derived constant or behaviour[^.]*traces to an `E-##` row whose quote supports it/);
   assert.match(spec, /missing or unsupported trace is a finding/);
+  assert.match(spec, /outside the repository root it names the `EVIDENCE\.md` the row is read in/,
+    'the spec reviewer\'s trace no longer names the EVIDENCE.md outside the root (U4 review F2)');
 });
 
 test('the router names the default build path, and lead-orchestrator as optional, for parallel units (ADR-0196)', () => {
   const text = router();
   const step3 = text.slice(text.indexOf('## Step 3'), text.indexOf('## Skill table')).replace(/\s+/g, ' ');
   assert.match(step3, /default build path is `build-from-brief` with `day-one-tasks`, `cite-in-code` and `contract-tests`/);
+  // U4 review F3 (2026-10-25): the kit note's briefs carry these two rules, not day-one-tasks.
+  assert.match(step3, /its builder briefs carry the `cite-in-code` and `contract-tests` rules/,
+    'the router no longer names the rules lead-orchestrator\'s builder briefs carry');
   const row = table(text, 'Step 3: route by task (once building is allowed)').find(([, use]) => use.startsWith('`lead-orchestrator`'));
   assert.ok(row, 'the task table no longer routes to lead-orchestrator');
   assert.match(row[1], /optional[^|]*parallel/, 'the lead-orchestrator route no longer says it is optional, for parallel units');

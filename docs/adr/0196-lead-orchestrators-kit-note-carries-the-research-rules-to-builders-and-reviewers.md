@@ -8,10 +8,14 @@
 - **Prompted by:** the quote-level refresh plan (v0.4, §10 and §13's first bullet), from the
   review of 2026-10-25 that found lead-orchestrator's research-to-code link the weakest in the
   kit; the design was approved by the owner on 2026-10-25
-- **Freeze (ADR-0117):** inside the item ADR-0146 lifted (the skill set). This changes the text
-  of two kit-authored skill files and adds pin tests. No command, flag, format, check,
-  configuration key or line of the kit's code changes, and no received text is edited
-  (ADR-0146, ADR-0190). Not an item ADR-0157 holds: nothing here is feature or ranking work.
+- **Freeze (ADR-0117):** inside the item ADR-0146 lifted ("the kit ships a skill set plus a
+  role-aware router skill"). A new role could be read as a feature, and AGENTS.md says "When a
+  change could be read either way, it is a feature"; what settles it is the owner's approval of
+  plan v0.4 on 2026-10-25, whose §15 marks this item (row 1c, the kit-note fix) "free" of the
+  hold and whose §3 classes it as skill text inside ADR-0146's lifted item, not held by
+  ADR-0157. This changes the text of two kit-authored skill files and adds pin tests. No
+  command, flag, format, check, configuration key or line of the kit's code changes, and no
+  received text is edited (ADR-0146, ADR-0190).
 
 ## Context
 
@@ -50,12 +54,17 @@ and the router did not say so.
 1. **Builder briefs carry the rules.** In a Fetchproof project, Phase 2's task statement names
    the `E-##` rows each externally sourced decision rests on, and every builder brief pastes the
    unit's `E-##` rows (claim, quote and source), the `cite-in-code` rule (an `E-##` comment on
-   the definition of each research-derived constant) and the `contract-tests` rule (one
-   red-first test per claim, named `E-##: ...`, fixtures from the quote).
+   the definition of each research-derived constant, naming its `EVIDENCE.md` path when the
+   project is not the repository root, since Phase 1b's projects repeat row IDs) and the
+   `contract-tests` rule (one red-first test per claim, named `E-##: ...`, fixtures from the
+   quote).
 2. **A research reviewer, as a role in the kit note.** A fresh-context sub-agent, read-only on
-   `research/`, that never sees the researcher's conversation, runs after preflight PASS and
-   before handoff, where the corpus was collected. For each evidence row that closes an unknown
-   it checks five things: the quote supports the claim as written; scope, tier, region and
+   `research/`, that never sees the researcher's conversation, runs where the corpus was
+   collected: after preflight PASS, at Phase 1b's exit, before Phase 2 relies on the brief. The
+   researcher has written the brief by then (the received researcher template passes preflight,
+   writes the brief and commits in one run), and the first draft's "before handoff" read as
+   both phase 1's hand-off and `handoff.mjs`. For each evidence row that closes an unknown it
+   checks five things: the quote supports the claim as written; scope, tier, region and
    version; qualifiers clipped by an ellipsis or just outside the quote; every number in the
    claim appears in the quote; the source owns the fact. Findings go into the run's `RUN.md` and
    back to the researcher, who changes the claim, adds evidence or marks the unknown
@@ -66,13 +75,16 @@ and the router did not say so.
    (ADR-0107).
 4. **The spec reviewer (Phase 4b) gets a research-conformance duty.** Every research-derived
    constant or behaviour in the diff traces to an `E-##` row whose quote supports it; the
-   `cite-in-code` comment is the trace. A missing or unsupported trace is a finding.
+   `cite-in-code` comment, with its `EVIDENCE.md` path outside the root, is the trace. A
+   missing or unsupported trace is a finding.
 5. **The router names the default build path** - `build-from-brief` with `day-one-tasks`,
    `cite-in-code` and `contract-tests` - and marks lead-orchestrator optional, for independent
    units that need parallel agents. It stays shipped, because auto-build runs through it.
 6. **Pin tests** in `test/skill-set.test.mjs` hold each of these to the note's and the router's
    text: the note's section 5 items (Phase 2, Builder brief, Research reviewer, Spec reviewer),
-   and the router's Step 3 paragraph and row.
+   and the router's Step 3 paragraph and row. Because a pin only proves words are present, the
+   reviewer item is also held to the absence of sign-off, "until the reviewer" and approval
+   wording.
 
 ## Rejected alternatives
 
@@ -95,7 +107,8 @@ and the router did not say so.
   5 adds only what a sub-agent cannot otherwise see, and points at the skills by name.
 - **Removing lead-orchestrator, or making the reviewer a new skill.** Removing it breaks
   auto-build, whose fallback is "Stop". A new skill directory is growth of ADR-0146's item that
-  ADR-0157's hold says must wait for the ADR-0145 comparison; a role in an existing note is not.
+  ADR-0157's hold says must wait for the ADR-0145 comparison; a role in an existing note is text
+  inside that item, which the approved plan's §15 marks "free" (the Freeze bullet above).
 - **Extending the reviewer to single-agent `research-first` runs now.** That is a router or
   skill change under ADR-0146, and it waits for the measurement below.
 
@@ -103,8 +116,8 @@ and the router did not say so.
 
 - A parallel builder in a Fetchproof project receives the research-to-code rules in its brief,
   and the spec reviewer checks the traces they leave.
-- Research gets an independent reader before handoff, at a cost in tokens at handoff only, not
-  on every preflight.
+- Research gets an independent reader at Phase 1b's exit, before Phase 2 relies on the brief,
+  at a cost in tokens there only, not on every preflight.
 - Limits: the reviewer runs only when lead-orchestrator or auto-build drives research; a
   single-agent `research-first` run does not get it. An agent reviewer may share the
   researcher's blind spots (it may be the same model); that is measured, not assumed.
