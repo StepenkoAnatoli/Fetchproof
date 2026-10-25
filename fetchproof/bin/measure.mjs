@@ -16,8 +16,9 @@ if (flags.help) {
 
   node fetchproof/bin/measure.mjs [--json]
 
-Reports link works, quote anchors found, full captures and closure strength. Whether a page
-SUPPORTS its claim needs a judge and is named, not computed. A report: it never gates.
+Reports link works, quote anchors found, full captures, closure strength and quote coverage
+(how many CLOSED unknowns cite a row whose quote is checked against its capture). Whether a
+page SUPPORTS its claim needs a judge and is named, not computed. A report: it never gates.
 `);
   process.exit(0);
 }

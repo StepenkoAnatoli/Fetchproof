@@ -5,6 +5,10 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Added: `measure.mjs` reports quote coverage.** It counts how many CLOSED unknowns cite at least
+  one row with a usable quote found in its capture (`quoteCoverage` in `--json`). A report line; it
+  never gates. Across the 41 baseline corpora it is 108 / 183 (ADR-0195).
+
 - **Fixed: keyless captures no longer leak attribute text** (plan B3). A `>` inside a quoted
   attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends the tag, so the rest
   of the value is no longer kept as page text. A quote opens only after `=`; one that never closes
