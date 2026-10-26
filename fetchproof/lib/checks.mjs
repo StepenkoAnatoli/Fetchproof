@@ -8,7 +8,7 @@
 // the verdict's single judgement, in lib/preflight.mjs.
 
 import { hostOf, siteOf, PATHS, resolve, exists, ageInDays, urlKey, readText, kitCommand, compareText } from './core.mjs';
-import { captureOf, traceOf, citedIds, parseCapture, ledgerRank } from './corpus.mjs';
+import { captureOf, traceOf, citedIds, parseCapture, ledgerRank, requestedUrl } from './corpus.mjs';
 import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
@@ -688,7 +688,11 @@ function isReleasedHistory(corpus, row, superseded = supersededRows(corpus)) {
  * fetches happened, while until 2026-10-04 a scrape entry carried midnight of its day and a
  * fail the real time, so dates put a morning 404 after the scrape that followed it. A page that
  * came back - a scrape after the 404 - is current again, and a refresh that replaced the row is
- * `cites-superseded-row`'s to report. A row whose capture no fetch recorded has no scrape to be
+ * `cites-superseded-row`'s to report. So is a page that moved: a later scrape that ASKED for the
+ * row's URL and got content, wherever it landed, ends the gone state, and the move is judged
+ * instead (ADR-0193 decision 8). Filed under the landed URL, that scrape is not the URL's last
+ * entry, so until 2026-10-26 the earlier 404 stayed the last word and the reader was told a
+ * moved page was gone (G1-fix review 1, C). A row whose capture no fetch recorded has no scrape to be
  * after; provenance fails it already. A blank Raw cell is the capture its URL names, as
  * `supersededRows` ranks it.
  *
@@ -705,27 +709,114 @@ function isReleasedHistory(corpus, row, superseded = supersededRows(corpus)) {
  * an error writes no N (the collector refuses error pages since 2026-09-28) or, kept before
  * that, an error-page capture the recheck reopens anyway. `cites-gone-page` keeps the exemption.
  */
-function goneAfterScrape(corpus, row, rank, lastByKey, { findingExempts = true } = {}) {
+function goneAfterScrape(corpus, row, rank, fetches, { findingExempts = true } = {}) {
   if (!row?.url) return null;
   const own = rank.get(row.raw || captureOf(corpus, row)?.file);
   if (own === undefined) return null;
-  const last = lastByKey.get(urlKey(row.url));
-  if (last === undefined || last <= own) return null;
+  const gone = goneSince(corpus, row.url, own, fetches);
+  if (!gone || (findingExempts && new RegExp(`\\b${gone.status}\\b`).test(row.finding))) return null;
+  return gone;
+}
+
+/**
+ * ADR-0194's ledger question for one URL, with no row in it: is the LAST entry filed under `url`
+ * (by urlKey) a fail `goneStatus` reads as gone, after ledger position `after`, with no scrape
+ * that asked for `url` since? `{ status, day }` or null. `goneAfterScrape` asks it of a row's URL
+ * after the row's capture; a moved citation also asks it of the address the move came through,
+ * after the move (ADR-0193 decision 8).
+ */
+function goneSince(corpus, url, after, fetches) {
+  const key = urlKey(url);
+  const last = fetches.last.get(key);
+  if (last === undefined || last <= after) return null;
   const entry = corpus.ledger.entries[last];
   if (entry.op !== 'fail') return null;
+  if ((fetches.askedScrape.get(key) ?? -1) > last) return null;
   const status = goneStatus(entry.error);
   if (status === null) return null;
-  if (findingExempts && new RegExp(`\\b${status}\\b`).test(row.finding)) return null;
   return { status, day: String(entry.at ?? '').slice(0, 10) };
 }
 
-/** Each URL's last scrape-or-fail ledger entry: urlKey -> its position in the ledger. */
-function lastFetchByUrl(entries) {
+/**
+ * The ledger's positions, keyed once per corpus, each urlKey -> its LAST position:
+ * - `last`: each URL's last scrape-or-fail entry, by the URL it was filed under;
+ * - `landedScrape`: each URL's last scrape, by the URL it landed on (its `url`);
+ * - `askedScrape`: each URL's last scrape, by the URL it asked for (`requestedUrl` of its
+ *   command; a command naming no URL is read as asking for where it landed).
+ * Only scrapes enter the last two: a failure is ADR-0194's (gone) or changes nothing, never a
+ * move. Until 2026-10-26 a move was found by walking the ledger once per citation, three URL
+ * parses a step (G1-fix review 1, F: 4 s at 1000 entries and 300 citations).
+ */
+function fetchIndex(entries) {
   const last = new Map();
+  const landedScrape = new Map();
+  const askedScrape = new Map();
   (entries ?? []).forEach((e, i) => {
-    if ((e?.op === 'scrape' || e?.op === 'fail') && e.url) last.set(urlKey(e.url), i);
+    if ((e?.op !== 'scrape' && e?.op !== 'fail') || !e.url) return;
+    const landed = urlKey(e.url);
+    last.set(landed, i);
+    if (e.op !== 'scrape') return;
+    landedScrape.set(landed, i);
+    askedScrape.set(urlKey(requestedUrl(e.cmd) || e.url), i);
   });
-  return last;
+  return { last, landedScrape, askedScrape };
+}
+
+/**
+ * The refresh that asked for a cited row's page and landed on another one (ADR-0193 decision 8):
+ * `{ asked, landed, day, file, at, through, row }` - `at` the move's ledger position; `through`
+ * the row's URL when the move asked for the address the row's own fetch asked for instead of it,
+ * else null; `row` the evidence row naming the landed capture, or null - or null when the page
+ * did not move.
+ *
+ * A fetch that follows a redirect records where the bytes came from as its `url`, and the
+ * collector files the new row under that URL, so `supersededRows`, which joins rows by urlKey,
+ * never joined it to the cited row: no recheck, no reopen, and a green gate over a page that no
+ * longer said what was quoted (found 2026-10-26, Stage 7 gap audit, gap 1). The ledger keeps the
+ * other half of the pair, the URL the fetch asked for, in its command (`requestedUrl`); this
+ * joins on that, and `supersededRows` is left as it is, because transport-provenance, hygiene,
+ * evidence-context and the handoff read it (plan v0.4 §7.4).
+ *
+ * Moved means: the LAST scrape after the row's own (ledger position, as `goneAfterScrape`
+ * orders) that asked for the row's URL or landed on it - urlKey throughout - landed elsewhere.
+ * When no scrape since the row's own has done either, the last that asked for the URL the row's
+ * OWN fetch asked for is read instead. That join covers a row first captured through a redirect
+ * (its URL is where it landed; its refreshes ask the plan's old address): by the owner's ruling
+ * of 2026-10-26 ("Cover them"), after the G1-fix review found such a row's moves silent (B). It
+ * also closes gap 4's shape without any fact about what a transport records on a redirect. It
+ * comes second, not as an equal: until the G1-fix review 2 (R2-1, R2-5) the latest of the
+ * three joins won, so a later move of the old address was judged over the row's own URL - a
+ * pass where the row's URL had lost the quote, a reopen where it had kept it. A later scrape that
+ * landed on the row's URL - the page came back, or a refresh through the redirect again - is the
+ * last word and an ordinary refresh, `supersededRows`' to judge, even when no row names its
+ * capture (hygiene warns `uncited-capture`): wider than "asked for", and said so in ADR-0193
+ * decision 8. Only scrapes count (`fetchIndex`). A trailing slash or `www.` is one urlKey, so not
+ * a move.
+ */
+function movedAfterScrape(corpus, row, rank, fetches) {
+  if (!row?.url) return null;
+  const own = rank.get(row.raw || captureOf(corpus, row)?.file);
+  if (own === undefined) return null;
+  const key = urlKey(row.url);
+  const entries = corpus.ledger?.entries ?? [];
+  const askedOwn = urlKey(requestedUrl(entries[own]?.cmd) || row.url);
+  // The row's own URL first: the address its own fetch asked for is read only when nothing has
+  // asked for or landed on the row's URL since its capture (G1-fix review 2, R2-1 and R2-5).
+  const atKey = Math.max(fetches.landedScrape.get(key) ?? -1, fetches.askedScrape.get(key) ?? -1);
+  const at = atKey > own ? atKey : (fetches.askedScrape.get(askedOwn) ?? -1);
+  if (at <= own) return null;
+  const last = entries[at];
+  if (urlKey(last.url) === key) return null;
+  // The row naming the landed capture, the last in table order (two rows naming one capture are
+  // hygiene's to report). Never the cited row itself: its capture's scrape is at or before its
+  // rank, and this one is after it.
+  const named = corpus.evidence.filter((r) => last.raw && r.raw === last.raw);
+  const asked = requestedUrl(last.cmd) || last.url;
+  return {
+    asked, landed: last.url, day: String(last.at ?? '').slice(0, 10), file: last.raw, at,
+    through: urlKey(asked) === key ? null : row.url,
+    row: named.length ? named[named.length - 1] : null,
+  };
 }
 
 // What the recheck can say, and what it cannot: it ends every pass and every reopen of a
@@ -812,7 +903,7 @@ function quoteRecheck(corpus, rank, id, replacement, gone) {
   if (!anchors.length) return { reason: `${old.id} carries no quote to recheck.` };
   const usable = anchors.filter((anchor) => !quoteTooShort(anchor));
   if (!usable.length) return { reason: `Every quote ${old.id} carries is too short to anchor anything (quote-too-short), so none can be rechecked.` };
-  if (gone) return { reason: `A refresh on ${gone.day} found the page gone (HTTP ${gone.status}), so no capture of it is current.` };
+  if (gone) return { reason: `A refresh on ${gone.day} found ${gone.place ?? 'the page'} gone (HTTP ${gone.status}), so no capture of it is current.` };
 
   const baseline = namedCaptureBody(corpus, old);
   if (baseline.problem) return { reason: `${baseline.problem}, so its quote has no baseline to recheck.` };
@@ -848,21 +939,88 @@ function quoteRecheck(corpus, rank, id, replacement, gone) {
     + driftAttribution(corpus, rank, old, replacement, fresh.capture) };
 }
 
+/**
+ * The finding for a citation whose page a refresh found at another URL (ADR-0193 decision 8): never
+ * silent. When an evidence row names the landed capture, the recheck runs against the current row
+ * of the landed URL - that row, or the row that has since superseded it - as the replacing row,
+ * and only every usable quote found there, with none of the three addresses below found gone,
+ * passes `quote-survived-refresh`; every other outcome, and a landed capture no row names, reopens
+ * `cites-superseded-row`. Both name the
+ * move - asked for X, landed on Y - because the reader must judge whether Y is still the page the
+ * claim was about, which no string check can, and both end with the limit line.
+ */
+function movedCitation(corpus, rank, unknown, id, moved, goneOwn, superseded, fetches) {
+  const move = `the refresh${moved.day ? ` on ${moved.day}` : ''} asked for ${moved.asked}`
+    + (moved.through ? ` - the address ${id}'s own fetch asked for before it landed on ${moved.through} -` : '')
+    + ` and landed on ${moved.landed}, a different page`;
+  // The landed row may itself have been refreshed since - the next step after seeing a move is to
+  // collect the new address directly - so the recheck is against the newest row of that address,
+  // as an ordinary refresh's is (G1-fix review 1, A: a superseded capture had passed).
+  const current = moved.row ? superseded.get(moved.row.id.toUpperCase()) ?? moved.row : null;
+  const recorded = !current ? '' : current === moved.row ? `recorded as ${moved.row.id}`
+    : `recorded as ${moved.row.id} and since superseded by ${current.id}`;
+  const fields = { row: unknown.id, line: unknown.line, superseded: id, ...(current ? { by: current.id } : {}), asked: moved.asked, landed: moved.landed };
+  // Gone is read at three addresses, each by ADR-0194's rule: the row's own URL; where the move
+  // landed, after the current row's capture there (G1-fix review 2, R2-2: a direct fetch of that
+  // address that answered 404 is filed under it, and the move had passed on a page found gone);
+  // and, for a move that came through the address the row's own fetch asked for, that address
+  // after the move (R2-3). A failure is filed under the address it asked for, so the row's own
+  // URL never sees the last two. Only this reason reads them: `cites-gone-page` stays the row URL's.
+  const goneLanded = current ? goneAfterScrape(corpus, current, rank, fetches, { findingExempts: false }) : null;
+  const goneThrough = moved.through ? goneSince(corpus, moved.asked, moved.at, fetches) : null;
+  const gone = goneOwn
+    ?? (goneLanded && { ...goneLanded, place: `${current.url}, where the page landed,` })
+    ?? (goneThrough && { ...goneThrough, place: `${moved.asked}, the address the move asked for,` });
+  // The landed page can move on in turn - asked for directly, it now lands somewhere else. A move
+  // of a move is not followed, so it never passes (found 2026-10-26, G1-fix builder round 3: it
+  // passed on the first landing's capture, and after a 404 there the ask that moved on cleared
+  // the gone state above as well). The finding is a reopen naming the second move.
+  const onward = current && !gone ? movedAfterScrape(corpus, current, rank, fetches) : null;
+  const recheck = !current ? null
+    : onward ? { reason: `${current.url} has moved on since: the refresh${onward.day ? ` on ${onward.day}` : ''} asked for ${onward.asked} `
+      + `and landed on ${onward.landed}. A move after a move is not followed, so ${current.id}'s capture is not rechecked.` }
+    : quoteRecheck(corpus, rank, id, current, gone);
+  if (recheck?.survived) {
+    return finding('pass', 'evidence-supersession', 'quote-survived-refresh',
+      `${id}'s quoted words occur in ${current.id}'s capture ${recheck.file}, and ${move}, ${recorded}. `
+      + `That says the words survived, not that the claim still holds. Re-read ${current.id} when you next touch ${unknown.id}. `
+      + REFRESH_LIMIT,
+      { ...fields, capture: recheck.file });
+  }
+  return finding('fail', 'evidence-supersession', 'cites-superseded-row',
+    `${unknown.id} rests on ${id}, and ${move}, `
+    + (current ? `${recorded}. ` : `and no evidence row names its capture ${moved.file}. `)
+    + 'Re-read it, then move the citation or record why the earlier reading still holds. '
+    + (recheck ? `${recheck.reason} ` : '') + REFRESH_LIMIT,
+    fields);
+}
+
 function evidenceSupersession(corpus) {
   const out = [];
   const superseded = supersededRows(corpus);
   const rank = ledgerRank(corpus.ledger?.entries);
-  const lastByKey = lastFetchByUrl(corpus.ledger?.entries);
-  const rowOf = (id) => corpus.evidence.find((e) => e.id.toUpperCase() === id.toUpperCase());
+  const fetches = fetchIndex(corpus.ledger?.entries);
+  // The first row under each ID, as a find would return it, looked up once per citation, not scanned.
+  const byId = new Map();
+  for (const e of corpus.evidence) if (!byId.has(e.id.toUpperCase())) byId.set(e.id.toUpperCase(), e);
+  const rowOf = (id) => byId.get(id.toUpperCase());
 
   // A citation of a superseded row reopens (ADR-0026) unless its quoted words survived the
   // refresh (ADR-0193). Either way the citation stays where it is: moving it is the act of
   // somebody who re-read the page.
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
+      // A refresh that asked for the row's page and landed on another URL (ADR-0193 decision 8)
+      // is the newest word on that page, so it is judged before - and instead of - any earlier
+      // refresh that superseded the row by URL.
+      const moved = movedAfterScrape(corpus, rowOf(id), rank, fetches);
       const replacement = superseded.get(id.toUpperCase());
-      if (!replacement) continue;
-      const gone = goneAfterScrape(corpus, rowOf(id), rank, lastByKey, { findingExempts: false });
+      if (!moved && !replacement) continue;
+      const gone = goneAfterScrape(corpus, rowOf(id), rank, fetches, { findingExempts: false });
+      if (moved) {
+        out.push(movedCitation(corpus, rank, unknown, id, moved, gone, superseded, fetches));
+        continue;
+      }
       const recheck = quoteRecheck(corpus, rank, id, replacement, gone);
       if (recheck.survived) {
         out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
@@ -884,8 +1042,7 @@ function evidenceSupersession(corpus) {
   // asked whether or not anything was re-collected.
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
-      const row = corpus.evidence.find((e) => e.id.toUpperCase() === id.toUpperCase());
-      const gone = goneAfterScrape(corpus, row, rank, lastByKey);
+      const gone = goneAfterScrape(corpus, rowOf(id), rank, fetches);
       if (!gone) continue;
       out.push(finding('fail', 'evidence-supersession', 'cites-gone-page',
         `${unknown.id} rests on ${id}. A refresh on ${gone.day} found the page gone (HTTP ${gone.status}). `

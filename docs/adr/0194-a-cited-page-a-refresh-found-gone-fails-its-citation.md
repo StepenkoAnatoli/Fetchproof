@@ -48,9 +48,11 @@ moves no committed verdict.
 ## Decision
 
 1. **A new failure, `evidence-supersession/cites-gone-page`.** For each unknown and each row it
-   cites: when the **last** ledger entry for the row's URL (a scrape or a fail, compared by
-   `urlKey`, whichever transport ran it) is a fail that `standingFailure` reads as gone (HTTP
-   404 or 410), recorded **after** the scrape that wrote the row's capture, the citation fails:
+   cites: when the **last** ledger entry filed under the row's URL (a scrape or a fail, compared
+   by `urlKey`, whichever transport ran it) is a fail that `standingFailure` reads as gone (HTTP
+   404 or 410), recorded **after** the scrape that wrote the row's capture, and no later scrape
+   asked for that URL (amended 2026-10-26: such a scrape that landed elsewhere is a move, filed
+   under where it landed, and ADR-0193 decision 8 judges it; see Consequences), the citation fails:
    "U-4 rests on E-12. A refresh on 2026-11-02 found the page gone (HTTP 404). Re-research U-4
    or record in E-12's Finding that the page now answers HTTP 404 and why the earlier reading
    still holds." The finding carries `row`, `line`, `cited` and `status`. The date is the
@@ -124,10 +126,28 @@ moves no committed verdict.
   reopens it.
 - A refresh with a transient failure changes nothing, as before; the next refresh decides.
 - A later transient failure after a 404 (a 500, say) is the URL's last word, so the citation is
-  not flagged until a refresh again answers gone. This is the collector's own reading
-  (`recentlyGone` reads the last entry the same way).
+  not flagged until a refresh again answers gone. The collector reads it the same way:
+  `recentlyGone` takes the last entry filed under the URL.
 - A fail recorded under a URL spelling `urlKey` does not join to the row's cell (a redirect alias
-  the collector asked as the plan URL) is not seen. No corpus here has one; reopen if one does.
+  the collector asked as the plan URL) is not seen by `cites-gone-page`. No corpus here has one;
+  reopen if one does. A moved citation reads two more addresses for its reason only (ADR-0193
+  decision 8): where the move landed, and the address a redirect-first row's move came through.
+- A moved page is not gone: a refresh that asked for the cited URL and landed on another one is a
+  successful scrape, and ADR-0193 handles it (decision 8, 2026-10-26).
+- So a later scrape that asked for the cited URL and got content, wherever it landed, ends a
+  gone state recorded before it: the 404 is no longer the URL's last word, and `cites-gone-page`
+  does not fire (G1-fix review 1, finding C, 2026-10-26). A 404 recorded after the move is still
+  gone.
+- **Here the gate and the collector differ, on purpose** (G1-fix review 2, R2-4). The collector's
+  `recentlyGone` still reads only the last entry filed under the URL, so after a 404 and then a
+  scrape that asked for the URL and landed elsewhere, it holds the URL gone - "not fetched again
+  for 30 days; --force retries it" - while the gate reads a move and `cites-gone-page` is quiet.
+  Both read a failure's text through `fetch-failure.mjs`, so they agree on what is gone; they
+  differ on which entry is the URL's last word. The cost is a refresh within the window skipping
+  the URL as gone, so the move is not re-observed until the window passes or `--force`; the gate
+  still judges the move it has (ADR-0193 decision 8), so the skip costs a fresh observation, not
+  a verdict. The collector is not changed in this run (the run's ruling of 2026-10-26). Reopen if
+  a refresh is seen skipping a moved page that a gate verdict then rests on.
 - No committed verdict moves (measured above).
 
 ## Trigger to revisit

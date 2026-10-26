@@ -4,7 +4,8 @@
 - **Status:** accepted
 - **Area:** `fetchproof/lib/checks.mjs` (`evidence-supersession`: the new pass
   `quote-survived-refresh`, the recheck, and the reason and drift attribution in
-  `cites-superseded-row`'s detail)
+  `cites-superseded-row`'s detail; since 2026-10-26 also a citation whose refresh landed on
+  another URL, decision 8)
 - **Prompted by:** plan v0.4 (`fetchproof-reasoning-layer-plan-2.md` §7, owner-approved
   2026-10-25), run `docs/orchestration/2026-10-25-quote-level-refresh/` (R-11, R-12, R-13, Mandate
   C3), and the first real quoted refresh, `docs/decisions/2026-10-25-first-quoted-refresh/`
@@ -13,6 +14,14 @@
 - **Lifts the hold (ADR-0157) and the freeze (ADR-0117)** for this one item, by the owner's ruling of
   2026-10-25: "spend credit but in a new chat for 192/195", read as the range 0192-0195. Unrelated
   work stays held.
+- **Decision 8 by the owner's ruling of 2026-10-26** (Stage 7 gap audit, gap 1), under the same
+  exception: "Fix it in this PR (Recommended)", the option that read "Under the ADR-0193/0194
+  exception: a later scrape that asked for the cited URL but landed elsewhere reopens the
+  citation. It is joined on the ledger's requestedUrl, and supersededRows stays unchanged."
+- **Redirect-first rows in decision 8 by the owner's ruling of 2026-10-26** (G1-fix review 1,
+  finding B): "Cover them (Recommended)", the option that read "Add the reviewer's join (asked the
+  same URL as the row's own capture) in the same second builder round. It closes a reachable
+  false green and gap 4's shape."
 
 ## Context
 
@@ -99,6 +108,63 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
    released history: transport-provenance still reports it, hygiene treats the pair as a refresh
    (no `duplicate-url`, no `uncited-capture`), `evidence-context` still shows "SUPERSEDED BY", and
    the handoff's fetched range still leaves it out. Each is pinned by a test.
+8. **A refresh that landed on another URL is rechecked too, and never passes silently** (added
+   2026-10-26, the owner's ruling above). A fetch that follows a redirect records where the bytes
+   came from, and the collector files its row under that URL, so `supersededRows`, a join by
+   urlKey, never paired it with the cited row: nothing reopened and the gate stayed green over a
+   page that no longer held the quote (the Stage 7 gap audit's probe). Now a cited row R is
+   moved when the last scrape after R's own, by ledger position, that asked for R's URL or
+   landed on it - urlKey throughout, the asked-for URL read from the command by `requestedUrl` -
+   landed on another key. When no scrape since R's own has done either, the last that asked for
+   the URL R's own fetch asked for is read instead.
+   - That join covers a row first captured through a redirect (its URL is where it landed, and
+     its refreshes ask the plan's old address), by the second ruling above. Its reasons say so:
+     "asked for X - the address E-02's own fetch asked for before it landed on Y - and landed on
+     Z".
+   - It comes second, not as an equal: R's own URL is the first word on R's page. Until the
+     G1-fix review 2 the latest of the three joins won, whichever address it came through, so a
+     later move of the old address was judged over R's own URL: a pass where R's URL, asked for
+     directly, had landed on a page without the quote (R2-1, a false green, with or without a
+     404 first), and a reopen where a later capture of R's URL held it (R2-5). So once R's URL
+     has been fetched since R's capture, a later move of the old address is not read at all.
+   - The current row of the landed capture's URL - the row naming it, or the row that has since
+     superseded that one (`supersededRows`) - is rechecked as the replacement, by decisions 1-3.
+     Its pass names the move ("..., and the refresh on 2026-11-02 asked for X and landed on Y, a
+     different page, recorded as E-07."), adding "and since superseded by E-09" when a later
+     capture of Y replaced the row. A capture of Y that had itself been replaced passed until the
+     G1-fix review (finding A).
+   - Any other outcome, and a landed capture no row names, reopens `cites-superseded-row` with the
+     same words and the limit line. No new rule name: the reason is in the detail, as in
+     decision 5.
+   - A move is the newest word on the page, so it is judged instead of any earlier refresh that
+     superseded R by URL. A later scrape that landed back on R's URL is an ordinary refresh again,
+     whatever it asked for, and even when no row names its capture: the page came back, and
+     hygiene warns `uncited-capture`. That reset is wider than "asked for" (G1-fix review 1,
+     finding D), and it can only silence a move, never raise one.
+   - Silent by design: a trailing slash or `www.` (one urlKey); a redirect-first row refreshed
+     from where it landed, or through the redirect when it lands on R's URL again; and a failed
+     fetch, wherever it is filed (ADR-0194's, or nothing).
+   - A 404 on R's URL followed by a scrape that asked for that URL and landed elsewhere is a move,
+     not a gone page (ADR-0194). A 404 or 410 recorded after the move, by ADR-0194's ledger rank
+     and classification, is still gone, and the move never passes on it. Gone is read at three
+     addresses, because a failure is filed under the address it asked for:
+     - R's URL: the move reopens, and `cites-gone-page` fails beside it.
+     - Where the move landed, after the capture of its current row - a direct fetch of Y that
+       answered 404 (G1-fix review 2, R2-2). The move reopens and says "found Y, where the page
+       landed, gone (HTTP 404)". Until round 3 it passed on a capture of a page found gone.
+     - For a move through the address R's own fetch asked for, that address after the move
+       (R2-3). The move reopens and says "found X, the address the move asked for, gone".
+     - In the last two `cites-gone-page` stays quiet: it reads R's URL only, and a fail filed
+       under another spelling is ADR-0194's alias consequence, unchanged. So "both fail" holds
+       for R's URL; for the other two the reopen alone fails the gate.
+   - A move of a move is not followed, and never passes. When the landed page's current row has
+     itself moved since - Y, asked for directly, now lands on Z - the move reopens and says "Y has
+     moved on since: the refresh on ... asked for Y and landed on Z". Until round 3 it passed on
+     the first landing's capture, after a 404 at Y too, because the ask of Y that moved on ended
+     Y's gone state (found by the round-3 builder's probe). Following the chain to Z's row was
+     set aside: each hop adds a recheck whose wording and silent cases would need their own
+     review, and the case needs two redirects of one cited page, none in the committed corpora.
+   - `supersededRows` is unchanged, so the decision 7 readers are.
 
 ## Rejected alternatives
 
@@ -133,6 +199,24 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
 - Known gap, pinned as `KNOWN GAP`: a redesign that keeps the sentence under a heading that changes
   its meaning ("Enterprise only") passes. A string check cannot see it; plan §12 measures the cost.
 - Known gap: quote markers `quoteAnchors` cannot read are `citations`' failure, not this check's.
+- A moved page now reopens or passes by decision 8. In the 2026-10-25 corpus survey, 2 of 15
+  cited URLs redirect today; no committed cited row has a later scrape that landed elsewhere, so
+  no verdict moves (movement.mjs, 2026-10-26). Of the 431 committed rows that have a capture, 1
+  is redirect-first (`2026-10-02-licence-and-captured-pages` E-20), and it is uncited (G1-fix
+  review 1).
+- The cross-transport split (gap 4) is joined: a keyless row filed under the landed URL Y, then
+  a refresh filed under the asked-for URL X, is a move, because X is what the row's own fetch
+  asked for. The join does not depend on what Firecrawl records on a redirect. That fact is
+  still UNVERIFIED (one scrape of a redirecting page, held by NO SPEND, would settle it), and it
+  now decides only the wording a reader sees, not whether the citation is rechecked.
+- Known gap, pinned as `KNOWN GAP` (Stage 7 gap 2): a quote found only inside a struck-through
+  span of the new capture (`~~...~~`, as Firecrawl captures carry it) passes. The EUDR corpus's
+  Wikipedia capture strikes postponed dates exactly so. The matcher keeps the tildes; the keyless
+  converter has no strike handling, so there the strike is lost (read from its code, not probed).
+  Changing either is a matcher or converter change, not made here.
+- Known gap, pinned as `KNOWN GAP` (Stage 7 gap 3): text changed inside an ellipsis gap, up to
+  `MAX_QUOTE_GAP` compared characters, passes, and the pass says the quoted words occur. 3 of the
+  baseline's 517 anchors carry an ellipsis.
 - The attribution is unmeasured on real data; its wording is the plan's.
 - No committed verdict moves (measured above). The first quoted refresh, rebuilt in a scratch copy,
   passes its three citations and moves none.

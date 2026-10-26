@@ -5,6 +5,19 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a refresh that landed on another URL no longer leaves its citation green** (ADR-0193
+  decision 8). When a later scrape asked for a cited row's URL and landed elsewhere,
+  `evidence-supersession` rechecks the quote against the current row of the landed URL; for a row
+  first captured through a redirect it also reads the address that row's own fetch asked for, but
+  only when the row's URL has not been fetched since. It passes only on full survival, and says so.
+  Otherwise it reopens `cites-superseded-row` with "asked for X ... and landed on Y, a different
+  page"; a reopen also follows when the landed page, or the address the move came through, was
+  found gone (404/410) since, or when the landed page has itself moved on. A 404 followed by such a
+  move is judged as the move, not as `cites-gone-page` (ADR-0194). The collector's 30-day "gone"
+  memory is unchanged, so it can still skip that URL. Silent: a trailing slash, a redirect that
+  lands on the row's URL again, a failed fetch. Two new `KNOWN GAP` tests: a quote inside a
+  struck-through span, and a change inside an ellipsis gap.
+
 - **Added: `evidence-supersession/quote-survived-refresh`** (ADR-0193). A citation of a superseded
   row passes when every usable quote of the old row is found in that row's own capture and in the
   replacing row's own capture. That capture must be readable, must not be an error page, and must

@@ -239,3 +239,33 @@ test('movement.mjs can be imported from a process whose argv[1] names no file', 
   assert.equal(r.stdout, 'measureAll,movement');
   assert.equal(r.stderr, '');
 });
+
+// The movement script's diff (R-06, plan v0.4 §4.3), on a two-corpus fixture: what the ADRs cite
+// as "no movement" is this function's empty answer, and until 2026-10-26 (Stage 7 gap audit,
+// R-06) only its committed outputs said it reports a moved anchor at all - in either direction.
+test('movement.mjs prints an anchor that went not-found to found and one that went found to not-found, and nothing for one that stayed', async () => {
+  const script = path.join(path.resolve(KIT_ROOT, '..'), 'docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs');
+  assert.ok(fs.existsSync(script), 'movement.mjs is not in this tree, so this proves nothing');
+  const { movement } = await import(pathToFileURL(script).href);
+  const verdict = (corpus) => ({ corpus, rows: 1, quotedRows: 1, anchors: 1, unreadableMarkers: 0, comparablePass: true, findings: [] });
+  const anchor = (corpus, quote, found) => ({ corpus, row: 'E-01', anchor: 0, quote, capture: `${corpus}/research/raw/page.md`,
+    tooShort: false, found, status: found ? 'found' : 'not-found' });
+  const base = {
+    verdicts: [verdict('docs/decisions/a'), verdict('docs/decisions/b'), verdict('docs/decisions/c')],
+    anchors: [anchor('docs/decisions/a', 'The free plan allows 10 requests per minute', false),
+      anchor('docs/decisions/b', 'Paid plans start at 20 dollars a month', true),
+      anchor('docs/decisions/c', 'The limit resets every hour on the hour', true)],
+    superseded: [],
+  };
+  const now = {
+    ...base,
+    anchors: [anchor('docs/decisions/a', 'The free plan allows 10 requests per minute', true),
+      anchor('docs/decisions/b', 'Paid plans start at 20 dollars a month', false),
+      anchor('docs/decisions/c', 'The limit resets every hour on the hour', true)],
+  };
+  assert.deepEqual(movement(base, base), [], 'a baseline compared with itself must not move');
+  assert.deepEqual(movement(base, now), [
+    'anchor docs/decisions/a E-01 [0]: status not-found -> found; found false -> true  "The free plan allows 10 requests per minute"',
+    'anchor docs/decisions/b E-01 [0]: status found -> not-found; found true -> false  "Paid plans start at 20 dollars a month"',
+  ]);
+});
