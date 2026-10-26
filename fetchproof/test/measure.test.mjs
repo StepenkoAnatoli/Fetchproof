@@ -1,9 +1,10 @@
 // ADR-0089: a judge-free report of how a corpus's citations hold up.
 // Research: docs/decisions/2026-09-28-kit-measurement.
 
-import { test, describe, assert, makePassingProject, tempDir, corrupt, fs } from './harness.mjs';
+import { test, describe, assert, makePassingProject, tempDir, corrupt, fs, path, KIT_ROOT } from './harness.mjs';
 import { PATHS } from '../lib/core.mjs';
 import { measureCorpus, renderMeasure } from '../lib/measure.mjs';
+import { readCorpus } from '../lib/corpus.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -145,6 +146,17 @@ test('quote coverage: an unknown citing two usable rows, or one row twice, count
   assert.deepEqual(coverage(dir), [1, 1]);
 });
 
+test('quote coverage: an unknown counts when one row it cites has a usable found quote, not only when all do', () => {
+  // Found 2026-10-26 (Phase 4b mutation M2): asked of every row an unknown cites, an unknown
+  // citing a quoted row and an unquoted one stopped counting, and every other test stayed green.
+  const dir = coverageProject({
+    rows: { 'E-01': `[quote: ${QUOTE}]`, 'E-02': '' },
+    unknowns: [['U-1', 'CLOSED', 'E-01, E-02']],
+  });
+  assert.deepEqual(readCorpus(dir).unknowns[0].cites, ['E-01', 'E-02'], 'U-1 must cite both rows, or this proves nothing');
+  assert.deepEqual(coverage(dir), [1, 1]);
+});
+
 test('quote coverage: a row with one usable found quote counts, whatever else it carries', () => {
   // The plan's wording, kept on purpose: "at least one row with a usable quote found". The
   // invented quote beside the real one fails the gate on this row (quote-not-found), and the
@@ -185,4 +197,32 @@ test('quote coverage: no quotes is 0 / M, no DISCOVERY.md is 0 / 0, and the CLI 
   const json = spawnSync(process.execPath, [bin, '--json'], { cwd: contractless, encoding: 'utf8' });
   assert.equal(json.status, 0, json.stderr);
   assert.deepEqual(JSON.parse(json.stdout).quoteCoverage, { count: 0, of: 0, percent: null });
+});
+
+// The refresh baseline's movement script (docs/measurements/2026-10-refresh-baseline, plan v0.4
+// §4.2), the measurement the ADRs cite for "none of the 41 baseline corpora moves". Found
+// 2026-10-25 (Phase 4b breaker, F1): its main guard compared `path.resolve(argv[1])` with the
+// module's own path, which Node resolves through realpath. Reached through a junction, a
+// symlinked checkout or macOS's /tmp, the two differed, main() never ran, and the process printed
+// nothing and exited 0 - the script's "no movement" answer, even for an unknown flag. `--help` and
+// a bad flag answer before any measuring, so this costs no corpus run.
+test('movement.mjs answers when it is reached through a link: --help prints its usage, an unknown flag exits 2', () => {
+  const repo = path.resolve(KIT_ROOT, '..');
+  const script = ['docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs'];
+  assert.ok(fs.existsSync(path.join(repo, ...script)), 'movement.mjs is not in this tree, so this proves nothing');
+  const link = path.join(tempDir('fp-movement-link-'), 'checkout');
+  fs.symlinkSync(repo, link, 'junction');   // a junction on Windows (no rights needed), a directory symlink elsewhere
+  try {
+    const via = path.join(link, ...script);
+    assert.notEqual(path.resolve(via), fs.realpathSync(via), 'the link resolves to itself, so this proves nothing');
+    const help = spawnSync(process.execPath, [via, '--help'], { cwd: link, encoding: 'utf8' });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /^movement - the refresh baseline/, `nothing ran through the link: ${JSON.stringify(help)}`);
+    const bad = spawnSync(process.execPath, [via, '--no-such-flag'], { cwd: link, encoding: 'utf8' });
+    assert.equal(bad.status, 2, `an unknown flag through the link was not refused: ${JSON.stringify(bad)}`);
+    assert.match(bad.stderr, /movement: unknown argument --no-such-flag/);
+  } finally {
+    fs.unlinkSync(link);   // the link only - never a recursive delete through it
+  }
+  assert.ok(fs.existsSync(path.join(repo, ...script)), 'removing the link touched the checkout');
 });

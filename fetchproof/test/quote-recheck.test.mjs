@@ -18,6 +18,7 @@ import { readCorpus, parseCapture } from '../lib/corpus.mjs';
 import { runCheck, supersededRows } from '../lib/checks.mjs';
 import { verifyLedger, appendFetch } from '../lib/provenance.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
+import { quoteAnchors, quoteTooShort } from '../lib/quotes.mjs';
 
 describe('quote-recheck');
 
@@ -162,11 +163,48 @@ test('recheck 6: the replacement row\'s Raw cell is blank - reopen, with no fall
 });
 
 test('recheck 7: the replacement is an HTTP error page that holds the words - reopen', () => {
-  const dir = quotedProject();
-  const entry = legacyRefresh(dir, `# Not Found\n\nThis page has moved. Cached text follows.\n\n${SENTENCE}\n`, { statusCode: 404 });
-  assert.ok(readText(resolve(dir, entry.file)).includes(SENTENCE), 'the error page must hold the words, or this proves nothing');
-  const detail = reopened(dir, 'an error page holding the words');
-  assert.ok(detail.includes(`E-02's capture ${entry.file} is an HTTP 404 page - words found on an error page are not the page's.`), detail);
+  // 400 as well as 404: an error page is a status of 400 or more (found 2026-10-26, Phase 4b
+  // mutation C22: with 404 alone, "> 400" passed a 400 page holding the words).
+  for (const statusCode of [400, 404]) {
+    const dir = quotedProject();
+    const entry = legacyRefresh(dir, `# Not Found\n\nThis page has moved. Cached text follows.\n\n${SENTENCE}\n`, { statusCode });
+    assert.ok(readText(resolve(dir, entry.file)).includes(SENTENCE), 'the error page must hold the words, or this proves nothing');
+    const detail = reopened(dir, `an HTTP ${statusCode} error page holding the words`);
+    assert.ok(detail.includes(`E-02's capture ${entry.file} is an HTTP ${statusCode} page - words found on an error page are not the page's.`), detail);
+  }
+});
+
+// Found 2026-10-25 (Phase 4b breaker, F2): the error-page test read the status with Number(), and a
+// status kept as text - "404 Not Found", "HTTP 404", a quoted "404" in a capture header - is NaN, so
+// the capture counted as "not an error page" and an error page holding the old words PASSED. The
+// Firecrawl adapter keeps a string status as it came; the collector reads it with the same Number(),
+// so it keeps such an answer as a capture. A status that cannot be read is a state the §7.1 table
+// does not list, so it defaults to the reopen. An empty status (5 committed captures) says nothing,
+// and a numeric 200 is the page: both still pass.
+test('a replacement whose HTTP status cannot be read as a number reopens, and says so; an empty status or a numeric 200 still passes', () => {
+  const cached = `# Not Found\n\nCached copy: ${`${SENTENCE} `.repeat(30)}`;
+  for (const statusCode of ['404 Not Found', 'HTTP 404', '4O4']) {
+    const dir = quotedProject();
+    const result = collectOne(dir, LIMITS_URL, {
+      runScrape: (url) => ({ ok: true, url, title: 'Not Found', markdown: cached, statusCode, transport: 'firecrawl-cli', cmd: 'stub', completeness: 'full', omitted: '' }),
+      corpus: readCorpus(dir), force: true, type: 'P', transportName: 'firecrawl-cli', date: DAY2, maxRateLimitRetries: 0, sleep: () => {},
+    });
+    assert.equal(result.status, 'collected', `${statusCode}: the collector refused the page, so the recheck never sees it and this proves nothing`);
+    const detail = reopened(dir, `a capture whose status is "${statusCode}"`);
+    assert.ok(detail.includes(`E-02's capture ${result.entry.file} records its HTTP status as "${statusCode}", which is not a number, `
+      + 'so the recheck cannot tell whether it is an error page - and words found on an error page are not the page\'s.'), detail);
+  }
+  // The header form of a pre-2026-09-28 capture: a status written with its quote marks.
+  const quoted = quotedProject();
+  const entry = legacyRefresh(quoted, cached, { statusCode: '"404"' });
+  assert.equal(readCorpus(quoted).captures.byFile.get(entry.file).statusCode, '"404"', 'the header does not carry the quoted status, so this proves nothing');
+  assert.ok(reopened(quoted, 'a quoted status in the capture header').includes('records its HTTP status as ""404"", which is not a number'));
+
+  for (const statusCode of ['', 200]) {
+    const dir = quotedProject();
+    legacyRefresh(dir, SAME_PAGE, { statusCode });
+    survived(dir, `a replacement whose status is ${JSON.stringify(statusCode)}`);
+  }
 });
 
 test('recheck 8: several quotes, one gone - reopen, naming the one that is gone', () => {
@@ -194,6 +232,28 @@ function legacyBaseline(dir, markdown) {
   assert.equal(rowOf(dir, 'E-01').raw, entry.file, 'E-01 does not name the baseline capture');
   return entry;
 }
+
+// A quote too short to anchor anything is left out of the recheck on both sides, the baseline and
+// the replacement (found 2026-10-26, Phase 4b mutations C20 and C20b: looked for among every
+// anchor, a too-short quote missing from either capture reopened a citation whose usable quote
+// survived - the stricter direction).
+test('a too-short quote beside a usable one is not rechecked: missing from the replacement, or from the old capture, the citation still passes', () => {
+  const SHORT = 'hourly burst';
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${SHORT}]`)[0]), true, 'the short quote must be quote-too-short, or this proves nothing');
+  const withShort = `${SAME_PAGE}\n\nThe ${SHORT} is 50 requests.\n`;
+
+  const goneFromNew = quotedProject([SENTENCE, SHORT]);
+  legacyBaseline(goneFromNew, withShort);
+  const { entry } = refresh(goneFromNew, SAME_PAGE);
+  assert.equal(readText(resolve(goneFromNew, entry.file)).includes(SHORT), false, 'the replacement must lack the short quote, or this proves nothing');
+  survived(goneFromNew, 'a too-short quote missing from the replacement');
+
+  const neverInOld = quotedProject([SENTENCE, SHORT]);
+  assert.equal(readText(resolve(neverInOld, rowOf(neverInOld, 'E-01').raw)).includes(SHORT), false,
+    'E-01\'s own capture must lack the short quote, or this proves nothing');
+  refresh(neverInOld, withShort);
+  survived(neverInOld, 'a too-short quote its own capture never held');
+});
 
 test('recheck 9: a byte-identical replacement with a usable quote passes', () => {
   const dir = quotedProject();
@@ -224,6 +284,8 @@ test('recheck 11: a link-syntax two-word quote (B1, ADR-0191) is too short - reo
 // (2d831ca), so the quote survives. Before it this line read 'cites-superseded-row'.
 const TRANSPORT_SPACING_OUTCOME = 'quote-survived-refresh';
 const TRANSPORT_LINE = 'Captured by firecrawl-cli then, http-keyless now. A transport change alone can lose a quote.';
+const MOVED_PAGE = `# Limits\n\n${'Rate limits are listed on the account page now. '.repeat(30)}`;
+const DEFAULT_CAUSE = 'The page changed, or the converter changed without being recorded. Both are possible.';
 
 test('recheck 12: Firecrawl to keyless, the quote lost only to a space before the full stop - outcome pinned', () => {
   const dir = quotedProject();
@@ -303,6 +365,70 @@ test('the reopen says why it could not tell, case by case: a partial capture nam
   const thin = quotedProject();
   refresh(thin, '# Limits\n\nLoading...\n');
   assert.ok(reopened(thin, 'a thin capture').includes('The recheck could not look. This is not evidence the words are gone.'));
+
+  // Thin is under MIN_CAPTURE_CHARS (200) bytes of body: 199 is thin, 200 is not (found
+  // 2026-10-26, Phase 4b mutation C26: the boundary was unpinned).
+  for (const [bytes, isThin] of [[199, true], [200, false]]) {
+    const dir = quotedProject();
+    const { entry } = refresh(dir, `# Limits\n\n${'z'.repeat(bytes - 11)}`);
+    assert.equal(readCorpus(dir).captures.byFile.get(entry.file).bytes, bytes, 'the capture body is not the size this case is about, so it proves nothing');
+    const detail = reopened(dir, `a ${bytes}-byte capture`);
+    assert.equal(detail.includes(`E-02's capture is ${bytes} bytes, too thin to tell.`), isThin, detail);
+    assert.equal(detail.includes(DEFAULT_CAUSE), !isThin, detail);
+  }
+});
+
+/**
+ * A capture and its ledger entry written by hand, so the capture header and the ledger can say
+ * different things. `row` 'E-01' makes it E-01's own capture (its Raw cell is renamed);
+ * any other id appends that row.
+ */
+function handFetch(dir, markdown, { row, date, header = {}, ledger = {} }) {
+  const entry = writeRaw(dir, { url: LIMITS_URL, title: 'Limits', markdown, statusCode: 200, cmd: 'stub',
+    transport: 'firecrawl-cli', completeness: 'full', ...header }, { date });
+  appendFetch(dir, { op: 'scrape', url: LIMITS_URL, type: 'P', raw: entry.file, cmd: entry.command, at: `${date}T01:00:00.000Z`, ...ledger });
+  if (row === 'E-01') {
+    const old = rowOf(dir, 'E-01').raw;
+    corrupt(dir, PATHS.evidence, (text) => text.replace(`| ${old} |`, `| ${entry.file} |`));
+  } else {
+    fs.appendFileSync(resolve(dir, PATHS.evidence), `| ${row} | ${date} | P | ${LIMITS_URL} | Rate limits moved. | ${entry.file} |\n`);
+  }
+  assert.equal(rowOf(dir, row).raw, entry.file, `${row} does not name the hand-written capture`);
+  return entry;
+}
+
+// Plan §7.3's attribution reads each field from the ledger entry and, where the ledger is silent,
+// from the capture's header, and names a cause only when both sides record it (found 2026-10-26,
+// Phase 4b mutations C24, C25, C27b, C43, C46: those presence checks and header fallbacks were
+// unpinned). Wording only: every case reopens with or without them.
+test('the attribution names a cause only when both sides record it, and reads the capture header where the ledger is silent', () => {
+  const cases = [
+    { what: 'neither scrape records bodySha256, so nothing says the bytes are the same',
+      old: { ledger: { transport: 'firecrawl-cli', completeness: 'full' } },
+      now: { ledger: { transport: 'firecrawl-cli', completeness: 'full' } },
+      cause: DEFAULT_CAUSE },
+    { what: 'only the replacement records a transport, so no transport change is named',
+      old: { header: { transport: '' } },
+      now: { header: { transport: 'http-keyless' }, ledger: { transport: 'http-keyless' } },
+      cause: DEFAULT_CAUSE },
+    { what: 'neither ledger entry records a transport and both capture headers do',
+      old: { header: { transport: 'firecrawl-cli' } },
+      now: { header: { transport: 'http-keyless' } },
+      cause: TRANSPORT_LINE },
+    { what: 'the capture header says partial while the ledger entry says full',
+      old: { ledger: { transport: 'firecrawl-cli' } },
+      now: { header: { completeness: 'partial', omitted: 'the pricing table' }, ledger: { transport: 'firecrawl-cli', completeness: 'full' } },
+      cause: 'E-02\'s capture is partial; the words may be in the part not captured: the pricing table.' },
+  ];
+  for (const { what, old, now, cause } of cases) {
+    const dir = quotedProject();
+    handFetch(dir, SAME_PAGE, { row: 'E-01', date: DAY1, ...old });
+    handFetch(dir, MOVED_PAGE, { row: 'E-02', date: DAY2, ...now });
+    assert.equal(supersededRows(readCorpus(dir)).get('E-01')?.id, 'E-02', `${what}: E-02 must supersede E-01, or this proves nothing`);
+    const detail = reopened(dir, what);
+    assert.ok(detail.includes(`E-01's quote "${SENTENCE}" is not in E-02's capture`), `${what}: ${detail}`);
+    assert.ok(detail.includes(cause), `${what}: ${detail}`);
+  }
 });
 
 // A state the §7.1 table does not list, so it defaults to a reopen: the quote survived into E-02,

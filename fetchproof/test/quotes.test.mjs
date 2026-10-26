@@ -404,7 +404,7 @@ function gated(finding) {
 test('a quote short only on its compared text still warns and is still compared: an invented one fails the gate', () => {
   for (const [name, quote] of [
     ['a Markdown link whose URL is long', '[Enterprise plan](https://vendor.example.com/pricing#enterprise-plan-details)'],
-    ['emphasis padded with zero-width spaces', `**Enterprise**${'​'.repeat(35)} plan`],
+    ['emphasis padded with zero-width spaces', `**Enterprise**${'\u200b'.repeat(35)} plan`],
     ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... enterprise plan`],
   ]) {
     assert.ok(quote.length >= MIN_QUOTE_CHARS, `${name}: the case clears the raw floor, so it was compared before ADR-0191`);

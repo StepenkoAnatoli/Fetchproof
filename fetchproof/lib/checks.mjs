@@ -826,7 +826,19 @@ function quoteRecheck(corpus, rank, id, replacement, gone) {
   const file = fresh.capture.file;
   // An error page kept as a capture (before 2026-09-28) can hold the words - a cached copy, a
   // "this page has moved" notice quoting it - and is still not the page.
-  const status = Number(fresh.capture.statusCode);
+  //
+  // A status that is there and is not a number - "404 Not Found", "HTTP 404", a quoted "404" in
+  // the header - cannot say it is not one. Number() reads all of them as NaN, and until
+  // 2026-10-26 (Phase 4b breaker, F2) NaN counted as "not an error page", so such a capture
+  // holding the old words passed. The Firecrawl adapter keeps a string status as it came, and
+  // the collector reads it with the same Number() and keeps the page. An empty status says
+  // nothing either way and is read as before (5 committed captures carry one).
+  const statusText = String(fresh.capture.statusCode ?? '').trim();
+  const status = Number(statusText);
+  if (statusText && !Number.isInteger(status)) {
+    return { reason: `${replacement.id}'s capture ${file} records its HTTP status as "${statusText}", which is not a number, `
+      + 'so the recheck cannot tell whether it is an error page - and words found on an error page are not the page\'s.' };
+  }
   if (Number.isInteger(status) && status >= 400) {
     return { reason: `${replacement.id}'s capture ${file} is an HTTP ${status} page - words found on an error page are not the page's.` };
   }

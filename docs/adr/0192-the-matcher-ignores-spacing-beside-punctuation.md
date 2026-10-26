@@ -21,8 +21,12 @@ from the same HTML (E-01 and E-02 keyless, E-08 and E-09 Firecrawl):
 
 - **The keyless converter** writes a space on both sides of every inline tag it strips (`<span>`,
   `<sup>`, `<abbr>`, a Sphinx code token). So `2019</span>.` reads `2019 .` and
-  `<em>primo</em></i>,` reads `*primo* ,`. All ten closing marks and all three opening marks were
-  seen spaced (E-01, E-02).
+  `<em>primo</em></i>,` reads `*primo* ,`. Nine closing marks, `. , ; : ! ? ) ] }`, and all three
+  opening marks were seen spaced this way (E-01, E-02, U-01). `%` was not. It is in the rule
+  because Firecrawl drops the no-break space a page writes before `%`, which the keyless capture
+  keeps (E-02 against E-09, `50 %* ),`); E-01's capture also spaces it once from Pygments spans,
+  unquoted (its line 2098). Corrected 2026-10-26 (Phase 4b spec review S3-3): this said all ten
+  closing marks were seen spaced by the converter.
 - **Firecrawl** writes no space before a closing mark after an inline element (E-08, E-09). It
   does write one after `(` or `[` when a link or emphasis follows (`( [Mexico](https://...)`), where the
   keyless converter writes `([Mexico](https://...)`. So the space after `(` comes from both transports.

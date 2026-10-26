@@ -15,6 +15,9 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   its advice to re-read the new row, shows with `--show-pass` and in `--json`. No citation is moved.
   The attribution is unmeasured: no real refresh has yet lost a quote (ADR-0193).
 
+- **Fixed: the quote-level recheck reopens a replacement whose HTTP status is not a number**
+  (`404 Not Found`, `HTTP 404`). Before, it counted as no status and could pass (ADR-0193).
+
 - **The quote matcher ignores the spacing beside punctuation** (ADR-0192, plan 5.3 B2; lifts the
   hold and the freeze for this one item by the owner's ruling of 2026-10-25). A `[quote: ...]`
   copied from a Firecrawl capture now matches a keyless capture of the same page, and the reverse,
@@ -28,13 +31,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   one row with a usable quote found in its capture (`quoteCoverage` in `--json`). A report line; it
   never gates. Across the 41 baseline corpora it is 108 / 183 (ADR-0195).
 
-- **Fixed: keyless captures no longer leak attribute text** (plan B3). A `>` inside a quoted
-  attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends a tag. That holds in
-  the tag stripper and in every pass that reads a tag by name: list items, headings, cells, bold,
-  italic, code, links, the content block and the title. A link whose quoted `>` comes before its
-  href is still a link. A quote opens only after `=`, and only inside a tag that starts the way HTML
-  starts one, so `a <= "x > y"` keeps its sentence. A quote that never closes falls back to the old
-  rule, and the converter stays linear. Existing captures are not rewritten.
+- **Fixed: a quoted `>` in an attribute no longer ends a tag in keyless captures** (plan B3). A `>`
+  inside a quoted attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends a tag.
+  That holds in the tag stripper and in every pass that reads a tag by name: list items, headings,
+  cells, bold, italic, code, links, the content block and the title. A link whose quoted `>` comes
+  before its href is still a link. A quote opens only after `=`, and only inside a tag that starts
+  the way HTML starts one, so `a <= "x > y"` keeps its sentence. A quote that never closes falls
+  back to the old rule, and the converter stays linear. Existing captures are not rewritten. Known
+  limit, as before B3: a closing tag written inside a quoted value (`<span title="</td> ...">`)
+  still ends the element a pass reads.
 
 - **Added: `evidence-supersession/cites-gone-page`** (ADR-0194). A cited row fails when a refresh
   after its scrape found the page gone (HTTP 404 or 410). This holds under every policy; a Finding
@@ -65,9 +70,10 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 - **Added: decision research on punctuation spacing**
   (`docs/decisions/2026-10-25-punctuation-spacing/`, for ADR-0192). It measures, on the same pages,
   what the keyless converter and Firecrawl write around punctuation beside inline tags. Keyless
-  spaces all ten closing marks and `( [ {`. Firecrawl spaces only after `(` or `[` before a link
-  or emphasis, and drops whitespace held in a span. The brief lists what the proposed rule does not
-  cover and where it merges text.
+  spaces nine closing marks (`. , ; : ! ? ) ] }`) and `( [ {`; `%` is in the rule because Firecrawl
+  drops the no-break space a page writes before it (E-02 against E-09). Firecrawl spaces only after
+  `(` or `[` before a link or emphasis, and drops whitespace held in a span. The brief lists what
+  the proposed rule does not cover and where it merges text.
 
 - **Added: the pre-registered study of the quote-level recheck**
   (`docs/decisions/2026-10-25-refresh-recheck-study/`, plan §12). It fixes the question, the arms,

@@ -9,6 +9,7 @@ import * as firecrawl from '../lib/firecrawl.mjs';
 import * as httpKeyless from '../lib/http-transport.mjs';
 import { TRANSPORTS, TRANSPORT_NAMES, selectTransport, selectSearch, probeFirecrawl, unusedKeyNote, canSearch } from '../lib/transport.mjs';
 import { mergeByRank } from '../lib/research-run.mjs';
+import * as regexExtract from './fixtures/regex-extract.mjs';
 
 describe('transport');
 
@@ -406,6 +407,23 @@ test('a ">" inside a quoted attribute value ends no tag a conversion pass reads'
   assert.equal(md(`<p>See <a ${tier} href="/x">label</a> now.</p>`), 'See [label](/x) now.', 'a link with the value before its href is still a link');
   assert.equal(httpKeyless.titleOf('<title data-x="a > b">Name</title>'), 'Name', 'the <title>');
   assert.equal(httpKeyless.titleOf('<h1 data-x="a > b">Name</h1>'), 'Name', 'the <h1> a page without a <title> is named by');
+});
+
+// Two shapes the http-linear equivalence generator never writes, so nothing compared them with
+// the regex extractor (test/fixtures/regex-extract.mjs) until 2026-10-26 (Phase 4b mutations H1
+// and H8). A literal `<>` in text is no tag: `/<[^>]+>/` needs a character inside, and tagEnd
+// says so first. And an href whose value opens with one quote kind and is closed by the other,
+// with no partner of its own kind before the page's last '>', is no attribute value: the tag ends
+// at its first '>', and the href hit that runs past it makes no link, as the regex found none.
+test('a literal "<>" stays in the text, and an href closed by the other quote kind past the tag\'s ">" makes no link', () => {
+  const same = (html, expected, what) => {
+    assert.equal(httpKeyless.htmlToMarkdown(html), expected, what);
+    assert.equal(regexExtract.htmlToMarkdown(html), expected, `${what}: the regex extractor, which this must match`);
+  };
+  same('<p>In C#, a <> b compares; List<> is an open generic.</p>', 'In C#, a <> b compares; List<> is an open generic.', 'a literal <>');
+  same(`<p>See <a href="x>t</a> and O'Brien's <a href='z'>u</a> now.</p>`, "See t and O'Brien's [u](z) now.", '" opened, \' closes');
+  same(`<p>See <a title="q" href="x>t</a> and it's <a href='z'>u</a> now.</p>`, "See t and it's [u](z) now.", 'the same after another attribute');
+  same(`<p>See <a href='x>t</a> and "this" <a href="z">u</a> now.</p>`, 'See t and "this" [u](z) now.', '\' opened, " closes');
 });
 
 // The same defect one level up (F1): the block mainContent keeps is the body of a <div>, <main>

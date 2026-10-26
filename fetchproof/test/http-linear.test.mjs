@@ -121,26 +121,34 @@ test('extraction time grows linearly with a page of unclosed tags, not quadratic
     'unclosed <li>': (n) => '<li>item '.repeat(n),
     'unclosed <a href>': (n) => '<a href="/x">link '.repeat(n),
     'tags with no >': (n) => '<li <a <div '.repeat(n),
+    // The six shapes below run on a fraction of n (2026-10-26, Phase 4b breaker F4). At full n
+    // they nearly doubled this test, 44-48 s under load against 24-25 s for the seven above, and
+    // the test is synchronous, so the 60 s watchdog cannot stop it. With its guard removed, each
+    // shape still reads 5.5-11.6x against the bound of 4 (the 4b-fix report lists the mutations).
+    // 'unterminated quote' keeps half: at a quarter its guards read only 4.0-4.5x. 'quoted > in
+    // attributes' fails under none of the mutations tried, and stays, at a quarter, for the
+    // common case.
+    //
     // The tag stripper skips quoted attribute values (2026-10-25, B3). A quote that never closes
     // ends nothing: the tag falls back to its first '>'. Failing the tag there instead, and
     // trying the next '<', would look for the quote's partner again from every '<' before it,
     // each time through the rest of the page.
-    'quoted > in attributes': (n) => '<span title="a > b">word '.repeat(n),
-    'unterminated quote after a run of <': (n) => `${'<i word '.repeat(n)}title="x> ${'<b>tail</b> '.repeat(n)}`,
-    'a quote in every tag, closed by the next tag': (n) => '<b title="x> word '.repeat(n),
+    'quoted > in attributes': (n) => '<span title="a > b">word '.repeat(n / 4),
+    'unterminated quote after a run of <': (n) => `${'<i word '.repeat(n / 2)}title="x> ${'<b>tail</b> '.repeat(n / 2)}`,
+    'a quote in every tag, closed by the next tag': (n) => '<b title="x> word '.repeat(n / 4),
     // The passes that read a tag by name end it as the stripper does (2026-10-25, review of the B3
     // fix, F1). A pair with no closing tag is tried again from the next character, so tags start
     // inside one another: along one long tag, and inside a quoted value of the tag before.
     // Without the tag ends remembered by '=', each of these list items scans every attribute after
-    // it - 30 s for 10,000, so a quarter as many here.
-    'attributes of one long tag, each the start of a list item': (n) => `${"<li y='a' ".repeat(n / 4)}>`,
+    // it - 30 s for 10,000, so an eighth as many here.
+    'attributes of one long tag, each the start of a list item': (n) => `${"<li y='a' ".repeat(n / 8)}>`,
     // Without the href hits listed once, each link after one inside a value lists the long tag's
     // hits again.
-    'links inside quoted values of one long link': (n) => `${"<a href='/x' t='<a href=/y>' ".repeat(n / 8)}>`,
+    'links inside quoted values of one long link': (n) => `${"<a href='/x' t='<a href=/y>' ".repeat(n / 32)}>`,
     // Without the closing tags listed once, a closing tag for the long tag is searched for again,
     // from its end to the end of the page, after each list item inside it. The text after is one
     // long word, which the other passes read quickly, so that search is most of the work.
-    'closed list items inside quoted values, text after': (n) => `${"<li t='<li></li>' ".repeat(n / 16)}>${'x'.repeat(20 * n)}`,
+    'closed list items inside quoted values, text after': (n) => `${"<li t='<li></li>' ".repeat(n / 32)}>${'x'.repeat(10 * n)}`,
   };
   const BOUND = 4;
   const slow = [];

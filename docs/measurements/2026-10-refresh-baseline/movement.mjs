@@ -384,7 +384,10 @@ function main(argv) {
   return 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Realpaths on both sides (found 2026-10-25, Phase 4b breaker F1): run through a junction or a
+// symlink, argv[1] keeps the link's path while import.meta.url is the target's, so a plain
+// path.resolve comparison missed, main() never ran, and the script exited 0 with no output.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (err) {

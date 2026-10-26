@@ -1338,6 +1338,9 @@ test('cites-gone-page: a busy server, a standing refusal, a rate limit or the ki
     'a 404 worded as a rate limit': transportError('HTTP 404 - the server said: "rate limit exceeded, retry after 30s"'),
     'a timeout': transportError('the page did not answer within 60 s'),
     'an unanchored 404': transportError('404 not found'),
+    // FAILED_STATUS is anchored: "HTTP 404" quoted inside other text is not the page's answer
+    // (found 2026-10-26, Phase 4b mutation F5: unanchored, this read as a gone page).
+    'a 404 named mid-text': transportError('the proxy logged HTTP 404 for an asset'),
     'over the size a capture may hold': transportError('the page\'s text is 41.0 MB, over the 10 MB a capture may hold - not kept'),
   };
   for (const [what, answer] of Object.entries(answers)) {
@@ -1394,6 +1397,21 @@ test('cites-gone-page: a 404 recorded before the row\'s own scrape is not gone, 
   assert.deepEqual(goneFindings(dir), [], 'a 404 before the row\'s own scrape was read as gone');
 });
 
+test('cites-gone-page: a row whose capture no ledger scrape recorded has no scrape to be after - provenance names it', () => {
+  // Found 2026-10-26 (Phase 4b mutation C3): without the "no own scrape" stop, such a row read
+  // as gone too, a second failure for a row provenance already fails.
+  const dir = makePassingProject();
+  const raw = readCorpus(dir).evidence[0].raw;
+  const copy = raw.replace(/[^/]+\.md$/, 'never-recorded.md');
+  fs.copyFileSync(path.join(dir, raw), path.join(dir, copy));
+  corrupt(dir, PATHS.evidence, (text) => text.replace(`| ${raw} |`, `| ${copy} |`));
+  assert.equal(readCorpus(dir).evidence[0].raw, copy, 'the fixture did not rename the Raw cell, so it proves nothing');
+  assert.equal(readCorpus(dir).ledger.entries.some((e) => e.file === copy), false, 'a ledger entry records the copy');
+  refreshAnswered(dir, errorPage(404));
+  assert.equal(readCorpus(dir).ledger.entries.at(-1).op, 'fail', 'the 404 was not recorded, so this proves nothing');
+  assert.deepEqual(goneFindings(dir), [], 'a row with no recorded scrape was read as gone after it');
+});
+
 test('cites-gone-page: a row nobody cites is history, and the check passes', () => {
   const dir = makePassingProject();
   corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01: 10 requests per minute, 1,000 credits |', '| KNOWN-UNKNOWN | day one: read the limits page |'));
@@ -1415,6 +1433,16 @@ test('cites-gone-page: a row whose Finding names the status has said so, as raw-
   corrupt(other, PATHS.evidence, (text) => text.replace('| The free plan allows', '| Once answered 410; the free plan allows'));
   refreshAnswered(other, errorPage(404));
   assert.equal(goneFindings(other).length, 1, 'a row naming another status was exempted');
+
+  // And for the status as a number, not its digits inside a longer one (found 2026-10-26, Phase
+  // 4b mutation C6: without the word boundary, "4100 requests a day" exempted a 410 page).
+  for (const [finding, status] of [['Allows 4100 requests a day; the free plan allows', 410], ['Ticket 14040 says the free plan allows', 404]]) {
+    const digits = makePassingProject();
+    corrupt(digits, PATHS.evidence, (text) => text.replace('| The free plan allows', `| ${finding}`));
+    assert.ok(readCorpus(digits).evidence[0].finding.startsWith(finding), 'the fixture did not change the Finding, so it proves nothing');
+    refreshAnswered(digits, errorPage(status, 'Gone'));
+    assert.equal(goneFindings(digits).length, 1, `a Finding holding the digits ${status} inside a longer number exempted a gone page`);
+  }
 });
 
 test('cites-gone-page: a page gone after an earlier refresh fails the row that superseded the first', () => {
@@ -1502,9 +1530,17 @@ test('hygiene treats the quote-survived refresh as a refresh: no duplicate-url, 
 // checks.mjs only: preflight's closure spawns local processes - git from gate.mjs, handoff.mjs
 // and machine.mjs, and the suite from the commit gate in gate.mjs - none of them a collector,
 // while no module in either closure may name a network builtin.
-const STATIC_IMPORT = /^\s*(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|^\s*import\s*['"]([^'"]+)['"]/gm;
+// A declaration starts a line or follows a semicolon on one (found 2026-10-26, Phase 4b mutation
+// I5: anchored at a line start only, an import of firecrawl.mjs written after the semicolon that
+// ends the fetch-failure.mjs import, on the same line, was not read). These comments hold no
+// quote marks: hardening's builtin scan pairs quotes across the regex literals here.
+const STATIC_IMPORT = /(?:^|;)\s*(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|(?:^|;)\s*import\s*['"]([^'"]+)['"]/gm;
 const COLLECTOR_OR_TRANSPORT = /collect|firecrawl|transport|research|serpapi|searxng|search-session|browser-guard/;
-const NETWORK_BUILTINS = ['net', 'http', 'https', 'http2', 'tls', 'dgram', 'dns'];
+// The module builtin is refused with them: its createRequire loads any file by a string this
+// reading cannot follow, as require( does (found 2026-10-26, Phase 4b mutation I4: a lazy
+// createRequire call in checks.mjs that loaded firecrawl.mjs left this test green).
+const NETWORK_BUILTINS = ['net', 'http', 'https', 'http2', 'tls', 'dgram', 'dns', 'module'];
+const REQUIRE_CALL = /\brequire\s*\(|\bcreateRequire\b/;
 
 function importClosure(entry) {
   const modules = new Map(); // file -> { kit: [resolved files], builtins: [names], dynamic }
@@ -1523,7 +1559,7 @@ function importClosure(entry) {
       kit.push(target);
       todo.push(target);
     }
-    modules.set(file, { kit, builtins, dynamic: /\bimport\s*\(/.test(source) });
+    modules.set(file, { kit, builtins, dynamic: /\bimport\s*\(/.test(source) || REQUIRE_CALL.test(source) });
   }
   return modules;
 }
@@ -1546,6 +1582,6 @@ test('the gate imports no collector or transport, and fetch-failure.mjs imports 
       .map((b) => `${path.relative(KIT_ROOT, file)} -> ${b}`));
     assert.deepEqual(reached, [], `${label} reaches a builtin with a route out of the corpus`);
     assert.deepEqual(names.filter((_, i) => [...closure.values()][i].dynamic), [],
-      `${label}: a dynamic import(), which this static reading cannot follow`);
+      `${label}: a dynamic import(), require( or createRequire, which this static reading cannot follow`);
   }
 });

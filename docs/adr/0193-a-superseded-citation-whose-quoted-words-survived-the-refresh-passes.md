@@ -79,8 +79,11 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
    preflight output change outside this plan.
 5. **The reopen says why.** `cites-superseded-row`'s detail keeps ADR-0026's sentence and adds the
    reason: no quote, every quote too short, no baseline, the replacement names no capture or its
-   file is missing, an error page, the page gone since, or the quote that is missing. For a missing
-   quote it names the first matching cause the ledger can tell (plan §7.3): equal `bodySha256`
+   file is missing, an error page, a status that is not a number, the page gone since, or the quote
+   that is missing. A replacement capture whose status is there and is not a number ("404 Not
+   Found", "HTTP 404", a quoted "404") cannot say it is not an error page, so it reopens by
+   decision 3 (found 2026-10-25, Phase 4b breaker F2: read as NaN, such a capture passed). For a
+   missing quote it names the first matching cause the ledger can tell (plan §7.3): equal `bodySha256`
    (cannot happen honestly; one capture was edited, and provenance names it), equal
    `sourceSha256` (the conversion changed, not the page), a transport change, a partial capture
    with what it omitted, a capture under `MIN_CAPTURE_CHARS` (could not look), otherwise "the page
