@@ -6,7 +6,7 @@ import { PATHS } from '../lib/core.mjs';
 import { measureCorpus, renderMeasure } from '../lib/measure.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 describe('measure');
 
@@ -225,4 +225,17 @@ test('movement.mjs answers when it is reached through a link: --help prints its 
     fs.unlinkSync(link);   // the link only - never a recursive delete through it
   }
   assert.ok(fs.existsSync(path.join(repo, ...script)), 'removing the link touched the checkout');
+});
+
+// Found 2026-10-26 (Stage 6 break-test, finding 1): the realpath guard above threw ENOENT at
+// import when argv[1] named no file, as with `node -e "await import(...)" an-argument`, so the
+// module's exports could not be reached that way. An unresolvable argv[1] is not this script.
+test('movement.mjs can be imported from a process whose argv[1] names no file', () => {
+  const repo = path.resolve(KIT_ROOT, '..');
+  const url = pathToFileURL(path.join(repo, 'docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs')).href;
+  const code = `const m = await import(${JSON.stringify(url)}); process.stdout.write(Object.keys(m).sort().join(','));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code, 'no-such-file-here'], { cwd: tempDir('fp-movement-import-'), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'measureAll,movement');
+  assert.equal(r.stderr, '');
 });

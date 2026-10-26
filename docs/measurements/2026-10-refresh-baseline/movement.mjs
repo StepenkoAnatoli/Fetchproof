@@ -387,7 +387,10 @@ function main(argv) {
 // Realpaths on both sides (found 2026-10-25, Phase 4b breaker F1): run through a junction or a
 // symlink, argv[1] keeps the link's path while import.meta.url is the target's, so a plain
 // path.resolve comparison missed, main() never ran, and the script exited 0 with no output.
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+// An argv[1] that names no file (`node -e "await import(...)" an-argument`) is not this script,
+// and must not make the import throw (found 2026-10-26, Stage 6 break-test).
+const realpathOrNull = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+if (process.argv[1] && realpathOrNull(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (err) {

@@ -83,7 +83,9 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 - **Added: a refresh baseline and a movement script** (`docs/measurements/2026-10-refresh-baseline/`,
   plan §4.2-4.3). It records what the gate says about every corpus at `ab2e605`: 41 corpora, 417
   rows, 517 quote anchors and 27 refreshes. `movement.mjs` prints every anchor, finding or verdict
-  that a later matcher or gate change moves.
+  that a later matcher or gate change moves. Importing `movement.mjs` (for `measureAll` or `movement`)
+  no longer throws when the process's argv[1] names no file, as with `node -e "..." an-argument`
+  (found 2026-10-26 by the Stage 6 break-test).
 
 - **Breaking: the kit is renamed Fetchproof** (ADR-0186). The folder `research-kit/` is now
   `fetchproof/`, so every command is `node fetchproof/bin/<script>`; the deployed kit lives in
