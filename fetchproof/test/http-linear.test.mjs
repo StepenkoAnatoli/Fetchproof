@@ -93,9 +93,12 @@ function equalWorkMs(small, large, { bound }) {
     t = performance.now();
     extractAll(large);
     one = Math.min(one, performance.now() - t);
-    // A large page already over the bound has answered: a quadratic regression would otherwise
-    // spend minutes repeating it, where no watchdog reaches synchronous code.
-    if (one > bound * Math.max(eight, 1)) break;
+    // A large page over the bound in two rounds has answered: a quadratic regression would
+    // otherwise spend minutes repeating it, where no watchdog reaches synchronous code. One round
+    // does not answer: a single run preempted under load read 7.4x and 15.6x on linear code
+    // (2026-10-27, review of PR #440), so the fastest of two rounds, an eight-page run apart, must
+    // be over the bound too.
+    if (round >= 1 && one > bound * Math.max(eight, 1)) break;
   }
   return { eight: Math.max(eight, 1), one };
 }
@@ -149,16 +152,48 @@ test('extraction time grows linearly with a page of unclosed tags, not quadratic
     // from its end to the end of the page, after each list item inside it. The text after is one
     // long word, which the other passes read quickly, so that search is most of the work.
     'closed list items inside quoted values, text after': (n) => `${"<li t='<li></li>' ".repeat(n / 32)}>${'x'.repeat(10 * n)}`,
+    // A comment ends at its '-->' (2026-10-27, review of PR #440, BR-2). One with none after it
+    // ends at its first '>', and that no '-->' follows is remembered: searched for again from each
+    // such comment, it took 8.7 s for 10,000 of these.
+    //
+    // These two are cheap per character, so they take more of n than the shapes above, for the
+    // eight pages to last about as long as those do. At an eighth of n they lasted 20-40 ms, and
+    // one preempted round of the large page read 4.6x and 15.6x on correct code under load (2 runs
+    // in 11), when one round over the bound still answered (equalWorkMs).
+    'unterminated <!-- with a ">" after each': (n) => '<!-- x> '.repeat(n),
+    // A tag inside a comment reads no quoted value (R-1 of that fix), so every tag asks where the
+    // last `<!--` before it is. The `<!--` are listed once: looked for backwards from each tag, it
+    // took 5.6 s for 10,000 of these tags after one comment.
+    'one comment, then tags with quoted values': (n) => `<!-- x -->${'<div class="a">w '.repeat(n / 4)}`,
+    // Every tag after a `<!--` of its own, with no `-->` anywhere and the page's one '>' at its end:
+    // each tag asks where that comment ends. The `-->` and the '>' are remembered, and so is the
+    // span of the last `<!--` asked about: with any of the three searched for again, it read
+    // 6.0-8.0x (2026-10-27, review of PR #440, FRA-1 of the BR-2 fix).
+    'unterminated <!-- before each tag, one > at the end': (n) => `${'<!-- <div class="a" w '.repeat(n / 2)}>`,
+    // A tag inside an <xmp>, a <textarea> or a <title> reads no quoted value (FRA-2), so every tag
+    // asks whether it lies in such an element. Here an <xmp> comes before each tag and no `</xmp>`
+    // follows any: the first runs to the end of the page, and the elements found are remembered.
+    'unclosed <xmp> before each tag': (n) => '<xmp><b class="a">w '.repeat(n / 4),
+    // Inside one, nothing opens another (FRA3-1): the elements are found forward, each after the
+    // last one's closing tag, and listed once, and each tag finds the one before it by binary
+    // search. Here a closed <xmp> comes before each tag: looked up along the list instead, it read
+    // 6.2-6.4x. It runs on half of n: at a quarter, that read only 5.0-5.2x.
+    'a closed <xmp> before each tag': (n) => '<xmp>x</xmp><b class="a">w '.repeat(n / 2),
+    // Nor does one open inside a comment (FRA4-1): looking for them, each comment is stepped over to
+    // where it ends. Here each tag follows a `<!--` that ends at its '>', with no `-->` anywhere:
+    // that none follows is remembered, and searched for again from each comment, it read 7.7-8.0x.
+    'an unterminated <!-- with a ">" before each tag': (n) => '<!-- x> <b class="a">w '.repeat(n / 4),
   };
   const BOUND = 4;
   const slow = [];
   for (const [name, make] of Object.entries(shapes)) {
     const small = `<title>t</title>${make(10_000)}`;
     // Extraction is synchronous, so the watchdog cannot stop it: a quadratic regression would
-    // spend minutes on the large page. A small page this slow has already answered.
-    const t = performance.now();
-    extractAll(small);
-    const first = performance.now() - t;
+    // spend minutes on the large page. A small page this slow twice has already answered (once
+    // could be a preempted run: the first passes take 0.1-0.6 s under load).
+    const timed = () => { const t = performance.now(); extractAll(small); return performance.now() - t; };
+    let first = timed();
+    if (first > 1500) first = Math.min(first, timed());
     if (first > 1500) { slow.push(`${name}: ${first.toFixed(0)} ms for ~100 KB - superlinear, the large page was not tried`); continue; }
     const { eight, one } = equalWorkMs(small, `<title>t</title>${make(80_000)}`, { bound: BOUND });
     const ratio = one / eight;

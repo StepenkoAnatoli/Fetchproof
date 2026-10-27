@@ -11,21 +11,63 @@ const BLOCK_DROP = /<(script|style|noscript|svg|iframe|form|template)\b[\s\S]*?<
 // `'…'` value that opens right after `=`, where `/<[^>]+>/g` took the first '>' of all. Written
 // as a regex on its own, not taken from lib/, so the two readings check each other. A quote whose
 // partner has no '>' after it fails the quoted branch, and the regex backtracks to reading it as
-// text - the converter's "a quote that ends no tag is no quote". Only a '<' then a letter, '/',
-// '!' or '?' reads quoted values; any other (`a <= "x > y"` in text) ends at its first '>', as
-// `/<[^>]+>/g` read it (F2 of the review). The quoted branch and `[^>]` overlap at '=', so with
-// no '>' left the regex tries every split of a run of `=""` before it fails - about 2x per `=""`,
-// harmless on the generated pages, which never end in such a run.
+// text - the converter's "a quote that ends no tag is no quote". Only a '<' then a letter or '/'
+// reads quoted values (until 2026-10-27 also '!' and '?', below); any other (`a <= "x > y"` in
+// text) ends at its first '>', as `/<[^>]+>/g` read it (F2 of the review). The quoted branch and
+// `[^>]` overlap at '=', so with no '>' left the regex tries every split of a run of `=""` before
+// it fails - about 2x per `=""`, harmless on the generated pages, which never end in such a run.
+// A comment is no tag (2026-10-27, review of PR #440, BR-2): `<!--` ends at the first `-->` after
+// it, and nothing inside opens a quoted value. A `<!--` with no `-->` after it fails that branch,
+// is kept from the quoted one, and ends at its first '>', as `/<[^>]+>/g` read it.
+// A tag written inside a comment reads no quoted value either, and ends at its first '>' (R-1 of
+// that fix). INSIDE is "inside a comment" as lookarounds: after a `<!--` with no `-->` since it,
+// and either a `-->` still ahead, or no '>' since the `<!--` (one with no `-->` ends at its first
+// '>'). Some `<!--` passes exactly when the last one before here does, so it is the converter's
+// "the last `<!--` before the tag decides", written without a loop. The lookbehind rescans to the
+// page's start from every tag, which a fixture may do.
+const INSIDE = String.raw`(?:(?<=<!--(?:(?!-->)[\s\S])*)(?=[\s\S]*?-->)|(?<=<!--[^>]*))`;
+// Any other `<!` and any `<?` - a DOCTYPE, CDATA, a bogus comment, a processing instruction - reads
+// no quoted value and ends at its first '>', as HTML ends a bogus comment (2026-10-27, review of
+// PR #440, FRA-2): only a '<' then a letter or '/' reads quoted values. Nor does a '<' in the
+// content of an element HTML reads as text (RAW, FRA-2), read forward as HTML reads it: inside one,
+// nothing opens another until its own closing tag (FRA3-1). So a '<' is outside them when the page
+// before it splits into characters that open no RAW element and whole RAW elements, each from its
+// opening tag to the first closing tag of its name; with no closing tag, an element's content runs
+// to the end, as HTML reads it. A lookbehind matches right to left, so each whole element names
+// itself in `n0` at its closing tag and backreferences it at its opening tag. NO_QUOTES is asked at
+// the '<', before the tag is read, so a tag is never inside the element it opens, and its own
+// closing tag is; TAG is case-blind for the names. Like INSIDE, it rescans to the page's start from
+// every tag. RAW holds <script>, <style>, <noscript> and <iframe> too: BLOCK_DROP removes them
+// before mainContent reads a tag, but searchLinks reads the raw page (FRA2-1).
+// Nor does a RAW element open inside a comment or any other `<!` or `<?` (FRA4-1), so those are
+// whole pieces too (SKIP): a comment to the first `-->` after its `<!--`, or with none after it to
+// its first '>', and any other `<!` or `<?` to its first '>'. A page that ends inside one of them,
+// with no '>' since its '<', ends outside RAW (the last, optional piece). A page that ends inside a
+// comment with a '>' since its `<!--` splits into no pieces, but INSIDE holds there, so NO_QUOTES
+// does not depend on it. The "no `-->` after it" test stands before its `<!--`: matched right to
+// left, it then runs only where a `<!--` matched, not at every split of the `[^>]*` after it: after
+// the `<!--`, it read the 3,000 pages of the http-linear test in 16 s, not 5.6 s (2026-10-27).
+// One exception, as in the converter: a RAW opening tag inside a quoted attribute value still
+// starts a whole element, and a `<!--` there is still stepped over to its `-->`, as no tag's end
+// is read here.
+const RAW = ['textarea', 'title', 'xmp', 'noembed', 'noframes', 'script', 'style', 'noscript', 'iframe'];
+const SKIP = String.raw`<!--(?:(?!-->)[\s\S])*-->|(?!<!--[\s\S]*?-->)<!--[^>]*>|<(?!!--)[!?][^>]*>`;
+const RAW_INSIDE = String.raw`(?<!^(?:[^<]|<(?![!?]|(?:${RAW.join('|')})\b)|${SKIP}|<\k<n0>\b(?:(?!<\/\k<n0>\b)[\s\S])*<\/(?<n0>${RAW.join('|')})\b)*(?:<[!?][^>]*)?)`;
+const NO_QUOTES = `(?:${INSIDE}|${RAW_INSIDE})`;
 const QUOTED = String.raw`=[\t\n\f\r ]*"[^"]*"|=[\t\n\f\r ]*'[^']*'`;
-const TAG = new RegExp(String.raw`<(?:(?=[A-Za-z/!?])(?:${QUOTED}|[^>])+|[^>]+)>`, 'g');
+const TAG = new RegExp(String.raw`<!--[\s\S]*?-->|(?=<)${NO_QUOTES}<[^>]+>|<(?=[A-Za-z/])(?:${QUOTED}|[^>])+>|<[^>]+>`, 'gi');
 
 // A pair, `<name ...>BODY</name>`, whose opening tag ends where TAG ends one (2026-10-25, review
 // of the B3 fix): the rest of the tag is read inside a lookahead, which JavaScript never
 // backtracks into, and then consumed by its backreference. Without that, a pair with no closing
 // tag after its real '>' would back into reading a quote as text and end at a '>' inside the
 // quoted value instead - the very leak. `names` is an alternation and `close` the closing tag's
-// source, the opening name's by default; `m.groups.body` is the body.
-const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`<(?<name>${names})\b(?=(?<rest>(?:${QUOTED}|[^>])*>))\k<rest>(?<body>[\s\S]*?)${close}`, 'gi');
+// source, the opening name's by default; `m.groups.body` is the body. An opening tag inside a
+// comment or a RAW element (NO_QUOTES, asked at its '<' as TAG asks it) is read to its first '>' in
+// `raw`, any other in `rest`; the group not taken is unset, and a backreference to an unset group
+// matches nothing, so `\k<raw>\k<rest>` consumes the one that was read. `(?!NO_QUOTES)` keeps such
+// a tag from backing into the quoted reading.
+const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`(?=<(?:${names})\b)(?:${NO_QUOTES}(?=<(?:${names})\b(?<raw>[^>]*>))|(?!${NO_QUOTES})(?=<(?:${names})\b(?<rest>(?:${QUOTED}|[^>])*>)))<(?<name>${names})\b\k<raw>\k<rest>(?<body>[\s\S]*?)${close}`, 'gi');
 
 /**
  * The <a> pairs whose opening tag, read as TAG reads it, holds `attribute` (a regex source whose
@@ -37,7 +79,7 @@ const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`
 function linkPairs(html, attribute) {
   const pairs = [];
   const open = /<a\b/gi;
-  const tagAt = new RegExp(TAG.source, 'y');
+  const tagAt = new RegExp(TAG.source, 'yi');
   const inside = new RegExp(String.raw`^<a\b[\s\S]*${attribute}`, 'i');
   for (let pos = 0; ;) {
     open.lastIndex = pos;

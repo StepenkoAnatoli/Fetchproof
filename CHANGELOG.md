@@ -59,7 +59,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   cells, bold, italic, code, links, the content block and the title. A link whose quoted `>` comes
   before its href is still a link. A quote opens only after `=`, and only inside a tag that starts
   the way HTML starts one, so `a <= "x > y"` keeps its sentence. A quote that never closes falls
-  back to the old rule, and the converter stays linear. Existing captures are not rewritten. Known
+  back to the old rule, and the converter stays linear.
+  A comment is no tag: `<!--` ends at its `-->` and nothing in it opens a quoted value; any other `<!` (a
+  DOCTYPE, CDATA) and any `<?` end at their first `>`; and a tag written inside a comment, or inside a
+  `<textarea>`, `<title>`, `<xmp>`, `<noembed>`, `<noframes>`, `<script>`, `<style>`, `<noscript>` or
+  `<iframe>` - where, as in HTML, nothing opens another element before that one's own closing tag, and
+  none opens inside a comment, a `<!` or a `<?`, though one, or a `<!--`, written inside a quoted
+  attribute value still does - reads no quoted value either, so an unclosed `="` or `='` in any of them
+  no longer swallows a page's content, hides it from the completeness grade, or takes a search result
+  with it (a `<!--` with no `-->` ends at its first `>`, as before B3).
+  Existing captures are not rewritten. Known
   limit, as before B3: a closing tag written inside a quoted value (`<span title="</td> ...">`)
   still ends the element a pass reads.
 

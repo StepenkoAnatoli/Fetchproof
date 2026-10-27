@@ -121,7 +121,7 @@ function tagPairs(text, { open, tag = 'attributes', close }) {
     if (tag === 'none') {
       bodyStart = at + m[0].length;
     } else {
-      scan ??= { text, last: text.lastIndexOf('>'), gt: nextOf(text, '>'), eq: nextOf(text, '='), ends: new Map(), passed: [], passedEnd: -1 };
+      scan ??= { text, last: text.lastIndexOf('>'), gt: nextOf(text, '>'), eq: nextOf(text, '='), comments: commentsOf(text), rawText: rawTextOf(text), ends: new Map(), passed: [], passedEnd: -1 };
       if (at >= scan.last) break;           // no '>' from here on: no later tag can end either
       // The '=' the last tag's scan passed are remembered only for a tag starting inside it: a
       // later start cannot reach them otherwise, and remembering every '=' of the page made the
@@ -186,7 +186,7 @@ function tagPairs(text, { open, tag = 'attributes', close }) {
 function stripTags(text, by) {
   const last = text.lastIndexOf('>');
   if (last === -1) return { text, tags: 0 };
-  const scan = { text, last, gt: nextOf(text, '>'), eq: nextOf(text, '=') };
+  const scan = { text, last, gt: nextOf(text, '>'), eq: nextOf(text, '='), comments: commentsOf(text), rawText: rawTextOf(text) };
   let out = '';
   let tags = 0;
   let kept = 0;
@@ -249,8 +249,107 @@ function occurrences(next, item = () => null) {
 
 const QUOTE_OPENS = /=[\t\n\f\r ]*["']/y;
 
-/** A letter, '/', '!' or '?': after a '<', where HTML starts a tag, a comment or a declaration. */
-const startsTag = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '/' || c === '!' || c === '?';
+/**
+ * The comments of a text, as tagEnd reads them (2026-10-27, review of PR #440, BR-2 and R-1).
+ * `end(pos)` is the first `-->` at or after `pos`, or -1. `inside(p)` says whether the '<' at `p`
+ * lies inside a comment: after the last `<!--` before it, and before that comment's `-->` - or,
+ * for a `<!--` with no `-->` after it, before its first '>'. The last `<!--` before `p` decides,
+ * so a `<!--` inside another comment opens one of its own, as `-->` searched from `<!--` reads it.
+ * `stop(open)` is where the comment opened by the `<!--` at `open` stops - its `-->`, or with none
+ * after it its first '>' - or -1 when neither follows; `inside` and `rawTextOf` both read it there.
+ * Every lookup is remembered as the scan moves forward (nextOf, occurrences), and a page with no
+ * comment answers at once: no stretch is searched twice for a `<!--`, a `-->` or that comment's '>'.
+ */
+function commentsOf(text) {
+  const end = nextOf(text, '-->');
+  const gt = nextOf(text, '>');
+  const stop = (open) => { const close = end(open + 4); return close !== -1 ? close : gt(open + 4); };
+  if (!text.includes('<!--')) return { end, stop, inside: () => false };
+  const opens = occurrences((after) => text.indexOf('<!--', after));
+  let open = -1;
+  let until = -1;
+  return {
+    end,
+    stop,
+    inside(p) {
+      const k = opens.first(p) - 1;
+      if (k < 0) return false;
+      if (opens.at[k] !== open) {
+        open = opens.at[k];
+        until = stop(open);
+        if (until === -1) until = Infinity;
+      }
+      return p < until;
+    },
+  };
+}
+
+/**
+ * The elements whose content HTML reads as text, never as tags (RCDATA and RAWTEXT). mainContent
+ * and htmlToMarkdown remove <script>, <style>, <noscript> and <iframe> whole first (BLOCK_DROP),
+ * but resultLinks and titleOf read the raw page, where an `<a class='` in a script ran on to an
+ * apostrophe in the first result's snippet and took that result with it (2026-10-27, review of
+ * PR #440, FRA2-1). <plaintext> is obsolete, and nothing ends it.
+ */
+const RAW_TEXT = /<(textarea|title|xmp|noembed|noframes|script|style|noscript|iframe)\b/gi;
+/** A RAW_TEXT opening tag (its name in group 1), or a `<!` or `<?`, inside which nothing opens. */
+const DATA_NEXT = new RegExp(`<[!?]|${RAW_TEXT.source}`, 'gi');
+
+/**
+ * Whether the '<' at `p` lies in the content of a RAW_TEXT element (2026-10-27, review of PR #440,
+ * FRA-2 of the BR-2 fix): after a RAW_TEXT opening tag, and at or before the first closing tag of
+ * that name after it - to the end of the text when none follows, where HTML too reads the rest of
+ * the page as the element's text. The elements are found FORWARD, as HTML reads them: inside one,
+ * no '<' opens another, so the next opening tag is looked for only after its closing tag. Taking
+ * the last opening tag before `p` instead, an `'<iframe></iframe>'` string in a script ended the
+ * script at that `</iframe>`, and an `<a class='` after it took a search result with it again
+ * (FRA3-1). Nor does one open inside a comment, which is stepped over to where commentsOf stops it
+ * (an instance of its own, whose lookups only move forward), or inside any other `<!` or `<?`,
+ * stepped over to its first '>', as tagEnd reads them: a `<!-- <title> -->` ran on to a `</title>`
+ * in a later script string, and the script was never opened (FRA4-1). One exception: an opening
+ * tag, or a `<!--`, inside a quoted attribute value (or anywhere inside a tag) is still taken as
+ * one, as tag ends are not read here; such a `<!--` steps the scan to its `-->` (FRA5-2, recorded).
+ * The elements found so far are listed once, and each stretch is searched once.
+ */
+function rawTextOf(text) {
+  const comments = commentsOf(text);
+  const gt = nextOf(text, '>');
+  const opens = [];
+  const untils = [];
+  let pos = 0;
+  let done = false;
+  const extend = (p) => {
+    while (!done && (!opens.length || untils[untils.length - 1] < p)) {
+      DATA_NEXT.lastIndex = pos;
+      const m = DATA_NEXT.exec(text);
+      if (!m) { done = true; break; }
+      if (!m[1]) {
+        const stop = text.startsWith('<!--', m.index) ? comments.stop(m.index) : gt(m.index + 1);
+        if (stop === -1) { done = true; break; }   // it runs to the end: nothing opens after it
+        pos = stop + 1;
+        continue;
+      }
+      const re = new RegExp(`</${m[1]}\\b`, 'gi');
+      re.lastIndex = m.index + 1;
+      const c = re.exec(text);
+      opens.push(m.index); untils.push(c ? c.index : Infinity);
+      if (!c) { done = true; break; }
+      pos = c.index + 1;
+    }
+  };
+  return (p) => {
+    extend(p);
+    let lo = 0; let hi = opens.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (opens[mid] < p) lo = mid + 1; else hi = mid; }
+    return lo > 0 && p <= untils[lo - 1];
+  };
+}
+
+/**
+ * A letter or '/': after a '<', where HTML starts a tag. A `<!` or `<?` starts a comment, a
+ * declaration or a processing instruction, which reads no quoted value (tagEnd).
+ */
+const startsTag = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '/';
 
 /**
  * Where the tag opened by the '<' at `at` ends, or -1 for `<>`: no tag, as `[^>]+` needs one
@@ -265,11 +364,36 @@ const startsTag = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c =
  * still stripped as a tag, as before B3: reading it as text instead, as HTML does, also keeps
  * `<\/jats:title>` in the abstract of a captured Crossref record, so it would change what counts
  * as a tag on a page already in the corpus.
+ *
+ * A comment is no tag: `<!--` ends at the next `-->`, as HTML ends it, and nothing inside it opens
+ * a quoted value. Read as a tag that starts with '!', a `="` or `='` in a comment ran on to the
+ * next quote of its kind on the page, and the page's <main> lost its words to one "tag" (found
+ * 2026-10-27, review of PR #440, BR-2). A `<!--` with no `-->` after it ends at its first '>' and
+ * reads no quoted value, as `/<[^>]+>/` read it: HTML reads the rest of the page as the comment,
+ * which would take every word after it out of the capture.
+ *
+ * A pass that finds a tag by name (tagPairs) still finds one written inside a comment, as it did
+ * before B3, and such a tag reads no quoted value either: it ends at its first '>', as before B3.
+ * Reading its quotes, `<!-- <div class='promo -->` ran on to the apostrophe of "It's" in the
+ * content after the comment, and the content block was neither kept nor reported dropped: a
+ * capture of the sidebar graded `full` (found 2026-10-27, review of PR #440, R-1 of the BR-2 fix).
+ * Where a comment lies is read by `commentsOf`.
+ *
+ * Any other `<!` - a DOCTYPE, `<![CDATA[`, a bogus comment - and any `<?` ends at its first '>' and
+ * reads no quoted value, as HTML ends a bogus comment and as `/<[^>]+>/` read it: what follows that
+ * '>' is text a reader sees. Reading their quotes, `<?php $label = 'Upgrade ?>` ran on to the next
+ * apostrophe on the page, and <main> lost its words (2026-10-27, review of PR #440, FRA-2). So does
+ * a tag in the content of a <textarea>, <title>, <xmp>, <noembed>, <noframes>, <script>, <style>,
+ * <noscript> or <iframe> (RAW_TEXT, `rawTextOf`), which HTML reads as text.
  */
 function tagEnd(scan, at) {
   const { text, last, gt, eq, ends } = scan;
   if (text[at + 1] === '>') return -1;
-  if (!startsTag(text[at + 1])) return gt(at + 1);
+  if (text[at + 1] === '!' && text.startsWith('<!--', at)) {
+    const close = scan.comments.end(at + 4);
+    return close === -1 ? gt(at + 1) : close + 2;
+  }
+  if (!startsTag(text[at + 1]) || scan.comments.inside(at) || scan.rawText(at)) return gt(at + 1);
   let i = at + 1;
   const passed = ends ? scan.passed : null;
   let end;
