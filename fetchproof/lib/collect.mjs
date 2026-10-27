@@ -13,7 +13,8 @@ import {
   PATHS, HEADERS, resolve, today, nowIso, sha256, titleFromUrl, hostOf, urlDigest, writeText, readText, exists,
   sleepSync, urlKey, ageInDays, realInside, foldLineEndings,
 } from './core.mjs';
-import { retryWaitMs, rateLimitWaitMs } from './firecrawl.mjs';
+import { retryWaitMs } from './firecrawl.mjs';
+import { standingFailure } from './fetch-failure.mjs';
 import {
   captureEntry, cacheDecision, rememberCapture, appendRow, upsertRow, nextId,
   readCaptures, parseTable, readLedger, ledgerRank, CAPTURE_MAX_BYTES,
@@ -190,50 +191,9 @@ function whyFetched(decision) {
  */
 export const DEFAULT_SOURCE_TYPE = 'S';
 
-/**
- * The HTTP status a failure names, as the collector words it ("the page answered HTTP 403") or
- * as the keyless and browser transports word theirs ("HTTP 403 - the server said ..."), or null.
- * Anchored, so a status quoted inside some other failure's text is not read as this one's.
- */
-const FAILED_STATUS = /^(?:the page answered )?HTTP (\d{3})\b/;
-/** Statuses that say the page is not there, as opposed to a server that was busy. */
-const GONE = new Set([404, 410]);
-/**
- * A 4xx that is not about this moment: the server's standing answer to this client (a 401, a
- * 403, a 402 paywall). 408 (a request timeout) and 429 (a rate limit) are about this moment;
- * 405 and 407 are what a proxy answers for every page it will not carry (#314's proxy said 405
- * to a loopback target), so they say nothing about the page.
- */
-const NOT_STANDING = new Set([405, 407, 408, 429]);
-const STANDING = (status) => status >= 400 && status < 500 && !NOT_STANDING.has(status);
-/**
- * The kit's own refusals of what a page IS, which the same page earns again on every fetch
- * (ADR-0174): over the size a capture may hold (ADR-0082), a binary body (ADR-0105).
- */
-const DETERMINISTIC = [
-  [/a capture may hold - not kept|is larger than \d+ MiB - not (?:read|kept) \(ADR-0082\)/, 'over the size a capture may hold'],
-  [/which is not text - the [\w-]+ transport cannot keep a faithful copy of it/, 'the response is not text'],
-];
-
-/**
- * Why a failure will not change by asking again - `{ status: 'gone' | 'refused', why }` - or null.
- *
- * A failure that reads as a rate limit is never one, whatever its status: GitHub answers a
- * keyless client `403 ... API rate limit exceeded`, which the wait loop already treats as "not
- * now". A standing 4xx is the server's answer to the ROUTE that asked (`sameRoute`): a page
- * that refuses the keyless client is exactly what the browser transport is for (ADR-0088), so
- * another transport is not told the answer one got. A size or binary refusal is about the page
- * whichever route fetched it, and so is a 404 or 410 (ADR-0100).
- */
-function standingFailure(error, { sameRoute = false } = {}) {
-  const text = String(error ?? '');
-  if (rateLimitWaitMs(text) !== null) return null;
-  const status = Number(FAILED_STATUS.exec(text)?.[1]);
-  if (GONE.has(status)) return { status: 'gone', why: `answered HTTP ${status}` };
-  if (STANDING(status)) return sameRoute ? { status: 'refused', why: `the page answered HTTP ${status}` } : null;
-  const kit = DETERMINISTIC.find(([pattern]) => pattern.test(text));
-  return kit ? { status: 'refused', why: kit[1] } : null;
-}
+// The reading of a failure's text - FAILED_STATUS, GONE, the standing 4xx, the kit's own refusals
+// and `standingFailure` over them - is lib/fetch-failure.mjs's since 2026-10-25 (ADR-0194): the
+// gate asks the same question of a refresh (`cites-gone-page`), and the two must not disagree.
 
 /**
  * The ledger's last word on a URL, when asking again would get the same answer, within the

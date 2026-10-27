@@ -1,0 +1,23 @@
+{
+  "topic": "Punctuation spacing after inline HTML tags: what Firecrawl and the kit's keyless HTML-to-Markdown converter write before . , ; : ! ? % ) ] } and after ( [ {, and how Firecrawl documents its HTML-to-Markdown conversion",
+  "notes": "Run 2: the two test pages through firecrawl-cli, --force (2 credits).",
+  "depth": "quick",
+  "refreshDays": 30,
+  "limit": 8,
+  "perQuery": 3,
+  "maxScrapes": 2,
+  "prefer": [],
+  "queries": [],
+  "urls": [
+    {
+      "url": "https://docs.python.org/3/library/re.html",
+      "type": "P",
+      "why": "U-01, U-02: test page - Sphinx HTML with <code><span class=pre> and <em> signature parameters directly beside . , ; : ( ) [ ] { } ? !"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Percent_sign",
+      "type": "P",
+      "why": "U-01, U-02: test page - MediaWiki HTML with <span>, <abbr>, <sup> and links directly beside punctuation and %"
+    }
+  ]
+}

@@ -65,6 +65,13 @@ corpus. On a collector too, use existing captures when they answer the gap.
 
 ## Step 3: route by task (once building is allowed)
 
+The default build path is `build-from-brief` with `day-one-tasks`, `cite-in-code` and
+`contract-tests`. `lead-orchestrator` is optional, for independent units that need parallel
+agents, and is not part of the research-before-build core; when it runs, its builder briefs
+carry the `cite-in-code` and `contract-tests` rules (lead-orchestrator's
+`references/fetchproof.md`, section 5). `auto-build` runs through it, so it stays in the set
+(ADR-0196).
+
 | Task | Use |
 |---|---|
 | any code change | `careful-coding`, always |
@@ -72,7 +79,7 @@ corpus. On a collector too, use existing captures when they answer the gap.
 | the first steps of a build | `day-one-tasks` - the brief's known unknowns become the first tasks |
 | a constant, endpoint, limit or schema field that came from the research | `cite-in-code` |
 | tests that hold the code to the brief | `contract-tests` |
-| multi-unit work, parallel agents | `lead-orchestrator` (on a builder, its Phase 1b becomes `fact-request`) |
+| multi-unit work, parallel agents | `lead-orchestrator`, optional, only for independent units that need parallel agents (on a builder, its Phase 1b becomes `fact-request`) |
 | idea to merged pull request in one run | `auto-build`, run as its `references/fetchproof.md` says: Stage 0 starts from this table, on a builder its research stage becomes `fact-request`, and it asks the owner and stops at every decision that is his - the Mandate, money, secrets, anything destructive or critical, the merge |
 | the structure of the diff just written | `architecture-pass` |
 | friction across a subsystem | `improve-codebase-architecture` |

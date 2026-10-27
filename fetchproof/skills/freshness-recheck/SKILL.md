@@ -28,8 +28,13 @@ check the day has not moved on.
 3. Run it without `--dry-run`. Every re-collection spends a credit; when the account runs
    out the run stops and asks - never pass `--fallback` on your own initiative.
 4. `node "$HOME/.agents/fetchproof/bin/preflight.mjs"` - a row superseded by a fresher
-   capture **fails the gate** where an unknown still cites it. Re-read the new capture,
-   move the citation, and rewrite the finding (`finding-rewriter`).
+   capture **fails the gate** where an unknown still cites it, unless its quoted words
+   survived the refresh (ADR-0193: `quote-survived-refresh`, shown with `--show-pass`). Either
+   way, re-read the new capture, move the citation, and rewrite the finding
+   (`finding-rewriter`). A cited page the refresh found gone (HTTP 404 or 410) fails as
+   `cites-gone-page`: re-research the unknown, or record
+   in the row's Finding that the page now answers HTTP 404 (or 410) and why the earlier
+   reading still holds.
 5. If a fact changed: record it as a contradiction in the brief (old capture vs new),
    redraft the brief, and tell the builder which E-## rows moved - `cite-in-code`
    comments name them.

@@ -7,12 +7,14 @@
 // concludes nothing.
 
 import { spawnSync } from 'node:child_process';
-import { test, describe, assert, assertEqual, fs, path, os, KIT_ROOT, tempDir, cleanup, makePassingProject, requireSymlink } from './harness.mjs';
+import { test, describe, assert, assertEqual, fs, path, os, KIT_ROOT, tempDir, cleanup, makePassingProject, requireSymlink, corrupt } from './harness.mjs';
 import { findingsReviewState } from '../lib/artifact.mjs';
 import { resolve, PATHS } from '../lib/core.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { evidenceContext, renderContext, excerptFor } from '../lib/evidence-context.mjs';
+import { collectOne } from '../lib/collect.mjs';
+import { runCheck } from '../lib/checks.mjs';
 
 describe('evidence-context');
 
@@ -360,4 +362,31 @@ test('a Raw cell that lands outside the project is never read, and blocks as raw
   assert.ok(!rendered.includes('TOP SECRET'), 'evidence-context carried the outside file');
   assert.match(rendered, /outside the project/);
   assert.ok(runPreflight(root).findings.some((f) => f.severity === 'fail' && f.rule === 'raw-outside'), 'the gate did not block on raw-outside');
+});
+
+// ADR-0193, plan v0.4 §7.4: a citation whose quoted words survived the refresh is still a
+// citation of the superseded row, and the context says so exactly as it did when it reopened -
+// the row it shows is not the current reading, whatever the gate concluded about its words.
+test('a cited row whose quote survived the refresh is still shown as superseded by the new one', () => {
+  const sentence = 'The free plan allows 10 requests per minute and includes 1,000 credits.';
+  const root = makePassingProject(tempDir('fp-context-recheck-'), { date: '2026-10-01' });
+  try {
+    corrupt(root, PATHS.evidence, (text) => text.replace(`| ${sentence} |`, `| ${sentence} [quote: ${sentence}] |`));
+    const result = collectOne(root, 'https://example.invalid/docs/limits', {
+      runScrape: (url) => ({ ok: true, url, title: 'Limits', markdown: `# Limits
+
+${`${sentence} `.repeat(30)}`, statusCode: 200,
+        transport: 'firecrawl-cli', cmd: `stub scrape ${url}`, completeness: 'full', omitted: '' }),
+      corpus: readCorpus(root), force: true, type: 'P', transportName: 'firecrawl-cli', date: '2026-10-20', maxRateLimitRetries: 0, sleep: () => {},
+    });
+    assertEqual(result.status, 'collected', `the refresh was not collected: ${result.reason}`);
+    const corpus = readCorpus(root);
+    const state = runCheck('evidence-supersession', corpus).filter((f) => f.row === 'U-1').map((f) => [f.rule, f.superseded, f.by]);
+    assert.deepEqual(state, [['quote-survived-refresh', 'E-01', 'E-02']], `the fixture is not the quote-survived state: ${JSON.stringify(state)}`);
+
+    const context = evidenceContext(corpus, 'U-1');
+    assert.deepEqual(context.cited.map((c) => [c.id, c.supersededBy]), [['E-01', 'E-02']]);
+    assert(context.gaps.includes('E-01 is superseded by E-02'), `the gap is gone: ${JSON.stringify(context.gaps)}`);
+    assert.match(renderContext(context), /SUPERSEDED BY E-02/);
+  } finally { cleanup(root); }
 });

@@ -1,0 +1,17 @@
+{
+  "topic": "On a re-collection, does ADR-0193's quote-level refresh recheck spare unchanged work without missing changed facts, and does it change what ships?",
+  "notes": "Fill queries and urls BEFORE collecting - every scrape spends a credit. q is the search query, why records which unknown in research/DISCOVERY.md it closes, prefer lists the official domains that carry the fact. depth sets the scrapes per run (probe 2, quick 4, normal 10, deep 25); maxScrapes can only lower that.",
+  "depth": "probe",
+  "refreshDays": 30,
+  "limit": 8,
+  "perQuery": 3,
+  "maxScrapes": 2,
+  "prefer": [],
+  "queries": [],
+  "urls": [
+    {
+      "url": "https://arxiv.org/html/2604.09515",
+      "why": "U-1 - the paper's own full text (arXiv 2604.09515, 'When LLMs Lag Behind: Knowledge Conflicts from Evolving APIs in Code Generation'), for the API-update classes in its own words; collected keyless, no credit"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "topic": "Exporting a research corpus as WARC: the WARC 1.1 record format, resource and metadata records, and the tools that read it",
+  "notes": "Phase 0 dry-run only (credits); owning pages named directly.",
+  "depth": "normal", "refreshDays": 30, "limit": 5, "perQuery": 2, "maxScrapes": 3, "prefer": [], "queries": [],
+  "urls": [
+    {"url": "https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/", "type": "P", "why": "U-01, U-02: record format, mandatory fields, record types"},
+    {"url": "https://github.com/webrecorder/warcio", "type": "P", "why": "U-03: the reference reader and its validation"}
+  ]
+}

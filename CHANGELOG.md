@@ -5,6 +5,119 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Tests: every guard on the gone path, and every comparison in the movement diff, now goes red
+  alone** (PR #440 review round 1). The gone-page test for a 404 recorded before the row's own scrape
+  stayed green with its "after" guard removed, because its copied scrape still asked for the row's
+  URL; it now asks for the URL it is filed under, and a new test pins the "is a fail" guard. Three
+  tests cover `movement.mjs`'s diff: the verdict, the refresh pairs and, in one table-driven test,
+  every other field it compares. AGENTS.md now states ADR-0192's real scope (the space before
+  `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's tests were
+  untouched.
+
+- **Fixed: a refresh that landed on another URL no longer leaves its citation green** (ADR-0193
+  decision 8). When a later scrape asked for a cited row's URL and landed elsewhere,
+  `evidence-supersession` rechecks the quote against the current row of the landed URL; for a row
+  first captured through a redirect it also reads the address that row's own fetch asked for, but
+  only when the row's URL has not been fetched since. It passes only on full survival, and says so.
+  Otherwise it reopens `cites-superseded-row` with "asked for X ... and landed on Y, a different
+  page"; a reopen also follows when the landed page, or the address the move came through, was
+  found gone (404/410) since, or when the landed page has itself moved on. A 404 followed by such a
+  move is judged as the move, not as `cites-gone-page` (ADR-0194). The collector's 30-day "gone"
+  memory is unchanged, so it can still skip that URL. Silent: a trailing slash, a redirect that
+  lands on the row's URL again, a failed fetch. Two new `KNOWN GAP` tests: a quote inside a
+  struck-through span, and a change inside an ellipsis gap.
+
+- **Added: `evidence-supersession/quote-survived-refresh`** (ADR-0193). A citation of a superseded
+  row passes when every usable quote of the old row is found in that row's own capture and in the
+  replacing row's own capture. That capture must be readable, must not be an error page, and must
+  not be followed by a refresh that found the page gone, whatever the old row's Finding says. Every
+  other state still fails `cites-superseded-row`, which now says why and gives a drift attribution
+  for a lost quote. The pass and every such failure end "Refresh confirmation detects whether the
+  quoted words are still in the new capture, never whether the claim is still true." The pass, with
+  its advice to re-read the new row, shows with `--show-pass` and in `--json`. No citation is moved.
+  The attribution is unmeasured: no real refresh has yet lost a quote (ADR-0193).
+
+- **Fixed: the quote-level recheck reopens a replacement whose HTTP status is not a number**
+  (`404 Not Found`, `HTTP 404`). Before, it counted as no status and could pass (ADR-0193).
+
+- **The quote matcher ignores the spacing beside punctuation** (ADR-0192, plan 5.3 B2; lifts the
+  hold and the freeze for this one item by the owner's ruling of 2026-10-25). A `[quote: ...]`
+  copied from a Firecrawl capture now matches a keyless capture of the same page, and the reverse,
+  where the two differ only by the space the keyless converter writes beside a stripped inline tag.
+  `normalizeForMatch` removes whitespace before `. , ; : ! ? % ) ] }` and after `( [ {`, never after
+  a closing mark: `1.5`/`1. 5`, `15`/`1,5`, `1000`/`1,000` stay distinct. Lenient for matching; a
+  few short fragments can newly warn quote-too-short, and at the floor's edge one can stop being
+  compared (ADR-0191's floor reads the same text). No verdict of the 41 baseline corpora moves.
+
+- **Added: `measure.mjs` reports quote coverage.** It counts how many CLOSED unknowns cite at least
+  one row with a usable quote found in its capture (`quoteCoverage` in `--json`). A report line; it
+  never gates. Across the 41 baseline corpora it is 108 / 183 (ADR-0195).
+
+- **Fixed: a quoted `>` in an attribute no longer ends a tag in keyless captures** (plan B3). A `>`
+  inside a quoted attribute value (`title="Tier 3 > unlimited API requests"`) no longer ends a tag.
+  That holds in the tag stripper and in every pass that reads a tag by name: list items, headings,
+  cells, bold, italic, code, links, the content block and the title. A link whose quoted `>` comes
+  before its href is still a link. A quote opens only after `=`, and only inside a tag that starts
+  the way HTML starts one, so `a <= "x > y"` keeps its sentence. A quote that never closes falls
+  back to the old rule, and the converter stays linear.
+  A comment is no tag: `<!--` ends at its `-->` and nothing in it opens a quoted value; any other `<!` (a
+  DOCTYPE, CDATA) and any `<?` end at their first `>`; and a tag written inside a comment, or inside a
+  `<textarea>`, `<title>`, `<xmp>`, `<noembed>`, `<noframes>`, `<script>`, `<style>`, `<noscript>` or
+  `<iframe>` - where, as in HTML, nothing opens another element before that one's own closing tag, and
+  none opens inside a comment, a `<!` or a `<?`, though one, or a `<!--`, written inside a quoted
+  attribute value still does - reads no quoted value either, so an unclosed `="` or `='` in any of them
+  no longer swallows a page's content, hides it from the completeness grade, or takes a search result
+  with it (a `<!--` with no `-->` ends at its first `>`, as before B3).
+  Existing captures are not rewritten. Known
+  limit, as before B3: a closing tag written inside a quoted value (`<span title="</td> ...">`)
+  still ends the element a pass reads.
+
+- **Added: `evidence-supersession/cites-gone-page`** (ADR-0194). A cited row fails when a refresh
+  after its scrape found the page gone (HTTP 404 or 410). This holds under every policy; a Finding
+  that names the status is exempt; the failure names that Finding and the words that clear it. A
+  Finding that names the status as content is never flagged (8 cited rows here), recorded as a blind
+  spot. The failure classifier now lives in `lib/fetch-failure.mjs`, shared by the collector and the
+  gate.
+
+- **Changed: lead-orchestrator's kit note carries the research rules to builders and reviewers**
+  (ADR-0196). Its section 5 makes every builder brief in a Fetchproof project carry the unit's
+  E-## rows and the `cite-in-code` and `contract-tests` rules. It adds a research reviewer, which
+  checks quote support, scope, clipped qualifiers, numbers and source ownership, with no gate
+  token and no approval condition. It also gives the Phase 4b spec reviewer a research-conformance
+  duty. The router names `build-from-brief` with `day-one-tasks`, `cite-in-code` and
+  `contract-tests` as the default build path, and marks lead-orchestrator optional, for parallel
+  units.
+
+- **Fixed: the short-quote floor reads the text the matcher reads** (ADR-0191).
+  `citations/quote-too-short` now counts words, weight and length on the compared text. Before,
+  `[quote: [Free plan](https://…#free-plan-details)]`, `**Free** plan` padded with zero-width
+  spaces, and a formatting-only fragment beside `free plan` all cleared the floor while anchoring
+  two words; they now warn. A quote that is short only on its compared text warns and is still
+  compared, so an invented one still fails `quote-not-found`: no failure is removed (corrected the
+  same day, review of ADR-0191). The warning says the count is taken on the compared text. A few
+  contrived quotes that NFKC lengthens (`㍿㍿㍿`) are no longer warned, but compared instead. The
+  unused `quoteChars` export is removed.
+
+- **Added: decision research on punctuation spacing**
+  (`docs/decisions/2026-10-25-punctuation-spacing/`, for ADR-0192). It measures, on the same pages,
+  what the keyless converter and Firecrawl write around punctuation beside inline tags. Keyless
+  spaces nine closing marks (`. , ; : ! ? ) ] }`) and `( [ {`; `%` is in the rule because Firecrawl
+  drops the no-break space a page writes before it (E-02 against E-09). Firecrawl spaces only after
+  `(` or `[` before a link or emphasis, and drops whitespace held in a span. The brief lists what
+  the proposed rule does not cover and where it merges text.
+
+- **Added: the pre-registered study of the quote-level recheck**
+  (`docs/decisions/2026-10-25-refresh-recheck-study/`, plan §12). It fixes the question, the arms,
+  the six tasks over five page-change kinds, the three headline numbers and the decision rules
+  before any trial runs. The hidden suites are listed as "to write before trial 1".
+
+- **Added: a refresh baseline and a movement script** (`docs/measurements/2026-10-refresh-baseline/`,
+  plan §4.2-4.3). It records what the gate says about every corpus at `ab2e605`: 41 corpora, 417
+  rows, 517 quote anchors and 27 refreshes. `movement.mjs` prints every anchor, finding or verdict
+  that a later matcher or gate change moves. Importing `movement.mjs` (for `measureAll` or `movement`)
+  no longer throws when the process's argv[1] names no file, as with `node -e "..." an-argument`
+  (found 2026-10-26 by the Stage 6 break-test).
+
 - **Breaking: the kit is renamed Fetchproof** (ADR-0186). The folder `research-kit/` is now
   `fetchproof/`, so every command is `node fetchproof/bin/<script>`; the deployed kit lives in
   `~/.agents/fetchproof`, its machine configuration in `~/.agents/fetchproof.config.json`, and every

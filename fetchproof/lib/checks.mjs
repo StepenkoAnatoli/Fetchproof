@@ -8,13 +8,14 @@
 // the verdict's single judgement, in lib/preflight.mjs.
 
 import { hostOf, siteOf, PATHS, resolve, exists, ageInDays, urlKey, readText, kitCommand, compareText } from './core.mjs';
-import { captureOf, traceOf, citedIds, parseCapture, ledgerRank } from './corpus.mjs';
+import { captureOf, traceOf, citedIds, parseCapture, ledgerRank, requestedUrl } from './corpus.mjs';
 import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
 import { verifyLedger } from './provenance.mjs';
 import { readPrior, onDiskOf, unrecordedDetail, PRIOR_PATH } from './prior.mjs';
-import { quoteAnchors, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
+import { quoteAnchors, anchorFound, quoteTooShort, quoteTooShortOnRaw, unreadableQuoteMarkers, MIN_QUOTE_WORDS, MIN_QUOTE_CHARS } from './quotes.mjs';
 import { draftStamp, briefInputsHash, briefState } from './brief.mjs';
+import { goneStatus } from './fetch-failure.mjs';
 
 const VALID_STATUSES = ['CLOSED', 'KNOWN-UNKNOWN'];
 const MIN_CAPTURE_CHARS = 200;
@@ -159,11 +160,15 @@ function citations(corpus) {
         quoted += 1;
         // Short in words AND in characters, per fragment: a long token of one "word" anchors one
         // exact line, and an ellipsis does not turn three one-word fragments into a sentence.
+        // Measured on the compared text (ADR-0191); the comparison is skipped only for a quote
+        // that was short on its raw text too, as before ADR-0191. A quote long raw and short
+        // compared - `[Enterprise plan](https://...)` - warns AND is compared, so an invented one
+        // still fails (review of ADR-0191, F1, 2026-10-25).
         if (quoteTooShort(anchor)) {
           out.push(finding('warn', 'citations', 'quote-too-short',
-            `${row.id} quotes "${anchor.quote}" - no fragment reaches ${MIN_QUOTE_WORDS} words or ${MIN_QUOTE_CHARS} characters, so it anchors almost nothing; quote the sentence the claim rests on`,
+            `${row.id} quotes "${anchor.quote}" - no fragment reaches ${MIN_QUOTE_WORDS} words or ${MIN_QUOTE_CHARS} characters of the compared text (link targets, emphasis and invisible characters do not count), so it anchors almost nothing; quote the sentence the claim rests on`,
             { row: row.id, line: row.line }));
-          continue;
+          if (quoteTooShortOnRaw(anchor)) continue;
         }
         if (!anchorFound(anchor.fragments, body)) {
           out.push(finding('fail', 'citations', 'quote-not-found',
@@ -667,21 +672,383 @@ function isReleasedHistory(corpus, row, superseded = supersededRows(corpus)) {
   return !corpus.unknowns.some((u) => u.cites.some((c) => c.toUpperCase() === row.id.toUpperCase()));
 }
 
+/**
+ * The page behind a cited row, when a later refresh found it gone (ADR-0194): `{ status, day }`,
+ * or null.
+ *
+ * A refresh the page answered 404 or 410 writes an `op: 'fail'` ledger entry and nothing else -
+ * no capture, no row - so `supersededRows`, which sees rows, saw no replacement, the old row
+ * stayed current, and a claim resting on a deleted page passed the gate: the quiet failure
+ * ADR-0026 exists to prevent (found 2026-10-25, plan v0.4 §8).
+ *
+ * Gone means: the LAST ledger entry for the row's URL (a scrape or a fail, by urlKey, whichever
+ * transport ran it) is a failure the collector's own `standingFailure` reads as gone, recorded
+ * after the scrape that wrote the row's capture. "Last" and "after" are ledger POSITION, not the
+ * entries' dates: the ledger is append-only and hash-chained, so its order is the order the
+ * fetches happened, while until 2026-10-04 a scrape entry carried midnight of its day and a
+ * fail the real time, so dates put a morning 404 after the scrape that followed it. A page that
+ * came back - a scrape after the 404 - is current again, and a refresh that replaced the row is
+ * `cites-superseded-row`'s to report. So is a page that moved: a later scrape that ASKED for the
+ * row's URL and got content, wherever it landed, ends the gone state, and the move is judged
+ * instead (ADR-0193 decision 8). Filed under the landed URL, that scrape is not the URL's last
+ * entry, so until 2026-10-26 the earlier 404 stayed the last word and the reader was told a
+ * moved page was gone (G1-fix review 1, C). A row whose capture no fetch recorded has no scrape to be
+ * after; provenance fails it already. A blank Raw cell is the capture its URL names, as
+ * `supersededRows` ranks it.
+ *
+ * A row whose Finding names the status itself has said so, and is not flagged: the exemption
+ * `raw-error-status` makes for a corpus that cites a 404 on purpose (a string check).
+ *
+ * `findingExempts: false` asks only the ledger's question - did the newest fetch after this
+ * row's capture find the page gone - for the quote recheck (ADR-0193). Its question is whether
+ * any capture of the page is current, and the old row's Finding cannot answer it: with the
+ * exemption, a row whose Finding named "HTTP 404" as content passed `quote-survived-refresh`
+ * with no finding at all on a page the newest fetch found gone (found 2026-10-25, U8 review F3).
+ * Dropping it there costs nothing in the case the exemption exists for, a row that documents an
+ * error page: the recheck runs only where a row N replaced it, and a fetch the page answered with
+ * an error writes no N (the collector refuses error pages since 2026-09-28) or, kept before
+ * that, an error-page capture the recheck reopens anyway. `cites-gone-page` keeps the exemption.
+ */
+function goneAfterScrape(corpus, row, rank, fetches, { findingExempts = true } = {}) {
+  if (!row?.url) return null;
+  const own = rank.get(row.raw || captureOf(corpus, row)?.file);
+  if (own === undefined) return null;
+  const gone = goneSince(corpus, row.url, own, fetches);
+  if (!gone || (findingExempts && new RegExp(`\\b${gone.status}\\b`).test(row.finding))) return null;
+  return gone;
+}
+
+/**
+ * ADR-0194's ledger question for one URL, with no row in it: is the LAST entry filed under `url`
+ * (by urlKey) a fail `goneStatus` reads as gone, after ledger position `after`, with no scrape
+ * that asked for `url` since? `{ status, day }` or null. `goneAfterScrape` asks it of a row's URL
+ * after the row's capture; a moved citation also asks it of the address the move came through,
+ * after the move (ADR-0193 decision 8).
+ */
+function goneSince(corpus, url, after, fetches) {
+  const key = urlKey(url);
+  const last = fetches.last.get(key);
+  if (last === undefined || last <= after) return null;
+  const entry = corpus.ledger.entries[last];
+  if (entry.op !== 'fail') return null;
+  if ((fetches.askedScrape.get(key) ?? -1) > last) return null;
+  const status = goneStatus(entry.error);
+  if (status === null) return null;
+  return { status, day: String(entry.at ?? '').slice(0, 10) };
+}
+
+/**
+ * The ledger's positions, keyed once per corpus, each urlKey -> its LAST position:
+ * - `last`: each URL's last scrape-or-fail entry, by the URL it was filed under;
+ * - `landedScrape`: each URL's last scrape, by the URL it landed on (its `url`);
+ * - `askedScrape`: each URL's last scrape, by the URL it asked for (`requestedUrl` of its
+ *   command; a command naming no URL is read as asking for where it landed).
+ * Only scrapes enter the last two: a failure is ADR-0194's (gone) or changes nothing, never a
+ * move. Until 2026-10-26 a move was found by walking the ledger once per citation, three URL
+ * parses a step (G1-fix review 1, F: 4 s at 1000 entries and 300 citations).
+ */
+function fetchIndex(entries) {
+  const last = new Map();
+  const landedScrape = new Map();
+  const askedScrape = new Map();
+  (entries ?? []).forEach((e, i) => {
+    if ((e?.op !== 'scrape' && e?.op !== 'fail') || !e.url) return;
+    const landed = urlKey(e.url);
+    last.set(landed, i);
+    if (e.op !== 'scrape') return;
+    landedScrape.set(landed, i);
+    askedScrape.set(urlKey(requestedUrl(e.cmd) || e.url), i);
+  });
+  return { last, landedScrape, askedScrape };
+}
+
+/**
+ * The refresh that asked for a cited row's page and landed on another one (ADR-0193 decision 8):
+ * `{ asked, landed, day, file, at, through, row }` - `at` the move's ledger position; `through`
+ * the row's URL when the move asked for the address the row's own fetch asked for instead of it,
+ * else null; `row` the evidence row naming the landed capture, or null - or null when the page
+ * did not move.
+ *
+ * A fetch that follows a redirect records where the bytes came from as its `url`, and the
+ * collector files the new row under that URL, so `supersededRows`, which joins rows by urlKey,
+ * never joined it to the cited row: no recheck, no reopen, and a green gate over a page that no
+ * longer said what was quoted (found 2026-10-26, Stage 7 gap audit, gap 1). The ledger keeps the
+ * other half of the pair, the URL the fetch asked for, in its command (`requestedUrl`); this
+ * joins on that, and `supersededRows` is left as it is, because transport-provenance, hygiene,
+ * evidence-context and the handoff read it (plan v0.4 §7.4).
+ *
+ * Moved means: the LAST scrape after the row's own (ledger position, as `goneAfterScrape`
+ * orders) that asked for the row's URL or landed on it - urlKey throughout - landed elsewhere.
+ * When no scrape since the row's own has done either, the last that asked for the URL the row's
+ * OWN fetch asked for is read instead. That join covers a row first captured through a redirect
+ * (its URL is where it landed; its refreshes ask the plan's old address): by the owner's ruling
+ * of 2026-10-26 ("Cover them"), after the G1-fix review found such a row's moves silent (B). It
+ * also closes gap 4's shape without any fact about what a transport records on a redirect. It
+ * comes second, not as an equal: until the G1-fix review 2 (R2-1, R2-5) the latest of the
+ * three joins won, so a later move of the old address was judged over the row's own URL - a
+ * pass where the row's URL had lost the quote, a reopen where it had kept it. A later scrape that
+ * landed on the row's URL - the page came back, or a refresh through the redirect again - is the
+ * last word and an ordinary refresh, `supersededRows`' to judge, even when no row names its
+ * capture (hygiene warns `uncited-capture`): wider than "asked for", and said so in ADR-0193
+ * decision 8. Only scrapes count (`fetchIndex`). A trailing slash or `www.` is one urlKey, so not
+ * a move.
+ */
+function movedAfterScrape(corpus, row, rank, fetches) {
+  if (!row?.url) return null;
+  const own = rank.get(row.raw || captureOf(corpus, row)?.file);
+  if (own === undefined) return null;
+  const key = urlKey(row.url);
+  const entries = corpus.ledger?.entries ?? [];
+  const askedOwn = urlKey(requestedUrl(entries[own]?.cmd) || row.url);
+  // The row's own URL first: the address its own fetch asked for is read only when nothing has
+  // asked for or landed on the row's URL since its capture (G1-fix review 2, R2-1 and R2-5).
+  const atKey = Math.max(fetches.landedScrape.get(key) ?? -1, fetches.askedScrape.get(key) ?? -1);
+  const at = atKey > own ? atKey : (fetches.askedScrape.get(askedOwn) ?? -1);
+  if (at <= own) return null;
+  const last = entries[at];
+  if (urlKey(last.url) === key) return null;
+  // The row naming the landed capture, the last in table order (two rows naming one capture are
+  // hygiene's to report). Never the cited row itself: its capture's scrape is at or before its
+  // rank, and this one is after it.
+  const named = corpus.evidence.filter((r) => last.raw && r.raw === last.raw);
+  const asked = requestedUrl(last.cmd) || last.url;
+  return {
+    asked, landed: last.url, day: String(last.at ?? '').slice(0, 10), file: last.raw, at,
+    through: urlKey(asked) === key ? null : row.url,
+    row: named.length ? named[named.length - 1] : null,
+  };
+}
+
+// What the recheck can say, and what it cannot: it ends every pass and every reopen of a
+// superseded citation (ADR-0193), so no reader takes a pass, or a reopen's reason, for more than
+// it measured. Until 2026-10-25 (U8 review F2) it ended reopens only, and the pass - shown with
+// --show-pass and in --json, not in preflight's default output - did not carry it.
+const REFRESH_LIMIT = 'Refresh confirmation detects whether the quoted words are still in the new capture, never whether the claim is still true.';
+
+/**
+ * The body of the capture a row's Raw cell NAMES (`ownCapture`): `{ capture, body }`, or
+ * `{ problem }` saying why there is nothing to read. Never `captureOf`'s fallback for a blank
+ * cell - the URL's newest capture - because for an old row that IS the replacement's capture,
+ * and the old quote would be "found" in the very page it is compared with (plan v0.4 §2). A
+ * file that is gone or unreadable is a problem, never an empty page that "lacks" the words.
+ */
+function namedCaptureBody(corpus, row) {
+  if (!row.raw) return { problem: `${row.id} names no capture in its Raw cell, and the recheck reads only the capture a row names` };
+  const capture = ownCapture(corpus, row);
+  const text = capture ? readText(resolve(corpus.root, capture.file)) : null;
+  if (text === null) return { problem: `${row.id} names ${row.raw}, which is not on disk or could not be read as a capture` };
+  return { capture, body: parseCapture(text).body };
+}
+
+/** The ledger's scrape that wrote `file` - the position `ledgerRank` gives it - or null. */
+function scrapeOf(corpus, rank, file) {
+  const at = rank.get(file);
+  return at === undefined ? null : corpus.ledger.entries[at];
+}
+
+/**
+ * Why a quote found in the old row's capture is missing from the replacement's, as far as the
+ * ledger can tell (plan v0.4 §7.3; Testimonium's drift attribution). It only EXPLAINS a reopen:
+ * it is asked after the reopen is decided and can never turn one into a pass, because here the
+ * risky output is the pass - it removes a re-read. The first cause that matches is named, from
+ * fields the ledger and the capture already carry. Unmeasured: when ADR-0193 was written no real
+ * refresh had lost a quote.
+ */
+function driftAttribution(corpus, rank, old, replacement, capture) {
+  const was = scrapeOf(corpus, rank, old.raw);
+  const now = scrapeOf(corpus, rank, replacement.raw);
+  // The ledger hashes the whole capture file, so equal hashes are one file's bytes, and a quote
+  // found in one is found in the other: an honest corpus never gets here. Equal hashes over
+  // files that differ mean a capture was edited after its fetch, which provenance fails.
+  if (was?.bodySha256 && was.bodySha256 === now?.bodySha256) {
+    return 'The ledger records the same bytes for both captures, yet the words are in one and not the other: '
+      + 'one of them was changed after its fetch, and provenance names which.';
+  }
+  if (was?.sourceSha256 && was.sourceSha256 === now?.sourceSha256) {                 // ADR-0140
+    return 'The page\'s source is unchanged; the capture differs because the conversion did. '
+      + 'This is not a defect in your research. Re-read before concluding anything about the page.';
+  }
+  const before = was?.transport || ownCapture(corpus, old)?.transport || '';
+  const after = now?.transport || capture.transport || '';
+  if (before && after && before !== after) {
+    return `Captured by ${before} then, ${after} now. A transport change alone can lose a quote.`;
+  }
+  if (capture.completeness === 'partial' || now?.completeness === 'partial') {
+    const omitted = capture.omitted || now?.omitted || '';
+    return `${replacement.id}'s capture is partial; the words may be in the part not captured${omitted ? `: ${omitted}` : ''}.`;
+  }
+  if (capture.bytes < MIN_CAPTURE_CHARS) {
+    return `${replacement.id}'s capture is ${capture.bytes} bytes, too thin to tell. The recheck could not look. This is not evidence the words are gone.`;
+  }
+  return 'The page changed, or the converter changed without being recorded. Both are possible.';
+}
+
+/**
+ * The quote-level recheck of one citation of a superseded row (ADR-0193, plan v0.4 §7.1):
+ * `{ survived: true, file }`, or `{ reason }` to reopen.
+ *
+ * One state passes: every usable quote anchor of the old row - quote-too-short excluded, measured
+ * on the compared text (ADR-0191) - is found in the old row's OWN capture (the baseline,
+ * Testimonium's rule: a quote its own page never held proves nothing about the new one) and in
+ * the replacement row's OWN capture body, which is readable and not an HTTP error page. Every
+ * other state is a reason to reopen, and a state added later defaults to one: the pass is the
+ * output that removes a re-read. The first such state is ADR-0194's: a refresh after the
+ * replacement found the page gone (`gone`, asked without ADR-0194's Finding exemption), and a
+ * page that is gone is not one whose words survived, whatever its last capture held.
+ */
+function quoteRecheck(corpus, rank, id, replacement, gone) {
+  const old = corpus.evidence.find((row) => row.id.toUpperCase() === id.toUpperCase());
+  if (!old) return { reason: `${id} is not in the evidence table, so it has nothing to recheck.` };
+  const anchors = quoteAnchors(old.finding);
+  if (!anchors.length) return { reason: `${old.id} carries no quote to recheck.` };
+  const usable = anchors.filter((anchor) => !quoteTooShort(anchor));
+  if (!usable.length) return { reason: `Every quote ${old.id} carries is too short to anchor anything (quote-too-short), so none can be rechecked.` };
+  if (gone) return { reason: `A refresh on ${gone.day} found ${gone.place ?? 'the page'} gone (HTTP ${gone.status}), so no capture of it is current.` };
+
+  const baseline = namedCaptureBody(corpus, old);
+  if (baseline.problem) return { reason: `${baseline.problem}, so its quote has no baseline to recheck.` };
+  const unfounded = usable.find((anchor) => !anchorFound(anchor.fragments, baseline.body));
+  if (unfounded) {
+    return { reason: `${old.id}'s quote "${unfounded.quote}" is not in its own capture ${baseline.capture.file}, so it has no baseline to recheck against.` };
+  }
+
+  const fresh = namedCaptureBody(corpus, replacement);
+  if (fresh.problem) return { reason: `${fresh.problem}, so the recheck could not look.` };
+  const file = fresh.capture.file;
+  // An error page kept as a capture (before 2026-09-28) can hold the words - a cached copy, a
+  // "this page has moved" notice quoting it - and is still not the page.
+  //
+  // A status that is there and is not a number - "404 Not Found", "HTTP 404", a quoted "404" in
+  // the header - cannot say it is not one. Number() reads all of them as NaN, and until
+  // 2026-10-26 (Phase 4b breaker, F2) NaN counted as "not an error page", so such a capture
+  // holding the old words passed. The Firecrawl adapter keeps a string status as it came, and
+  // the collector reads it with the same Number() and keeps the page. An empty status says
+  // nothing either way and is read as before (5 committed captures carry one).
+  const statusText = String(fresh.capture.statusCode ?? '').trim();
+  const status = Number(statusText);
+  if (statusText && !Number.isInteger(status)) {
+    return { reason: `${replacement.id}'s capture ${file} records its HTTP status as "${statusText}", which is not a number, `
+      + 'so the recheck cannot tell whether it is an error page - and words found on an error page are not the page\'s.' };
+  }
+  if (Number.isInteger(status) && status >= 400) {
+    return { reason: `${replacement.id}'s capture ${file} is an HTTP ${status} page - words found on an error page are not the page's.` };
+  }
+  const lost = usable.find((anchor) => !anchorFound(anchor.fragments, fresh.body));
+  if (!lost) return { survived: true, file };
+  return { reason: `${old.id}'s quote "${lost.quote}" is not in ${replacement.id}'s capture ${file}. `
+    + driftAttribution(corpus, rank, old, replacement, fresh.capture) };
+}
+
+/**
+ * The finding for a citation whose page a refresh found at another URL (ADR-0193 decision 8): never
+ * silent. When an evidence row names the landed capture, the recheck runs against the current row
+ * of the landed URL - that row, or the row that has since superseded it - as the replacing row,
+ * and only every usable quote found there, with none of the three addresses below found gone,
+ * passes `quote-survived-refresh`; every other outcome, and a landed capture no row names, reopens
+ * `cites-superseded-row`. Both name the
+ * move - asked for X, landed on Y - because the reader must judge whether Y is still the page the
+ * claim was about, which no string check can, and both end with the limit line.
+ */
+function movedCitation(corpus, rank, unknown, id, moved, goneOwn, superseded, fetches) {
+  const move = `the refresh${moved.day ? ` on ${moved.day}` : ''} asked for ${moved.asked}`
+    + (moved.through ? ` - the address ${id}'s own fetch asked for before it landed on ${moved.through} -` : '')
+    + ` and landed on ${moved.landed}, a different page`;
+  // The landed row may itself have been refreshed since - the next step after seeing a move is to
+  // collect the new address directly - so the recheck is against the newest row of that address,
+  // as an ordinary refresh's is (G1-fix review 1, A: a superseded capture had passed).
+  const current = moved.row ? superseded.get(moved.row.id.toUpperCase()) ?? moved.row : null;
+  const recorded = !current ? '' : current === moved.row ? `recorded as ${moved.row.id}`
+    : `recorded as ${moved.row.id} and since superseded by ${current.id}`;
+  const fields = { row: unknown.id, line: unknown.line, superseded: id, ...(current ? { by: current.id } : {}), asked: moved.asked, landed: moved.landed };
+  // Gone is read at three addresses, each by ADR-0194's rule: the row's own URL; where the move
+  // landed, after the current row's capture there (G1-fix review 2, R2-2: a direct fetch of that
+  // address that answered 404 is filed under it, and the move had passed on a page found gone);
+  // and, for a move that came through the address the row's own fetch asked for, that address
+  // after the move (R2-3). A failure is filed under the address it asked for, so the row's own
+  // URL never sees the last two. Only this reason reads them: `cites-gone-page` stays the row URL's.
+  const goneLanded = current ? goneAfterScrape(corpus, current, rank, fetches, { findingExempts: false }) : null;
+  const goneThrough = moved.through ? goneSince(corpus, moved.asked, moved.at, fetches) : null;
+  const gone = goneOwn
+    ?? (goneLanded && { ...goneLanded, place: `${current.url}, where the page landed,` })
+    ?? (goneThrough && { ...goneThrough, place: `${moved.asked}, the address the move asked for,` });
+  // The landed page can move on in turn - asked for directly, it now lands somewhere else. A move
+  // of a move is not followed, so it never passes (found 2026-10-26, G1-fix builder round 3: it
+  // passed on the first landing's capture, and after a 404 there the ask that moved on cleared
+  // the gone state above as well). The finding is a reopen naming the second move.
+  const onward = current && !gone ? movedAfterScrape(corpus, current, rank, fetches) : null;
+  const recheck = !current ? null
+    : onward ? { reason: `${current.url} has moved on since: the refresh${onward.day ? ` on ${onward.day}` : ''} asked for ${onward.asked} `
+      + `and landed on ${onward.landed}. A move after a move is not followed, so ${current.id}'s capture is not rechecked.` }
+    : quoteRecheck(corpus, rank, id, current, gone);
+  if (recheck?.survived) {
+    return finding('pass', 'evidence-supersession', 'quote-survived-refresh',
+      `${id}'s quoted words occur in ${current.id}'s capture ${recheck.file}, and ${move}, ${recorded}. `
+      + `That says the words survived, not that the claim still holds. Re-read ${current.id} when you next touch ${unknown.id}. `
+      + REFRESH_LIMIT,
+      { ...fields, capture: recheck.file });
+  }
+  return finding('fail', 'evidence-supersession', 'cites-superseded-row',
+    `${unknown.id} rests on ${id}, and ${move}, `
+    + (current ? `${recorded}. ` : `and no evidence row names its capture ${moved.file}. `)
+    + 'Re-read it, then move the citation or record why the earlier reading still holds. '
+    + (recheck ? `${recheck.reason} ` : '') + REFRESH_LIMIT,
+    fields);
+}
+
 function evidenceSupersession(corpus) {
   const out = [];
   const superseded = supersededRows(corpus);
-  if (!superseded.size) {
-    return [finding('pass', 'evidence-supersession', 'supersession', 'no evidence row has been re-collected')];
-  }
+  const rank = ledgerRank(corpus.ledger?.entries);
+  const fetches = fetchIndex(corpus.ledger?.entries);
+  // The first row under each ID, as a find would return it, looked up once per citation, not scanned.
+  const byId = new Map();
+  for (const e of corpus.evidence) if (!byId.has(e.id.toUpperCase())) byId.set(e.id.toUpperCase(), e);
+  const rowOf = (id) => byId.get(id.toUpperCase());
 
+  // A citation of a superseded row reopens (ADR-0026) unless its quoted words survived the
+  // refresh (ADR-0193). Either way the citation stays where it is: moving it is the act of
+  // somebody who re-read the page.
   for (const unknown of corpus.unknowns) {
     for (const id of unknown.cites) {
+      // A refresh that asked for the row's page and landed on another URL (ADR-0193 decision 8)
+      // is the newest word on that page, so it is judged before - and instead of - any earlier
+      // refresh that superseded the row by URL.
+      const moved = movedAfterScrape(corpus, rowOf(id), rank, fetches);
       const replacement = superseded.get(id.toUpperCase());
-      if (!replacement) continue;
+      if (!moved && !replacement) continue;
+      const gone = goneAfterScrape(corpus, rowOf(id), rank, fetches, { findingExempts: false });
+      if (moved) {
+        out.push(movedCitation(corpus, rank, unknown, id, moved, gone, superseded, fetches));
+        continue;
+      }
+      const recheck = quoteRecheck(corpus, rank, id, replacement, gone);
+      if (recheck.survived) {
+        out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
+          `${id}'s quoted words occur in ${replacement.id}'s capture ${recheck.file}. `
+          + `That says the words survived, not that the claim still holds. Re-read ${replacement.id} when you next touch ${unknown.id}. `
+          + REFRESH_LIMIT,
+          { row: unknown.id, line: unknown.line, superseded: id, by: replacement.id, capture: recheck.file }));
+        continue;
+      }
       out.push(finding('fail', 'evidence-supersession', 'cites-superseded-row',
         `${unknown.id} rests on ${id}, which has been superseded by ${replacement.id} - a fresher capture of the same URL `
-        + `(${replacement.retrieved}). Re-read it, then move the citation or record why the earlier reading still holds.`,
+        + `(${replacement.retrieved}). Re-read it, then move the citation or record why the earlier reading still holds. `
+        + `${recheck.reason} ${REFRESH_LIMIT}`,
         { row: unknown.id, line: unknown.line, superseded: id, by: replacement.id }));
+    }
+  }
+
+  // Not a supersession - nothing replaced the row - so its own name (ADR-0194), and it is
+  // asked whether or not anything was re-collected.
+  for (const unknown of corpus.unknowns) {
+    for (const id of unknown.cites) {
+      const gone = goneAfterScrape(corpus, rowOf(id), rank, fetches);
+      if (!gone) continue;
+      out.push(finding('fail', 'evidence-supersession', 'cites-gone-page',
+        `${unknown.id} rests on ${id}. A refresh on ${gone.day} found the page gone (HTTP ${gone.status}). `
+        + `Re-research ${unknown.id} or record in ${id}'s Finding that the page now answers HTTP ${gone.status} `
+        + 'and why the earlier reading still holds.',
+        { row: unknown.id, line: unknown.line, cited: id, status: gone.status }));
     }
   }
 
@@ -690,6 +1057,7 @@ function evidenceSupersession(corpus) {
     out.push(finding('pass', 'evidence-supersession', 'superseded-and-released',
       `${id} was superseded by ${replacement.id} and is cited by nothing - kept as history`));
   }
+  if (!out.length) out.push(finding('pass', 'evidence-supersession', 'supersession', 'no evidence row has been re-collected'));
   return out;
 }
 
@@ -1083,7 +1451,7 @@ export const CHECKS = Object.freeze([
   { name: 'unknown-closure', about: 'every CLOSED unknown rests on a real, fresh, primary row', run: unknownClosure },
   { name: 'subtopic-coverage', about: 'the map covers every universal dimension, and states a status for each', run: subtopicCoverage },
   { name: 'capture-completeness', about: 'no closed unknown rests solely on a partial capture', run: captureCompleteness },
-  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced', run: evidenceSupersession },
+  { name: 'evidence-supersession', about: 'no unknown still rests on a row a later capture replaced, unless its quoted words survived the refresh (ADR-0193), or on a page a refresh found gone (ADR-0194)', run: evidenceSupersession },
   { name: 'collection-attempts', about: 'a known-unknown was reached for before it was declared unreachable', run: collectionAttempts },
   { name: 'hygiene', about: 'duplicate rows, uncited captures, unparseable dates', run: hygiene },
   { name: 'corpus-shape', about: 'the corpus parses and the shape is there', run: corpusShape },

@@ -5,7 +5,8 @@ import { test, describe, assert, makePassingProject, corrupt } from './harness.m
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { runCheck } from '../lib/checks.mjs';
-import { quoteAnchors, normalizeForMatch, anchorFound, quoteChars, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
+import { runPreflight } from '../lib/preflight.mjs';
+import { quoteAnchors, normalizeForMatch, anchorFound, quoteTooShort, unreadableQuoteMarkers, MIN_QUOTE_CHARS } from '../lib/quotes.mjs';
 
 describe('quotes');
 
@@ -110,10 +111,11 @@ test('a long quote of few words is specific: the short-quote warning is about le
     'a quote of one 75-character token, found word for word, was warned as anchoring almost nothing');
   assert.ok(judged.some((f) => /1 quote/.test(f.detail)), 'it is counted as an anchored quote');
 
-  // The floor is on short AND few: the helper measures characters across the fragments, and a
-  // token one character under the floor still warns.
+  // The floor is on short AND few, and a token one character under it still warns. The length
+  // is the compared text's (ADR-0191), so the pin is on the predicate, not on a raw count.
   const under = 'x'.repeat(MIN_QUOTE_CHARS - 1);
-  assert.equal(quoteChars(quoteAnchors(`[quote: ${under}]`)[0]), MIN_QUOTE_CHARS - 1);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${under}]`)[0]), true);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${'x'.repeat(MIN_QUOTE_CHARS)}]`)[0]), false);
   assert.equal(quotedToken(under, `Short. [quote: ${under}]`).find((f) => f.rule === 'quote-too-short')?.severity, 'warn',
     'one character under the floor, one word: still almost nothing');
   const at = 'y'.repeat(MIN_QUOTE_CHARS);
@@ -328,4 +330,263 @@ test('a spaced fragment of three words in a script without word spaces is still 
   const altered = quotedToken(page, 'Pro price. [quote: 每月 25 美元]');
   assert.equal(altered.find((f) => f.rule === 'quote-too-short'), undefined, JSON.stringify(altered));
   assert.equal(altered.find((f) => f.rule === 'quote-not-found')?.severity, 'fail', JSON.stringify(altered));
+});
+
+// ADR-0191 (2026-10-25, plan section 5.1): the floor was measured on the RAW fragment, while
+// anchorFound compares the normalized one. `[Free plan](https://...#free-plan-details)` is 65 raw
+// characters, so it was not short, and it anchored `free plan`, which occurs on every pricing
+// page; zero-width spaces padded `**Free** plan` past the floor the same way, and so did a
+// formatting-only fragment beside a two-word one. The floor now reads the text the matcher reads.
+test('the short-quote floor is measured on the compared text, not the raw marker', () => {
+  const link = '[Free plan](https://vendor.example.com/pricing#free-plan-details)';
+  const padded = `**Free**${'\u200B'.repeat(35)} plan`;
+  for (const [name, quote] of [
+    ['a Markdown link whose URL is long', link],
+    ['emphasis padded with zero-width spaces', padded],
+    ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... free plan`],
+    ['an invisible fragment beside two words', `${'\u200B'.repeat(40)} ... free plan`],
+    ['plain two words', 'Free plan'],
+  ]) {
+    assert.ok(quote.length >= MIN_QUOTE_CHARS || name === 'plain two words', `${name}: the case clears the raw floor`);
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), true, `${name}: anchors only "free plan"`);
+    const judged = quoted(`Free tier. [quote: ${quote}]`);
+    assert.equal(judged.find((f) => f.rule === 'quote-too-short')?.severity, 'warn', `${name}: ${JSON.stringify(judged)}`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: found in the capture, so a warning only`);
+  }
+  // A raw length made of characters the comparison drops does not count either.
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${'x'.repeat(MIN_QUOTE_CHARS - 1)}__]`)[0]), true);
+
+  // ADR-0126's case keeps its exemption: a long token of one word is as specific as a sentence.
+  const manifest = `"dependencies":{"yaml":"^2.9.0","commander":"^14.0.20","firecrawl":"^4.40.0","undici":"^7.16.0","semver":"^7.7.3","zod":"^4.1.12"}`;
+  assert.equal(manifest.length, 130);
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${manifest}]`)[0]), false);
+  assert.deepEqual(quotedToken(manifest, `Pinned deps. [quote: ${manifest}]`)
+    .filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found'), [], 'the 130-character token is checked and found');
+});
+
+// ADR-0191's one branch: an anchor with NO compared text is measured raw, exactly as before it,
+// so the four long formatting-only quotes (2026-10-08) keep their quote-not-found failure with no
+// warning beside it, and `***` keeps its warning: their result does not move at all (D-d).
+test('a quote with no compared text keeps the raw measure, so its result does not move', () => {
+  for (const [raw, short] of [
+    ['*'.repeat(40), false],
+    ['\u200B'.repeat(40), false],
+    ['**** **** ****', false],
+    [`[](https://x.invalid/${'q'.repeat(40)})`, false],
+    ['***', true],
+    ['\u200B\u200B', true],
+    ['** ... __', true],
+  ]) {
+    const [anchor] = quoteAnchors(`[quote: ${raw}]`);
+    assert.equal(anchor.fragments.map(normalizeForMatch).join(''), '', `${JSON.stringify(raw)} has no compared text`);
+    assert.equal(quoteTooShort(anchor), short, `${JSON.stringify(raw)}: short only as it was on raw text`);
+  }
+});
+
+/** The whole gate (every check, through runPreflight) on the passing project with one Finding replaced. */
+function gated(finding) {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (t) => t.replace(
+    '| The free plan allows 10 requests per minute and includes 1,000 credits. |', `| ${finding} |`));
+  const verdict = runPreflight(dir, { env: {} });
+  const quoteRules = verdict.findings.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found')
+    .map((f) => `${f.severity} ${f.rule}`).sort();
+  return { pass: verdict.pass, quoteRules, failures: verdict.failures.map((f) => f.rule) };
+}
+
+// Review of ADR-0191 (2026-10-25, U1 review F1; run decision D-l): the floor moved to the compared
+// text, but the check still stopped at the short warning, so a quote long on its raw fragments
+// and short on the compared ones was no longer compared at all. `[Enterprise plan](https://...)`
+// with no "enterprise plan" in the capture failed quote-not-found before ADR-0191 and passed the
+// gate with a warning after it: a gate failure removed by a change classed as a bug fix in the
+// strict direction. Such a quote now warns AND is compared. Only a quote that was short on its
+// raw fragments too - short before ADR-0191 - is left uncompared, as ADR-0087 always did.
+test('a quote short only on its compared text still warns and is still compared: an invented one fails the gate', () => {
+  for (const [name, quote] of [
+    ['a Markdown link whose URL is long', '[Enterprise plan](https://vendor.example.com/pricing#enterprise-plan-details)'],
+    ['emphasis padded with zero-width spaces', `**Enterprise**${'\u200b'.repeat(35)} plan`],
+    ['a formatting-only fragment beside two words', `${'*'.repeat(40)} ... enterprise plan`],
+  ]) {
+    assert.ok(quote.length >= MIN_QUOTE_CHARS, `${name}: the case clears the raw floor, so it was compared before ADR-0191`);
+    assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), true, `${name}: short on the compared text`);
+    const invented = gated(`Enterprise tier exists. [quote: ${quote}]`);
+    assert.deepEqual(invented.quoteRules, ['fail quote-not-found', 'warn quote-too-short'], `${name}: ${JSON.stringify(invented)}`);
+    assert.equal(invented.pass, false, `${name}: the invented quote blocks the gate, as it did before ADR-0191`);
+    assert.deepEqual(invented.failures, ['quote-not-found'], `${name}: and nothing else does`);
+
+    const real = gated(`Free tier exists. [quote: ${quote.replace('Enterprise', 'Free').replace('enterprise', 'free')}]`);
+    assert.deepEqual(real.quoteRules, ['warn quote-too-short'], `${name}, found in the capture: ${JSON.stringify(real)}`);
+    assert.equal(real.pass, true, `${name}, found in the capture: a warning only`);
+  }
+  // Short on the raw text as well: ADR-0087's behaviour, unchanged - warned, never compared.
+  const plain = gated('Enterprise tier exists. [quote: enterprise plan]');
+  assert.deepEqual(plain.quoteRules, ['warn quote-too-short'], JSON.stringify(plain));
+  assert.equal(plain.pass, true, 'a quote short on its raw text is still not compared');
+});
+
+// U1 review F3 (2026-10-25): the compared text is not always the shorter one. NFKC and case
+// folding can lengthen a fragment - `㍿` is one character and folds to `株式会社` - so a quote
+// that was short on its raw text (and so warned and was never compared) is not short on the
+// compared text, and is now compared: an invented one fails. The strict direction, on contrived
+// input; no quote in the 44 committed corpora moves this way.
+test('a quote short on its raw text but long once folded is compared, and fails when invented', () => {
+  const quote = '㍿㍿㍿';
+  assert.ok(quote.length < MIN_QUOTE_CHARS && !/\s/.test(quote), 'one raw word of three characters: short before ADR-0191');
+  assert.equal(normalizeForMatch(quote), '株式会社株式会社株式会社');
+  assert.equal(quoteTooShort(quoteAnchors(`[quote: ${quote}]`)[0]), false, 'twelve Han characters are four words by weight');
+  const invented = gated(`Company form. [quote: ${quote}]`);
+  assert.deepEqual(invented.quoteRules, ['fail quote-not-found'], JSON.stringify(invented));
+  assert.equal(invented.pass, false);
+});
+
+// The pre-mortem of ADR-0191: NFKC folds full-width forms and the half-width katakana before the
+// weight is taken. A full-width figure is not a character of an unspaced script on either side,
+// so the CJK verdicts of ADR-0176 and F1 hold when the figure is written full-width.
+test('full-width forms fold without moving a script-without-spaces verdict', () => {
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 月額 １，９８０ 円]')[0]), false, 'three words on spaces, as `月額 1,980 円`');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 月額１，９８０円]')[0]), true, 'one figure and three characters, as `月額1,980円`');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回ま ... 上限]')[0]), false);
+  assert.equal(quoteTooShort(quoteAnchors('[quote: 一分あたり六十回 ... 上限]')[0]), true);
+});
+
+// ADR-0192 (2026-10-25, plan section 5.3): the two transports space punctuation beside an inline
+// tag differently. The keyless converter writes a space on both sides of every tag it strips
+// (`<span>`, `<sup>`, a Sphinx code token), so a mark right after one is spaced; Firecrawl writes
+// none before a closing mark, and one after `(` or `[` when a link or emphasis follows. A quote
+// copied from one transport's capture was quote-not-found against the other's capture of the
+// same page. Each case below is a short synthetic string in the shape the research measured
+// (docs/decisions/2026-10-25-punctuation-spacing, E-01/E-02 keyless against E-08/E-09
+// Firecrawl), with only the one mark's spacing differing. Guard: the mark is in the rule's set
+// in `normalizeForMatch`; take it out of the set and its case is not found.
+const SPACED_MARKS = [
+  // [mark, keyless shape, Firecrawl shape, where the shape was measured]
+  ['.', 'archived on 3 May 2024 . Retrieved 9 June 2024 .', 'archived on 3 May 2024. Retrieved 9 June 2024.', 'E-02/E-09 citation dates'],
+  [',', 'as in *alpha* , *beta* and gamma', 'as in _alpha_, _beta_ and gamma', 'E-02/E-09 primo, secondo'],
+  [';', 'as in *alpha* ; it is similar', 'as in _alpha_; it is similar', 'E-02/E-09 primo, secondo'],
+  [':', "if key == 'x' : return none", "if key == 'x': return none", "E-01/E-08 == '-' :"],
+  ['!', 'the field {value !r} is shown', 'the field {value!r} is shown', 'E-01/E-08 value !r'],
+  ['?', 'the lazy form ` a+ ? ` matches less', 'the lazy form `a+?` matches less', 'E-01/E-08 a Sphinx code span keeps its spaces'],
+  ['%', 'a rise of 50 % in one year', 'a rise of 50% in one year', 'E-02/E-09 a no-break-space span Firecrawl drops'],
+  [')', '(for example *a rise* ), but often', '(for example _a rise_), but often', 'E-02/E-09 50 %* ),'],
+  [']', 'the [optional *pos* ] argument', 'the [optional _pos_] argument', 'E-01/E-08 a signature built of em and span'],
+  ['}', 'on line {lineno } of the file', 'on line {lineno} of the file', 'E-01/E-08 { line_num }'],
+  ['(', 'spoken in the north ([Sonora](../s) and the coast)', 'spoken in the north ( [Sonora](https://x.invalid/s) and the coast)', 'E-01/E-09 Firecrawl spaces ( before a link'],
+  ['[', 'the optional [ *pos*] argument', 'the optional [_pos_] argument', 'E-01 [ , * pos'],
+  ['{', 'formatted as { value} in the log', 'formatted as {value} in the log', 'E-01/E-08 { value !r}'],
+];
+
+for (const [mark, keyless, firecrawl, measured] of SPACED_MARKS) {
+  test(`ADR-0192: a quote matches across the transports' spacing at \`${mark}\` (${measured})`, () => {
+    assert.notEqual(keyless, firecrawl, 'the two shapes differ in the raw text');
+    assert.equal(anchorFound([keyless], `Before it. ${firecrawl} After it.`), true,
+      `keyless spacing in the quote, Firecrawl spacing in the capture, at ${mark}`);
+    assert.equal(anchorFound([firecrawl], `Before it. ${keyless} After it.`), true,
+      `Firecrawl spacing in the quote, keyless spacing in the capture, at ${mark}`);
+    assert.equal(normalizeForMatch(keyless), normalizeForMatch(firecrawl), `one compared text at ${mark}`);
+  });
+}
+
+// The plan's own pins (section 5.3): the rule removes whitespace only BEFORE a closing mark and
+// only AFTER an opening one, never after a closing mark, so a space after a point or a comma
+// still separates two numbers. Guard: no space after a closing mark is removed; add that
+// removal to the rule and the two pairs with a space after the mark merge (`1.5` with `1. 5`,
+// `1,5` with `1, 5`). The other two (`15` with `1,5`, `1000` with `1,000`) hold no space at all:
+// they pin that the rule removes no character but whitespace - the comma deletion of ADR-0192's
+// rejected alternatives would merge both (U9 review F6, 2026-10-25).
+test("ADR-0192: the spacing rule never joins two numbers - the plan's four pins stay distinct", () => {
+  for (const [a, b] of [
+    ['the disk holds 1.5 GB of logs', 'the disk holds 1. 5 GB of logs'],
+    ['a fee of 15 units per call', 'a fee of 1,5 units per call'],
+    ['up to 1000 requests per day', 'up to 1,000 requests per day'],
+    ['a fee of 1,5 units per call', 'a fee of 1, 5 units per call'],
+  ]) {
+    assert.notEqual(normalizeForMatch(a), normalizeForMatch(b), `${a} | ${b}`);
+    assert.equal(anchorFound([a], `x ${b} y`), false, `${a} is not found in ${b}`);
+    assert.equal(anchorFound([b], `x ${a} y`), false, `${b} is not found in ${a}`);
+  }
+  // The plan's case: the Firecrawl-shaped and the keyless-shaped capture of one page both
+  // match the one quote, and its figure keeps its comma.
+  const quote = 'The free tier allows 1,000 requests. Paid plans start at $5 a month.';
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows **1,000** requests. Paid plans start at $5 a month. More.'), true, 'Firecrawl shape');
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows 1,000 requests . Paid plans start at $5 a month . More.'), true, 'keyless shape');
+  assert.equal(anchorFound([quote], 'Pricing. The free tier allows 1000 requests . Paid plans start at $5 a month . More.'), false, 'not 1000');
+});
+
+// The merges the rule accepts. A space BEFORE a closing mark goes, so a mark that starts a token
+// joins the word before it. Across the repository's 430 captures no number is written
+// `<digit> .<digit>` or `<digit> ,<digit>`; `.claude` paths are the common case (ADR-0192;
+// research Decision, "Where the rule would merge text it should not"). Pinned so that narrowing
+// the rule is a decision, not an accident. Guard: the removal of whitespace before a closing mark.
+test('ADR-0192 KNOWN MERGE: 1 .5 = 1.5, 1 ,5 = 1,5 and at .claude = at.claude', () => {
+  for (const [a, b] of [
+    ['a ratio of 1 .5 units', 'a ratio of 1.5 units'],
+    ['a ratio of 1 ,5 units', 'a ratio of 1,5 units'],
+    ['the skills live at .claude/skills now', 'the skills live at.claude/skills now'],
+  ]) {
+    assert.equal(normalizeForMatch(a), normalizeForMatch(b), `KNOWN MERGE: ${a} | ${b}`);
+    assert.equal(anchorFound([b], `x ${a} y`), true, `KNOWN MERGE: ${b} is found in ${a}`);
+  }
+});
+
+// What the rule must NOT rescue (ADR-0192; research Decision, "What the rule does NOT cover"):
+// quote marks are outside the set; the keyless converter's space AFTER `.` in tokenized code
+// stays; the space BEFORE `(` stays; whitespace Firecrawl drops where there is no mark stays.
+// Each would be a separate, deliberate widening. Guards, one per pair: `'` is in neither set (the
+// two gloss pairs each differ on one side of a quote mark only, so each fails if `'` joins the
+// closing or the opening set; the measured f-string shape also differs where no rule reaches);
+// no space after a closing mark is removed; `(` is only an opening mark; only whitespace beside
+// a mark of the set is removed.
+test('ADR-0192: the spacing rule does not rescue quote marks, `re . escape`, `search (` or dropped whitespace', () => {
+  for (const [keyless, firecrawl, why] of [
+    ["a gloss ('an increase ') here", "a gloss ('an increase') here", 'a space before a closing straight quote'],
+    ["a gloss (' an increase') here", "a gloss ('an increase') here", 'a space after an opening straight quote'],
+    ["raise error ( f ' {value} ' ) here", "raise error(f'{value}') here", 'straight quotes in a tokenized f-string'],
+    ['then calls re . escape on the chars', 'then calls re.escape on the chars', 'the space after . in tokenized code'],
+    ['returns pattern.search (string) first', 'returns pattern.search(string) first', 'the space before ('],
+    ['U+00B6 ¶ PILCROW SIGN is', 'U+00B6¶PILCROW SIGN is', 'whitespace Firecrawl drops beside no mark'],
+  ]) {
+    assert.equal(anchorFound([keyless], `x ${firecrawl} y`), false, `${why}: not found`);
+    assert.equal(anchorFound([firecrawl], `x ${keyless} y`), false, `${why}: not found, reverse`);
+  }
+});
+
+// The gate's view of plan section 7.5 case 12 ("Firecrawl to keyless, the quote lost only to
+// spacing"): a quote copied from a Firecrawl capture is checked against a keyless capture of
+// the same page, and the reverse. Before ADR-0192 it was quote-not-found, a failure under every
+// policy; now it is found. Guard: the spacing rule in `normalizeForMatch`.
+test('ADR-0192: the citations check finds a quote whose capture came through the other transport', () => {
+  const firecrawl = 'Retrieved 16 May 2024. The limit is 50% of the quota (per key), as in _alpha_, _beta_; see {value!r}.';
+  const keyless = 'Retrieved 16 May 2024 . The limit is 50 % of the quota ( per key ) , as in *alpha* , *beta* ; see {value !r} .';
+  for (const [capture, quote, name] of [
+    [keyless, firecrawl, 'Firecrawl quote, keyless capture'],
+    [firecrawl, keyless, 'keyless quote, Firecrawl capture'],
+  ]) {
+    const judged = quotedToken(capture, `Quota rule. [quote: ${quote}]`);
+    assert.equal(judged.find((f) => f.rule === 'quote-not-found'), undefined, `${name}: ${JSON.stringify(judged)}`);
+    assert.ok(judged.some((f) => f.severity === 'pass' && /1 quote/.test(f.detail)), `${name}: counted as found`);
+  }
+});
+
+// The floor reads the ruled text (ADR-0192 decision 1, ADR-0191). `quoteTooShort` measures
+// `normalizeForMatch(f)`, the text `anchorFound` looks for, so the spacing rule moves the floor:
+// `free ( plan )` is four words on spaces before the rule and `free (plan)`, two words and 11
+// characters, after it. A real quote of that shape newly warns quote-too-short, and ADR-0195's
+// quote coverage stops counting it as usable; it is still compared, because its raw text clears
+// the floor. One word more, `free (plan) tier`, is three words and not short. Found by the U9
+// review (2026-10-25, F7): with the floor counted on the pre-rule text, every quotes test still
+// passed. Guard: `quoteTooShort` counts on the same normalized text as `anchorFound`; count it on
+// the text before the spacing rule and `free ( plan )` is not short, so this test fails.
+test('ADR-0192: the short-quote floor counts the text after the spacing rule', () => {
+  assert.equal(normalizeForMatch('free ( plan )'), 'free (plan)');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: free ( plan )]')[0]), true, 'two words of the compared text');
+  assert.equal(quoteTooShort(quoteAnchors('[quote: free ( plan ) tier]')[0]), false, 'three words of the compared text');
+
+  const short = quotedToken('The free ( plan ) includes support.', 'Plan name. [quote: free ( plan )]');
+  assert.deepEqual(short.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found').map((f) => `${f.severity} ${f.rule}`),
+    ['warn quote-too-short'], `short on the compared text, long on the raw text: warned, and found: ${JSON.stringify(short)}`);
+  const invented = quotedToken('The free ( plan ) includes support.', 'Plan name. [quote: paid ( plan )]');
+  assert.deepEqual(invented.filter((f) => f.rule === 'quote-too-short' || f.rule === 'quote-not-found').map((f) => `${f.severity} ${f.rule}`).sort(),
+    ['fail quote-not-found', 'warn quote-too-short'], `still compared, so an invented one fails: ${JSON.stringify(invented)}`);
+  const long = quotedToken('The free ( plan ) tier includes support.', 'Plan name. [quote: free ( plan ) tier]');
+  assert.ok(!long.some((f) => f.severity !== 'pass'), JSON.stringify(long));
 });
