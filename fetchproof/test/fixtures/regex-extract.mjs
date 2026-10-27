@@ -52,10 +52,14 @@ const INSIDE = String.raw`(?:(?<=<!--(?:(?!-->)[\s\S])*)(?=[\s\S]*?-->)|(?<=<!--
 // is read here.
 const RAW = ['textarea', 'title', 'xmp', 'noembed', 'noframes', 'script', 'style', 'noscript', 'iframe'];
 const SKIP = String.raw`<!--(?:(?!-->)[\s\S])*-->|(?!<!--[\s\S]*?-->)<!--[^>]*>|<(?!!--)[!?][^>]*>`;
-const RAW_INSIDE = String.raw`(?<!^(?:[^<]|<(?![!?]|(?:${RAW.join('|')})\b)|${SKIP}|<\k<n0>\b(?:(?!<\/\k<n0>\b)[\s\S])*<\/(?<n0>${RAW.join('|')})\b)*(?:<[!?][^>]*)?)`;
-const NO_QUOTES = `(?:${INSIDE}|${RAW_INSIDE})`;
+// NO_QUOTES is noQuotes(n), with `n0` named by the caller: `pair` writes NO_QUOTES twice, and
+// Node 22 (the kit's floor, lib/runtime.mjs) refuses one group name twice in a regex even in
+// separate alternatives, which Node 24 accepts (CI on PR #440, 2026-10-27: both test files that
+// import this one failed to load).
+const rawInside = (n) => String.raw`(?<!^(?:[^<]|<(?![!?]|(?:${RAW.join('|')})\b)|${SKIP}|<\k<${n}>\b(?:(?!<\/\k<${n}>\b)[\s\S])*<\/(?<${n}>${RAW.join('|')})\b)*(?:<[!?][^>]*)?)`;
+const noQuotes = (n) => `(?:${INSIDE}|${rawInside(n)})`;
 const QUOTED = String.raw`=[\t\n\f\r ]*"[^"]*"|=[\t\n\f\r ]*'[^']*'`;
-const TAG = new RegExp(String.raw`<!--[\s\S]*?-->|(?=<)${NO_QUOTES}<[^>]+>|<(?=[A-Za-z/])(?:${QUOTED}|[^>])+>|<[^>]+>`, 'gi');
+const TAG = new RegExp(String.raw`<!--[\s\S]*?-->|(?=<)${noQuotes('n0')}<[^>]+>|<(?=[A-Za-z/])(?:${QUOTED}|[^>])+>|<[^>]+>`, 'gi');
 
 // A pair, `<name ...>BODY</name>`, whose opening tag ends where TAG ends one (2026-10-25, review
 // of the B3 fix): the rest of the tag is read inside a lookahead, which JavaScript never
@@ -67,7 +71,7 @@ const TAG = new RegExp(String.raw`<!--[\s\S]*?-->|(?=<)${NO_QUOTES}<[^>]+>|<(?=[
 // `raw`, any other in `rest`; the group not taken is unset, and a backreference to an unset group
 // matches nothing, so `\k<raw>\k<rest>` consumes the one that was read. `(?!NO_QUOTES)` keeps such
 // a tag from backing into the quoted reading.
-const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`(?=<(?:${names})\b)(?:${NO_QUOTES}(?=<(?:${names})\b(?<raw>[^>]*>))|(?!${NO_QUOTES})(?=<(?:${names})\b(?<rest>(?:${QUOTED}|[^>])*>)))<(?<name>${names})\b\k<raw>\k<rest>(?<body>[\s\S]*?)${close}`, 'gi');
+const pair = (names, close = String.raw`<\/\k<name>>`) => new RegExp(String.raw`(?=<(?:${names})\b)(?:${noQuotes('n0')}(?=<(?:${names})\b(?<raw>[^>]*>))|(?!${noQuotes('n1')})(?=<(?:${names})\b(?<rest>(?:${QUOTED}|[^>])*>)))<(?<name>${names})\b\k<raw>\k<rest>(?<body>[\s\S]*?)${close}`, 'gi');
 
 /**
  * The <a> pairs whose opening tag, read as TAG reads it, holds `attribute` (a regex source whose
