@@ -5,6 +5,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Tests: every guard on the gone path, and every comparison in the movement diff, now goes red
+  alone** (PR #440 review round 1). The gone-page test for a 404 recorded before the row's own scrape
+  stayed green with its "after" guard removed, because its copied scrape still asked for the row's
+  URL; it now asks for the URL it is filed under, and a new test pins the "is a fail" guard. Three
+  tests cover `movement.mjs`'s diff: the verdict, the refresh pairs and, in one table-driven test,
+  every other field it compares. AGENTS.md now states ADR-0192's real scope (the space before
+  `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's tests were
+  untouched.
+
 - **Fixed: a refresh that landed on another URL no longer leaves its citation green** (ADR-0193
   decision 8). When a later scrape asked for a cited row's URL and landed elsewhere,
   `evidence-supersession` rechecks the quote against the current row of the landed URL; for a row

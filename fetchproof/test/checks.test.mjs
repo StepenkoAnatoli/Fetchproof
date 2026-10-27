@@ -1389,12 +1389,28 @@ test('cites-gone-page: the ledger\'s order decides "after", not the entries\' da
 test('cites-gone-page: a 404 recorded before the row\'s own scrape is not gone, even as its URL\'s last entry', () => {
   // Defensive: in an honest ledger the cited row's scrape is one of its URL's entries, so the
   // last of them cannot precede it. A row whose own fetch is recorded under a URL that urlKey
-  // does not join to the row's cell is the shape where only the "after" test decides.
+  // does not join to the row's cell is the shape where only the "after" test decides. The copy
+  // asks for the URL it is filed under: one that kept `first`'s command would be a later scrape
+  // that ASKED for the row's URL, which clears a gone state on its own (ADR-0193 decision 8), and
+  // the test would stay green with the "after" test removed (r1 review, BR-3).
   const dir = makePassingProject();
   const first = readCorpus(dir).ledger.entries[0];
+  const moved = 'https://example.invalid/docs/limits-moved';
   appendFetch(dir, { op: 'fail', url: LIMITS_URL, transport: 'stub-transport', cmd: 'stub', error: COLLECTOR_404 });
-  appendFetch(dir, { ...first, url: 'https://example.invalid/docs/limits-moved', at: undefined });
+  appendFetch(dir, { ...first, url: moved, cmd: `stub scrape ${moved}`, at: undefined });
   assert.deepEqual(goneFindings(dir), [], 'a 404 before the row\'s own scrape was read as gone');
+});
+
+test('cites-gone-page: only a fail is gone - a scrape that carries an error text is a page', () => {
+  // Defensive: the collector writes `error` on fail entries only, so with the "is a fail" test
+  // removed every collector-written ledger still read the same and every test stayed green (r1
+  // review, BR-3 follow-up). A URL's last entry that is a scrape got content, whatever it carries.
+  const dir = makePassingProject();
+  assert.equal(refreshAnswered(dir, pageBack).status, 'collected');
+  const refresh = readCorpus(dir).ledger.entries.at(-1);
+  appendFetch(dir, { ...refresh, error: COLLECTOR_404, at: undefined });
+  assert.equal(readCorpus(dir).ledger.entries.at(-1).op, 'scrape', 'the last entry is not a scrape, so this proves nothing');
+  assert.deepEqual(goneFindings(dir), [], 'a scrape carrying an error text was read as a gone page');
 });
 
 test('cites-gone-page: a row whose capture no ledger scrape recorded has no scrape to be after - provenance names it', () => {

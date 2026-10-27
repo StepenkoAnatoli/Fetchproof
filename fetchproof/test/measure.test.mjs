@@ -269,3 +269,75 @@ test('movement.mjs prints an anchor that went not-found to found and one that we
     'anchor docs/decisions/b E-01 [0]: status found -> not-found; found true -> false  "Paid plans start at 20 dollars a month"',
   ]);
 });
+
+// The other two halves of R-06's diff (r1 review, GA-3): the verdict comparison and the refresh
+// pairs had no test, so `if (false)` in place of the verdict diff, or no field compared in a
+// pair's anchors, left this group green. The verdicts' findings are left empty, so only the
+// verdict line can print.
+const movementOf = async () => (await import(pathToFileURL(path.join(path.resolve(KIT_ROOT, '..'),
+  'docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs')).href)).movement;
+
+test('movement.mjs prints a corpus whose verdict went PASS to FAIL and one that went FAIL to PASS, and nothing for one that stayed', async () => {
+  const movement = await movementOf();
+  const verdict = (corpus, comparablePass) => ({ corpus, rows: 1, quotedRows: 1, anchors: 1, unreadableMarkers: 0, comparablePass, findings: [] });
+  const base = { verdicts: [verdict('docs/decisions/a', true), verdict('docs/decisions/b', false), verdict('docs/decisions/c', true)], anchors: [], superseded: [] };
+  const now = { ...base, verdicts: [verdict('docs/decisions/a', false), verdict('docs/decisions/b', true), verdict('docs/decisions/c', true)] };
+  assert.deepEqual(movement(base, base), [], 'a baseline compared with itself must not move');
+  assert.deepEqual(movement(base, now), [
+    'corpus docs/decisions/a: verdict PASS -> FAIL',
+    'corpus docs/decisions/b: verdict FAIL -> PASS',
+  ]);
+});
+
+test('movement.mjs prints a refresh whose old quote went not-found to found in the new capture and one that went found to not-found, and nothing for one that stayed', async () => {
+  const movement = await movementOf();
+  const pair = (corpus, quote, foundInNew) => ({ corpus, old: 'E-01', new: 'E-02', oldCapture: 'research/raw/old.md', newCapture: 'research/raw/new.md',
+    citedBy: ['U-1'], anchors: [{ anchor: 0, quote, tooShort: false, foundInNew }] });
+  const base = {
+    verdicts: [], anchors: [],
+    superseded: [pair('docs/decisions/a', 'The free plan allows 10 requests per minute', false),
+      pair('docs/decisions/b', 'Paid plans start at 20 dollars a month', true),
+      pair('docs/decisions/c', 'The limit resets every hour on the hour', true)],
+  };
+  const now = {
+    ...base,
+    superseded: [pair('docs/decisions/a', 'The free plan allows 10 requests per minute', true),
+      pair('docs/decisions/b', 'Paid plans start at 20 dollars a month', false),
+      pair('docs/decisions/c', 'The limit resets every hour on the hour', true)],
+  };
+  assert.deepEqual(movement(base, base), [], 'a baseline compared with itself must not move');
+  assert.deepEqual(movement(base, now), [
+    'refresh docs/decisions/a E-01 [0]: foundInNew false -> true  "The free plan allows 10 requests per minute"',
+    'refresh docs/decisions/b E-01 [0]: foundInNew true -> false  "Paid plans start at 20 dollars a month"',
+  ]);
+});
+
+// Every other comparison in movement() (r1 fix review, MX1-MX7): each case changes one field and
+// expects exactly the line that field prints, so switching any one comparison off turns its case red.
+test('movement.mjs prints each other field it compares: a corpus added, a count, a finding, a refresh\'s replacement, its citers, an anchor added, tooShort', async () => {
+  const movement = await movementOf();
+  const A = 'docs/decisions/a';
+  const Q = 'The free plan allows 10 requests per minute';
+  const verdict = (over = {}) => ({ corpus: A, rows: 1, quotedRows: 1, anchors: 1, unreadableMarkers: 0, comparablePass: true, findings: [], ...over });
+  const pair = (over = {}) => ({ corpus: A, old: 'E-01', new: 'E-02', oldCapture: 'research/raw/old.md', newCapture: 'research/raw/new.md',
+    citedBy: ['U-1'], anchors: [{ anchor: 0, quote: Q, tooShort: false, foundInNew: true }], ...over });
+  const finding = { check: 'evidence-supersession', rule: 'cites-gone-page', severity: 'fail', row: 'U-1' };
+  const corpus = (base, now) => [{ verdicts: base, anchors: [], superseded: [] }, { verdicts: now, anchors: [], superseded: [] }];
+  const refresh = (base, now) => [{ verdicts: [], anchors: [], superseded: base }, { verdicts: [], anchors: [], superseded: now }];
+  const cases = [
+    ['MX6 a corpus added', corpus([], [verdict()]), [`corpus ${A}: added (not in the baseline)`]],
+    ['MX2 the count fields', corpus([verdict()], [verdict({ rows: 2, unreadableMarkers: 3 })]),
+      [`corpus ${A}: rows 1 -> 2`, `corpus ${A}: unreadableMarkers 0 -> 3`]],
+    ['MX3 a finding added', corpus([verdict()], [verdict({ findings: [finding] })]),
+      [`corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1`]],
+    ['MX4 the replacing row', refresh([pair()], [pair({ new: 'E-03' })]), [`refresh ${A} E-01: superseded by E-02 -> E-03`]],
+    ['MX5 the citers', refresh([pair()], [pair({ citedBy: [] })]), [`refresh ${A} E-01: cited by U-1 -> none`]],
+    ['MX7 an anchor added to a refresh', refresh([pair({ anchors: [] })], [pair()]), [`refresh ${A} E-01 [0]: anchor added, foundInNew true "${Q}"`]],
+    ['MX1 tooShort', refresh([pair()], [pair({ anchors: [{ anchor: 0, quote: Q, tooShort: true, foundInNew: true }] })]),
+      [`refresh ${A} E-01 [0]: tooShort false -> true  "${Q}"`]],
+  ];
+  for (const [what, [base, now], lines] of cases) {
+    assert.deepEqual(movement(base, base), [], `${what}: a baseline compared with itself must not move`);
+    assert.deepEqual(movement(base, now), lines, `${what}: not printed as it moved`);
+  }
+});

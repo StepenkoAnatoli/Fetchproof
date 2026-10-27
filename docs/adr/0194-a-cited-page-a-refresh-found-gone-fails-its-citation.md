@@ -82,8 +82,9 @@ moves no committed verdict.
    `lib/fetch-failure.mjs`, which imports nothing; `goneStatus` is the gate's question over it.
    The rate-limit test `standingFailure` needs moves with it as `isRateLimited`, and
    `firecrawl.mjs`'s `rateLimitWaitMs` asks it first, so the wait loop, the collector's memory
-   and the gate have one answer. The collector's behaviour is unchanged, and its tests are
-   untouched.
+   and the gate have one answer. The collector's behaviour is unchanged, and the move changed
+   none of its tests; a later review added one transient case to them (709a3ac, Phase 4b: a 500
+   is asked again, not remembered as a refusal) and named it in that assertion's message.
 
 ## Rejected alternatives
 
