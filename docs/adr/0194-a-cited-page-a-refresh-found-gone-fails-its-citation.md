@@ -7,7 +7,7 @@
   out of `fetchproof/lib/collect.mjs`), `fetchproof/lib/firecrawl.mjs` (`rateLimitWaitMs` asks
   the shared `isRateLimited`)
 - **Prompted by:** plan v0.4 (`fetchproof-reasoning-layer-plan-2.md` §2 and §8, owner-approved
-  2026-10-25), run `docs/orchestration/2026-10-25-quote-level-refresh/` (R-10, Mandate C1)
+  2026-10-25), delivered in PR #440
 - **Extends:** ADR-0026 (a refresh triggers claim review), ADR-0100 and ADR-0174 (what the
   collector reads as gone or refused)
 - **Lifts the hold (ADR-0157) and the freeze (ADR-0117)** for this one item, by the owner's ruling of

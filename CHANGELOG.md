@@ -24,6 +24,13 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   the movement line. Re-measured at ab2e605, `verdicts.json` gains `transport` on 57 warnings in 12 corpora and
   nothing else moves; the other three files are byte-identical. Two tests.
 
+- **Fixed: tracked docs no longer cite the uncommitted run folder** (PR #440 review round 2, BT2-3). ADR-0193,
+  ADR-0194, the decisions index, the first quoted refresh's `REFRESH-RECORD.md` and the recheck study's `MAP.md`
+  cited the 2026-10-25 quote-level-refresh run folder, which is never committed and so in no clone; they now cite
+  PR #440 and say in words what the requirement and Mandate IDs meant. No decision changed. The recheck study's
+  `PROTOCOL.md` keeps its provenance line, because its amendment rule does not cover it; that line is recorded for
+  later.
+
 - **Fixed: a refresh that landed on another URL no longer leaves its citation green** (ADR-0193
   decision 8). When a later scrape asked for a cited row's URL and landed elsewhere,
   `evidence-supersession` rechecks the quote against the current row of the landed URL; for a row

@@ -7,8 +7,9 @@
   `cites-superseded-row`'s detail; since 2026-10-26 also a citation whose refresh landed on
   another URL, decision 8)
 - **Prompted by:** plan v0.4 (`fetchproof-reasoning-layer-plan-2.md` §7, owner-approved
-  2026-10-25), run `docs/orchestration/2026-10-25-quote-level-refresh/` (R-11, R-12, R-13, Mandate
-  C3), and the first real quoted refresh, `docs/decisions/2026-10-25-first-quoted-refresh/`
+  2026-10-25), delivered in PR #440, and the first real quoted refresh,
+  `docs/decisions/2026-10-25-first-quoted-refresh/`, which this decision's tests read as the real
+  fixture
 - **Extends:** ADR-0026 (a refresh triggers claim review), ADR-0191 (the short-quote floor on the
   compared text), ADR-0194 (a cited page a refresh found gone), ADR-0140 (`sourceSha256`)
 - **Lifts the hold (ADR-0157) and the freeze (ADR-0117)** for this one item, by the owner's ruling of

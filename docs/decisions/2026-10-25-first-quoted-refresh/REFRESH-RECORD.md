@@ -3,8 +3,7 @@
 This project is a copy of `docs/decisions/2026-09-28-warc-export/` (its tracked files at
 `ab2e605`), refreshed once on 2026-10-25 so the kit has a real refresh with quoted rows behind
 it - the case ADR-0193's quote-level recheck was designed against. The original project stays
-untouched; this copy is the fixture (run `docs/orchestration/2026-10-25-quote-level-refresh/`,
-units U7 and U8).
+untouched; this copy is the fixture ADR-0193's tests read (PR #440).
 
 ## What was run
 

@@ -57,9 +57,8 @@ is not enough.
 - **D-11 (COVERED, U-1):** Added for this topic: the plan's optional source for task
   material.
 
-Classified 2026-10-25 by the pre-registration unit (U5) of run
-`docs/orchestration/2026-10-25-quote-level-refresh/`, on the collector PC with no
-collection budget: the map was seeded with `decompose.mjs --dry-run` (no gathering), so the
+Classified 2026-10-25 when this study was pre-registered (PR #440), on the collector PC with
+no collection budget: the map was seeded with `decompose.mjs --dry-run` (no gathering), so the
 candidate material below is empty and both unknowns are KNOWN-UNKNOWN with day-one steps.
 
 ## Candidate material
