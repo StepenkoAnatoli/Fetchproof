@@ -1,8 +1,8 @@
 # Refresh baseline: what the gate says about every corpus, before the quote-level refresh
 
 **Status: baseline taken at `ab2e605` (2026-10-25), the commit the quote-level refresh run
-starts from.** Plan: `fetchproof-reasoning-layer-plan-2.md` v0.4, §4.2-4.3 (requirements
-R-05, R-06 of `docs/orchestration/2026-10-25-quote-level-refresh/`).
+starts from.** Plan: `fetchproof-reasoning-layer-plan-2.md` v0.4, §4.2-4.3 (PR #440: every
+corpus's verdict and per-anchor table, and `movement.mjs`, which re-runs it).
 
 ## Why it exists
 
@@ -25,7 +25,7 @@ evidence table, not a corpus.
 | File | One record per | Holds |
 |---|---|---|
 | `summary.json` | the run | the commit measured, whether the library and corpora were clean, the counts below, the exclusion list |
-| `verdicts.json` | corpus | rows, quoted rows, anchors, unreadable markers, the verdict, and each finding's check, rule, severity and row (or file, or superseded/by) |
+| `verdicts.json` | corpus | rows, quoted rows, anchors, unreadable markers, the verdict, and each finding's fields except its prose and line: check, rule, severity, row or file, and whichever of superseded/by, cited/status, asked/landed, capture, transport, kind or any later field it carries |
 | `anchors.json` | `[quote: ...]` anchor | corpus, row, anchor index, quote, capture, `tooShort`, `found`, and `status` - the gate's outcome |
 | `superseded.json` | refresh (`supersededRows` pair) | old row, new row, both captures, the unknowns citing the old row, and each old anchor's `tooShort` and `foundInNew` |
 
@@ -38,8 +38,30 @@ evidence table, not a corpus.
 - **The verdict** is `runPreflight`'s, in process, with the machine pinned: `evidencePolicy`
   and `maxAgeDays` are the kit's defaults (`pluralist`, 180) and the local `core.hooksPath` is
   taken as unset, so a strict machine and a pluralist one record the same baseline.
-- A finding's prose (`detail`) and line are not recorded: the prose carries ages in days, and
-  neither says anything the check, rule and row do not.
+- A finding is recorded with every field a check puts on it except two, which `movement.mjs`
+  names in `NOT_IDENTIFYING` with the reason:
+  - its prose (`detail`), which carries ages in days;
+  - its `line`, the line the finding points at in its own file: `DISCOVERY.md` for an unknown,
+    `EVIDENCE.md` for an evidence row, `MAP.md` for a subtopic, the ledger for a chain, capture
+    or prior problem, the named artifact for a corpus-shape problem. An edit above that line
+    moves it while the gate says the same. One consequence: `provenance/chain-intact` names no
+    row or file, so two broken chain entries record as one finding counted twice.
+
+  Every other field is what the finding is about: check, rule, severity, row or file; the
+  replaced row and its replacement (`superseded`, `by`); for `cites-gone-page`, the gone page and
+  its HTTP status (`cited`, `status`); for a moved citation's reopen or pass, the address the
+  refresh asked for and the one it landed on (`asked`, `landed`); for `quote-survived-refresh`,
+  the capture the pass rests on (`capture`); for `transport-not-metered`, the transport that
+  fetched the row (`transport`); for `body-unmodified`, what happened to the capture (`kind`:
+  `modified`, `line-endings` or `unhashed`). A field a check adds later is recorded without an
+  edit here. None of these carries a date or an absolute path.
+
+  Until 2026-10-27 the script recorded a fixed list of fields instead, and the seven fields
+  from `cited` on were not on it, so a gone page changing from E-01 to E-02 under the same
+  unknown moved nothing (PR #440 review round 2, BR-1 and its fix review). The baseline was
+  re-measured at `ab2e605` that day: `verdicts.json` gained `transport` on the 57
+  `transport-not-metered` warnings in 12 corpora and changed nothing else; the other three
+  files are byte-identical.
 
 ## The counts at `ab2e605`
 
@@ -82,7 +104,8 @@ node docs/measurements/2026-10-refresh-baseline/movement.mjs --write    # regene
 Compare exits 0 with `no movement`, or 1 and one line per movement:
 
 - `anchor <corpus> <row> [<n>]: status found -> quote-too-short; tooShort false -> true  "<quote>"`
-- `corpus <corpus>: verdict PASS -> FAIL`, `corpus <corpus>: finding + warn citations/quote-too-short E-02`
+- `corpus <corpus>: verdict PASS -> FAIL`, `corpus <corpus>: finding + warn citations/quote-too-short E-02`,
+  `corpus <corpus>: finding - fail evidence-supersession/cites-gone-page U-1 cited E-01 (HTTP 404)`
 - `refresh <corpus> <old row> [<n>]: foundInNew false -> true  "<quote>"`
 
 Exit 2 means the measurement could not be taken (no git, a baseline file missing or not JSON,

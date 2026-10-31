@@ -115,7 +115,42 @@ function rowKeys(rows) {
   });
 }
 
-const FINDING_KEYS = ['check', 'rule', 'severity', 'row', 'file', 'superseded', 'by'];
+// What a finding is about: every field a check puts on it except the ones named here, each with
+// why. Until 2026-10-27 the script kept a list of the fields to record instead, and each field a
+// check added after the list was written was dropped: `cites-gone-page`'s gone page and HTTP
+// status (`cited`, `status`), a moved citation's `asked` and `landed`, `quote-survived-refresh`'s
+// `capture`, `transport-not-metered`'s `transport`, `body-unmodified`'s `kind` - so U-1's gone page
+// changing from E-01 to E-02 was "no movement" (r2 review, BR-1, and its fix review, P1). A field
+// that carries prose, a day count or a line number is named here before a check emits it.
+const NOT_IDENTIFYING = Object.freeze({
+  detail: 'prose: its wording, and "retrieved N days ago", which moves with the calendar',
+  line: "a line number in the finding's own file (DISCOVERY.md, EVIDENCE.md, MAP.md or the ledger): an edit above it moves it while the gate says the same",
+});
+
+// The order fields are written, sorted and compared in. It fixes order, never what is kept: a
+// field not named here is recorded after these, by name. Each field was appended when it was
+// added, so a finding recorded before it keeps its place and its bytes.
+const FIELD_ORDER = ['check', 'rule', 'severity', 'row', 'file', 'superseded', 'by', 'cited', 'status', 'asked', 'landed', 'capture', 'transport', 'kind'];
+
+// The one test of whether a field is recorded, so the record, the compare and the printed line
+// cannot disagree about a field. `excluded` is the record's own mark (recordFinding).
+const identifying = (k) => !Object.hasOwn(NOT_IDENTIFYING, k) && k !== 'excluded';
+const PLACED = FIELD_ORDER.filter(identifying);
+/** A finding's identifying fields outside FIELD_ORDER, by name. */
+const extraFields = (f) => Object.keys(f).filter((k) => !PLACED.includes(k) && identifying(k)).sort(byText);
+
+/** One finding as the baseline records it: every field but the NOT_IDENTIFYING ones, in FIELD_ORDER. */
+export function recordFinding(f) {
+  const out = {};
+  for (const k of [...PLACED, ...extraFields(f)]) if (f[k] !== undefined && f[k] !== null && f[k] !== '') out[k] = f[k];
+  const why = excludedWhy(f);
+  if (why) out.excluded = why;
+  return out;
+}
+
+/** A recorded finding's identity: the FIELD_ORDER fields by place, then any other field by name. */
+const findingKey = (f) => [...PLACED.map((k) => (f[k] === undefined ? '' : String(f[k]))),
+  ...extraFields(f).map((k) => `${k}=${JSON.stringify(f[k])}`)].join('\t');
 
 function measureOne(rel) {
   const root = rel === '.' ? REPO : resolve(REPO, rel);
@@ -133,14 +168,8 @@ function measureOne(rel) {
   const verdict = runPreflight(root, { context });
   const order = (f) => CHECK_NAMES.indexOf(f.check);
   const findings = verdict.findings
-    .map((f) => {
-      const out = {};
-      for (const k of FINDING_KEYS) if (f[k] !== undefined && f[k] !== null && f[k] !== '') out[k] = f[k];
-      const why = excludedWhy(f);
-      if (why) out.excluded = why;
-      return out;
-    })
-    .sort((a, b) => order(a) - order(b) || FINDING_KEYS.reduce((c, k) => c || byText(String(a[k] ?? ''), String(b[k] ?? '')), 0));
+    .map(recordFinding)
+    .sort((a, b) => order(a) - order(b) || byText(findingKey(a), findingKey(b)));
 
   const keys = rowKeys(corpus.evidence);
   const anchors = [];
@@ -271,8 +300,14 @@ function readBaseline() {
 
 const show = (v) => (v === null || v === undefined ? 'none' : String(v));
 const clip = (s) => (s.length > 70 ? `${s.slice(0, 67)}...` : s);
-const findingKey = (f) => FINDING_KEYS.map((k) => (f[k] === undefined ? '' : String(f[k]))).join('\t');
-const findingText = (f) => `${f.severity} ${f.check}/${f.rule}${f.row ? ` ${f.row}` : ''}${f.file ? ` ${f.file}` : ''}${f.superseded ? ` (superseded ${f.superseded} by ${f.by})` : ''}`;
+// The fields findingText words itself. Every other recorded field prints as `name value`, so the
+// - and + lines of a finding that moved in any field never read as the same finding twice.
+const WORDED = new Set(['severity', 'check', 'rule', 'row', 'file', 'superseded', 'by', 'cited', 'status']);
+const findingText = (f) => `${f.severity} ${f.check}/${f.rule}${f.row ? ` ${f.row}` : ''}${f.file ? ` ${f.file}` : ''}`
+  + `${f.superseded ? ` (superseded ${f.superseded}${f.by ? ` by ${f.by}` : ''})` : ''}`
+  + `${f.cited ? ` cited ${f.cited}` : ''}${f.status !== undefined ? ` (HTTP ${f.status})` : ''}`
+  + [...PLACED, ...extraFields(f)].filter((k) => !WORDED.has(k) && f[k] !== undefined)
+    .map((k) => ` ${k} ${typeof f[k] === 'string' ? f[k] : JSON.stringify(f[k])}`).join('');
 
 function counts(list) {
   const m = new Map();

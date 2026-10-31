@@ -236,7 +236,7 @@ test('movement.mjs can be imported from a process whose argv[1] names no file', 
   const code = `const m = await import(${JSON.stringify(url)}); process.stdout.write(Object.keys(m).sort().join(','));`;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code, 'no-such-file-here'], { cwd: tempDir('fp-movement-import-'), encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, 'measureAll,movement');
+  assert.equal(r.stdout, 'measureAll,movement,recordFinding');
   assert.equal(r.stderr, '');
 });
 
@@ -339,5 +339,104 @@ test('movement.mjs prints each other field it compares: a corpus added, a count,
   for (const [what, [base, now], lines] of cases) {
     assert.deepEqual(movement(base, base), [], `${what}: a baseline compared with itself must not move`);
     assert.deepEqual(movement(base, now), lines, `${what}: not printed as it moved`);
+  }
+});
+
+// What a finding is about can live outside check, rule, severity and row (r2 review, BR-1, and
+// its fix review, P1): `cites-gone-page` names the gone page in `cited` and its HTTP `status`, a
+// moved citation the move in `asked` and `landed`, `quote-survived-refresh` the capture it rests
+// on in `capture`, `transport-not-metered` the transport in `transport` (its only difference
+// between "no credential" and "not the metered CLI"), `body-unmodified` what happened to the
+// capture in `kind`. Until 2026-10-27 the script recorded and compared none of them, so U-1's gone
+// page changing from E-01 to E-02 printed nothing. Each case passes a finding as a check emits it,
+// prose and line included, through the record step and the compare, and changes one field.
+test('movement.mjs prints a finding whose gone page, HTTP status, asked or landed address, surviving capture, transport or provenance kind changed', async () => {
+  const { movement, recordFinding } = await import(pathToFileURL(path.join(path.resolve(KIT_ROOT, '..'),
+    'docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs')).href);
+  const A = 'docs/decisions/a';
+  const emitted = (f) => recordFinding({ detail: 'retrieved 3 days ago', line: 7, ...f });
+  const verdict = (f) => ({ corpus: A, rows: 2, quotedRows: 0, anchors: 0, unreadableMarkers: 0, comparablePass: false, findings: [emitted(f)] });
+  const gone = { check: 'evidence-supersession', rule: 'cites-gone-page', severity: 'fail', row: 'U-1', cited: 'E-01', status: 404 };
+  const moved = { check: 'evidence-supersession', rule: 'cites-superseded-row', severity: 'fail', row: 'U-1', superseded: 'E-01', by: 'E-02',
+    asked: 'https://example.invalid/docs/limits', landed: 'https://example.invalid/docs/rate-limits' };
+  const survived = { check: 'evidence-supersession', rule: 'quote-survived-refresh', severity: 'pass', row: 'U-1', superseded: 'E-01', by: 'E-02',
+    capture: 'research/raw/limits-2.md' };
+  // A moved reopen with no row naming the landed capture carries no `by` (checks.mjs movedCitation).
+  const movedUnrecorded = { ...moved };
+  delete movedUnrecorded.by;
+  const notMetered = { check: 'transport-provenance', rule: 'transport-not-metered', severity: 'warn', row: 'E-02', transport: 'firecrawl-cli-anonymous' };
+  const bodyEdited = { check: 'provenance', rule: 'body-unmodified', severity: 'fail', file: 'research/raw/limits.md', kind: 'modified' };
+  const cases = [
+    ['cited', gone, { cited: 'E-02' }, [
+      `corpus ${A}: finding - fail evidence-supersession/cites-gone-page U-1 cited E-01 (HTTP 404)`,
+      `corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1 cited E-02 (HTTP 404)`]],
+    ['status', gone, { status: 410 }, [
+      `corpus ${A}: finding - fail evidence-supersession/cites-gone-page U-1 cited E-01 (HTTP 404)`,
+      `corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1 cited E-01 (HTTP 410)`]],
+    ['asked', moved, { asked: 'https://example.invalid/docs/quotas' }, [
+      `corpus ${A}: finding - fail evidence-supersession/cites-superseded-row U-1 (superseded E-01 by E-02) asked https://example.invalid/docs/limits landed https://example.invalid/docs/rate-limits`,
+      `corpus ${A}: finding + fail evidence-supersession/cites-superseded-row U-1 (superseded E-01 by E-02) asked https://example.invalid/docs/quotas landed https://example.invalid/docs/rate-limits`]],
+    ['landed', moved, { landed: 'https://example.invalid/docs/quotas' }, [
+      `corpus ${A}: finding + fail evidence-supersession/cites-superseded-row U-1 (superseded E-01 by E-02) asked https://example.invalid/docs/limits landed https://example.invalid/docs/quotas`,
+      `corpus ${A}: finding - fail evidence-supersession/cites-superseded-row U-1 (superseded E-01 by E-02) asked https://example.invalid/docs/limits landed https://example.invalid/docs/rate-limits`]],
+    ['capture', survived, { capture: 'research/raw/limits-3.md' }, [
+      `corpus ${A}: finding - pass evidence-supersession/quote-survived-refresh U-1 (superseded E-01 by E-02) capture research/raw/limits-2.md`,
+      `corpus ${A}: finding + pass evidence-supersession/quote-survived-refresh U-1 (superseded E-01 by E-02) capture research/raw/limits-3.md`]],
+    ['asked, with no landed row (no "by undefined")', movedUnrecorded, { asked: 'https://example.invalid/docs/quotas' }, [
+      `corpus ${A}: finding - fail evidence-supersession/cites-superseded-row U-1 (superseded E-01) asked https://example.invalid/docs/limits landed https://example.invalid/docs/rate-limits`,
+      `corpus ${A}: finding + fail evidence-supersession/cites-superseded-row U-1 (superseded E-01) asked https://example.invalid/docs/quotas landed https://example.invalid/docs/rate-limits`]],
+    ['transport', notMetered, { transport: 'http-keyless' }, [
+      `corpus ${A}: finding - warn transport-provenance/transport-not-metered E-02 transport firecrawl-cli-anonymous`,
+      `corpus ${A}: finding + warn transport-provenance/transport-not-metered E-02 transport http-keyless`]],
+    ['kind', bodyEdited, { kind: 'line-endings' }, [
+      `corpus ${A}: finding + fail provenance/body-unmodified research/raw/limits.md kind line-endings`,
+      `corpus ${A}: finding - fail provenance/body-unmodified research/raw/limits.md kind modified`]],
+  ];
+  for (const [what, f, change, lines] of cases) {
+    const base = { verdicts: [verdict(f)], anchors: [], superseded: [] };
+    const now = { verdicts: [verdict({ ...f, ...change })], anchors: [], superseded: [] };
+    assert.deepEqual(movement(base, base), [], `${what}: a baseline compared with itself must not move`);
+    assert.deepEqual(movement(base, now), lines, `${what}: a finding whose ${what} changed is not printed as it moved`);
+  }
+});
+
+// The class behind BR-1 (r2 fix review, P1): the script kept a list of the fields to record, so
+// each field a check added after the list was written was dropped without a word - seven of them
+// by 40205f1. Now a field is recorded unless the script names it as not what a finding is about:
+// its prose (`detail`) and its `line`. The finding below carries every field a check in
+// checks.mjs puts on a finding at 40205f1, `promoted` (preflight.mjs, absent from a measurement
+// because the policy is pinned) and one field no check emits yet. Going back to a list of fields
+// to keep in `recordFinding`, or naming one more field as not identifying, turns this red. No test
+// runs `measureOne`, so a list put back there instead stays green here.
+test('movement.mjs records and compares every field a finding carries except its prose and line, including one no check emits yet', async () => {
+  const { movement, recordFinding } = await import(pathToFileURL(path.join(path.resolve(KIT_ROOT, '..'),
+    'docs', 'measurements', '2026-10-refresh-baseline', 'movement.mjs')).href);
+  const identifying = {
+    check: 'transport-provenance', rule: 'transport-not-metered', severity: 'warn', row: 'E-02', file: 'research/raw/limits.md',
+    superseded: 'E-01', by: 'E-03', cited: 'E-04', status: 410, asked: 'https://example.invalid/docs/limits',
+    landed: 'https://example.invalid/docs/rate-limits', capture: 'research/raw/limits-2.md', transport: 'http-keyless',
+    kind: 'line-endings', notYetEmitted: 'first', promoted: 'strict',
+  };
+  const emitted = { detail: 'E-02 was retrieved 3 days ago', line: 6, ...identifying };
+  const recorded = recordFinding(emitted);
+  assert.deepEqual(recorded, identifying, 'the record keeps every field but detail and line');
+  // The written order: the fields the script knows first, in the order they were added, then any
+  // other by name - so a baseline written before a field existed keeps its bytes.
+  assert.deepEqual(Object.keys(recorded), ['check', 'rule', 'severity', 'row', 'file', 'superseded', 'by', 'cited', 'status',
+    'asked', 'landed', 'capture', 'transport', 'kind', 'notYetEmitted', 'promoted']);
+
+  const A = 'docs/decisions/a';
+  const at = (f) => ({ verdicts: [{ corpus: A, rows: 2, quotedRows: 0, anchors: 0, unreadableMarkers: 0, comparablePass: false, findings: [recordFinding(f)] }],
+    anchors: [], superseded: [] });
+  const base = at(emitted);
+  assert.deepEqual(movement(base, base), [], 'a baseline compared with itself must not move');
+  assert.deepEqual(movement(base, at({ ...emitted, detail: 'E-02 was retrieved 4 days ago', line: 9 })), [],
+    'a finding whose prose and line moved, and nothing else, did not move');
+  for (const field of Object.keys(identifying)) {
+    const changed = typeof identifying[field] === 'number' ? identifying[field] + 1 : `${identifying[field]}-changed`;
+    const lines = movement(base, at({ ...emitted, [field]: changed }));
+    assert.equal(lines.length, 2, `${field}: a finding whose ${field} changed is not printed as it moved: ${JSON.stringify(lines)}`);
+    assert.notEqual(lines[0].replace(/finding [-+]/, ''), lines[1].replace(/finding [-+]/, ''),
+      `${field}: the - and + lines read as the same finding: ${JSON.stringify(lines)}`);
   }
 });

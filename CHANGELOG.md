@@ -14,6 +14,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's tests were
   untouched.
 
+- **Fixed: the refresh baseline's movement script records every field of a finding but its prose and line**
+  (PR #440 review round 2, BR-1). `movement.mjs` recorded and compared a fixed list of fields - check, rule,
+  severity, row, file, superseded/by - so a field a check added later was dropped: a `cites-gone-page` that moved
+  from E-01 to E-02 under the same unknown, a 404 that became a 410, a moved citation's asked or landed address,
+  the capture a `quote-survived-refresh` rests on, the transport of a `transport-not-metered` warning and the kind
+  of a `body-unmodified` failure could all change with "no movement". It now records every field except the two
+  it names as not identifying (`detail`, `line`), so a later field is recorded without an edit, and prints each in
+  the movement line. Re-measured at ab2e605, `verdicts.json` gains `transport` on 57 warnings in 12 corpora and
+  nothing else moves; the other three files are byte-identical. Two tests.
+
 - **Fixed: a refresh that landed on another URL no longer leaves its citation green** (ADR-0193
   decision 8). When a later scrape asked for a cited row's URL and landed elsewhere,
   `evidence-supersession` rechecks the quote against the current row of the landed URL; for a row
