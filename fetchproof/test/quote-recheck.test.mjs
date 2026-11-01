@@ -18,6 +18,7 @@ import { readCorpus, parseCapture } from '../lib/corpus.mjs';
 import { runCheck, supersededRows } from '../lib/checks.mjs';
 import { verifyLedger, appendFetch } from '../lib/provenance.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
+import { command as keylessCommand } from '../lib/http-transport.mjs';
 import { quoteAnchors, quoteTooShort, MAX_QUOTE_GAP } from '../lib/quotes.mjs';
 
 describe('quote-recheck');
@@ -547,11 +548,15 @@ const LANDED = 'https://example.invalid/';
 const RENAMED = 'https://example.invalid/docs/rate-limits';
 const HOMEPAGE = `# Example\n\n${'Welcome to Example. Our products have moved. '.repeat(20)}`;
 
-/** A keyless refresh that asked for `asked` and got its bytes from `landed`; `at` is the ledger's time. */
+/**
+ * A keyless refresh that asked for `asked` and got its bytes from `landed`; `at` is the ledger's time.
+ * Its command is the keyless transport's own `command()`, as its scrape() records it - for a URL
+ * holding whitespace that is a JSON-quoted argument (BR5-1).
+ */
 function redirected(dir, landed, markdown, { asked = LIMITS_URL, date = DAY2, at = `${date}T10:00:00.000Z`, statusCode = 200 } = {}) {
   return collectOne(dir, asked, {
     runScrape: (url) => ({ ok: true, url: landed, title: 'Moved', markdown, statusCode, transport: 'http-keyless',
-      cmd: `http-keyless scrape ${url}`, completeness: 'full', omitted: '' }),
+      cmd: keylessCommand(['scrape', String(url)]), completeness: 'full', omitted: '' }),
     corpus: readCorpus(dir), force: true, type: 'P', transportName: 'http-keyless', date, now: new Date(at),
     maxRateLimitRetries: 0, sleep: () => {},
   });
@@ -619,10 +624,10 @@ test('silent (a): asked for the cited URL, landed on it with a trailing slash - 
 
 const OLD = 'https://example.invalid/limits-old';
 
-/** A quoted project whose cited row E-02 was first captured through a redirect: asked OLD, filed under LIMITS_URL. */
-function redirectFirstProject() {
+/** A quoted project whose cited row E-02 was first captured through a redirect: asked `old`, filed under LIMITS_URL. */
+function redirectFirstProject({ old = OLD } = {}) {
   const dir = quotedProject();
-  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD });
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: old });
   assert.equal(rowOf(dir, 'E-02').url, LIMITS_URL, 'the redirect did not write E-02 under the landed URL, so this proves nothing');
   corrupt(dir, PATHS.evidence, (text) => text.replace(/^(\| E-02 \|[^|]*\|[^|]*\|[^|]*\| )[^|]*( \|)/m, `$1${FINDING} [quote: ${SENTENCE}]$2`));
   corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01', '| CLOSED | E-02'));
@@ -966,6 +971,86 @@ test('a redirect-first row refreshed through another old address, then its first
   const { findings, mine } = about(dir, { cited: 'E-02' });
   assert.deepEqual(mine.map((f) => [f.rule, f.by, f.capture]), [['quote-survived-refresh', 'E-03', entry.file]], JSON.stringify(findings));
   assert.equal(runPreflight(dir, { env: pluralistEnv() }).pass, true);
+});
+
+// Round 5 of the PR review, BR5-1: the old address holds a literal space. The plan check and
+// `new URL` accept it, the collector passes it to the transport verbatim, and the transport's
+// command() JSON-quotes it - which `requestedUrl` split in two, so every read of the address a
+// fetch asked for saw none and took where it landed: BR4-1 and BR3-1 passed again (base had
+// failed both) and decision 8's through-join stayed silent. Each shape must reopen as it does for
+// the same address spelled with %20.
+const SPACED = 'https://example.invalid/limits old';
+
+test('a redirect-first row refreshed through an old address holding a space, which then answered 404 - reopen naming that address, no pass (BR5-1, BR4-1\'s shape)', () => {
+  const dir = redirectFirstProject({ old: SPACED });
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: SPACED, date: DAY3 });
+  assert.equal(readCorpus(dir).ledger.entries.at(-1).cmd, `http-keyless scrape ${JSON.stringify(SPACED)}`, 'the command is not quoted, so this proves nothing');
+  const failed = redirected(dir, LIMITS_URL, '# Not Found', { asked: SPACED, date: '2026-10-24', statusCode: 404 });
+  assert.equal(failed.status, 'failed', 'the collector kept the 404 as a capture');
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by]), [['cites-superseded-row', 'fail', 'E-03']], JSON.stringify(findings));
+  assert.equal(mine[0].detail, `U-1 rests on E-02, which has been superseded by E-03 - a fresher capture of the same URL (${DAY3}). `
+    + 'Re-read it, then move the citation or record why the earlier reading still holds. '
+    + `A refresh on ${failDay(dir)} found ${SPACED}, the address E-03's own fetch asked for, gone (HTTP 404), so no capture of it is current. `
+    + LIMIT_LINE);
+  const verdict = runPreflight(dir, { env: pluralistEnv() });
+  assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['evidence-supersession/cites-superseded-row'], JSON.stringify(verdict.failures));
+});
+
+test('a row first captured through an old address holding a space, whose redirect now lands on another page without the quote, reopens (BR5-1, decision 8\'s through-join)', () => {
+  const dir = redirectFirstProject({ old: SPACED });
+  const { entry } = redirected(dir, RENAMED, HOMEPAGE, { asked: SPACED, date: DAY3 });
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by, f.asked, f.landed]), [['cites-superseded-row', 'fail', 'E-03', SPACED, RENAMED]], JSON.stringify(findings));
+  assert.ok(mine[0].detail.startsWith(`U-1 rests on E-02, and the refresh on ${DAY3} asked for ${SPACED} - the address E-02's own fetch asked for `
+    + `before it landed on ${LIMITS_URL} - and landed on ${RENAMED}, a different page, recorded as E-03. `), mine[0].detail);
+  assert.ok(mine[0].detail.includes(`E-02's quote "${SENTENCE}" is not in E-03's capture ${entry.file}.`), mine[0].detail);
+  const verdict = runPreflight(dir, { env: pluralistEnv() });
+  assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['evidence-supersession/cites-superseded-row'], JSON.stringify(verdict.failures));
+});
+
+test('a redirect-first row refreshed through an old address holding a space, which is then re-pointed to a homepage - reopen naming that move (BR5-1, BR3-1\'s shape)', () => {
+  const dir = redirectFirstProject({ old: SPACED });
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: SPACED, date: DAY3 });
+  redirected(dir, LANDED, HOMEPAGE, { asked: SPACED, date: '2026-10-24' });
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by, f.landed]), [['cites-superseded-row', 'fail', 'E-03', undefined]], JSON.stringify(findings));
+  assert.ok(mine[0].detail.includes(`${LIMITS_URL} has moved on since: the refresh on 2026-10-24 asked for ${SPACED} - the address E-03's own fetch asked for - `
+    + `and landed on ${LANDED}. A move is the newest word on the page, so E-03's capture is not rechecked. `), mine[0].detail);
+  const verdict = runPreflight(dir, { env: pluralistEnv() });
+  assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['evidence-supersession/cites-superseded-row'], JSON.stringify(verdict.failures));
+});
+
+// The fix review of BR5-1 (S2-1): an old address with leading whitespace or a leading C0 control,
+// which the plan check accepts because the URL parser strips it, read as no URL too, and every shape
+// above passed (B and C, for a leading space, newly: the PR head had read a corrupt address there).
+// One table, so a red names every spelling and shape at once.
+test('an old address with leading whitespace or a leading control reopens in each of BR5-1\'s three shapes (BR5-1, fix review S2-1)', () => {
+  const shapes = {
+    A: (dir, old) => {
+      redirected(dir, LIMITS_URL, SAME_PAGE, { asked: old, date: DAY3 });
+      redirected(dir, LIMITS_URL, '# Not Found', { asked: old, date: '2026-10-24', statusCode: 404 });
+    },
+    B: (dir, old) => { redirected(dir, RENAMED, HOMEPAGE, { asked: old, date: DAY3 }); },
+    C: (dir, old) => {
+      redirected(dir, LIMITS_URL, SAME_PAGE, { asked: old, date: DAY3 });
+      redirected(dir, LANDED, HOMEPAGE, { asked: old, date: '2026-10-24' });
+    },
+  };
+  const got = [];
+  const want = [];
+  for (const old of [` ${OLD}`, `\t${OLD}`, `\u0001${OLD}`]) {
+    for (const [shape, run] of Object.entries(shapes)) {
+      const dir = redirectFirstProject({ old });
+      run(dir, old);
+      const { mine } = about(dir, { cited: 'E-02' });
+      // B names the address it asked for; A and C name it in prose, already pinned above.
+      const asked = shape === 'B' ? (mine[0]?.asked ?? null) : old;
+      got.push([shape, old, mine.map((f) => `${f.rule}/${f.severity}`), asked, runPreflight(dir, { env: pluralistEnv() }).pass]);
+      want.push([shape, old, ['cites-superseded-row/fail'], old, false]);
+    }
+  }
+  assert.deepEqual(got, want);
 });
 
 // ---------------------------------------------------------------- the real fixture (Mandate C3)

@@ -5,6 +5,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the gate reads the address a fetch asked for when that URL holds whitespace** (PR #440 review round 5,
+  BR5-1 and its fix review, ADR-0193 decision 8). Every transport writes an argument holding whitespace
+  JSON-quoted, and `requestedUrl` split the command on whitespace before it removed quotes, then tested the scheme
+  on the raw text, so it read such a URL - and one led by a space, a tab or a control character - as none or as a
+  corrupt one, and the gate took the fetch as asking for where it landed: BR4-1's gone read and BR3-1's onward
+  read passed a citation that base failed, and decision 8's through-join stayed silent. It now reads a quoted
+  argument whole and unescaped, and takes as an http(s) URL what the plan check takes as one, returned as the plan
+  wrote it; a quote no transport writes is read as no URL. The capture index's redirect alias reads the same
+  function, so a plan URL holding whitespace that redirected is a cache hit instead of a fetch on every run. No
+  committed command holds a quote or reads differently. Eight tests.
 - **Fixed: a superseded citation no longer passes on a refresh whose old address was found gone since** (PR #440
   review round 4, BR4-1, ADR-0193 decision 8). A row first captured through a redirect, refreshed once through its
   old address (a pass), after which that address answered 404 or 410, kept passing `quote-survived-refresh` on the
