@@ -312,33 +312,113 @@ test('movement.mjs prints a refresh whose old quote went not-found to found in t
   ]);
 });
 
-// Every other comparison in movement() (r1 fix review, MX1-MX7): each case changes one field and
-// expects exactly the line that field prints, so switching any one comparison off turns its case red.
-test('movement.mjs prints each other field it compares: a corpus added, a count, a finding, a refresh\'s replacement, its citers, an anchor added, tooShort', async () => {
+// Every other comparison and print branch in movement() (r1 fix review, MX1-MX7; r3 review,
+// GA3-1, MY1-MY8 and the rest of its inventory; its fix review, FRV-1 to FRV-5): each case makes
+// the smallest change its branch needs - one field, one entry added or removed, or, where the order
+// or an identity key is pinned, one entry added beside one changed - and expects exactly the lines
+// it prints, so switching any one comparison or print branch off turns a case red. The anchor's
+// and the refresh anchor's `tooShort` (R-06) are pinned here in both directions; the anchor's
+// `found` and `status` in the first movement test above.
+test('movement.mjs prints each other field it compares: a corpus added or removed, a count, a finding, an anchor added, removed or changed, a refresh added, removed or changed', async () => {
   const movement = await movementOf();
   const A = 'docs/decisions/a';
   const Q = 'The free plan allows 10 requests per minute';
   const verdict = (over = {}) => ({ corpus: A, rows: 1, quotedRows: 1, anchors: 1, unreadableMarkers: 0, comparablePass: true, findings: [], ...over });
   const pair = (over = {}) => ({ corpus: A, old: 'E-01', new: 'E-02', oldCapture: 'research/raw/old.md', newCapture: 'research/raw/new.md',
     citedBy: ['U-1'], anchors: [{ anchor: 0, quote: Q, tooShort: false, foundInNew: true }], ...over });
+  const pairAnchor = (over = {}) => pair({ anchors: [{ anchor: 0, quote: Q, tooShort: false, foundInNew: true, ...over }] });
+  const anchor = (over = {}) => ({ corpus: A, row: 'E-01', anchor: 0, quote: Q, capture: `${A}/research/raw/page.md`,
+    tooShort: false, found: true, status: 'found', ...over });
   const finding = { check: 'evidence-supersession', rule: 'cites-gone-page', severity: 'fail', row: 'U-1' };
+  // A finding as recordFinding marks a date-dependent rule: recorded, never compared.
+  const dated = { check: 'hygiene', rule: 'future-date', severity: 'fail', row: 'E-01', excluded: 'date' };
   const corpus = (base, now) => [{ verdicts: base, anchors: [], superseded: [] }, { verdicts: now, anchors: [], superseded: [] }];
+  const anchors = (base, now) => [{ verdicts: [], anchors: base, superseded: [] }, { verdicts: [], anchors: now, superseded: [] }];
   const refresh = (base, now) => [{ verdicts: [], anchors: [], superseded: base }, { verdicts: [], anchors: [], superseded: now }];
+  // clip(): a quote of 70 characters prints whole, one of 71 as its first 67 and "...".
+  const Q70 = 'Q'.repeat(70);
+  const Q71 = `${'R'.repeat(67)}TUVW`;
+  const B = 'docs/decisions/b';
+  const S71 = `${'S'.repeat(67)}TUVW`;
+  const R67 = `${'R'.repeat(67)}...`;
+  const S67 = `${'S'.repeat(67)}...`;
   const cases = [
     ['MX6 a corpus added', corpus([], [verdict()]), [`corpus ${A}: added (not in the baseline)`]],
+    ['MY5 a corpus removed', corpus([verdict()], []), [`corpus ${A}: removed (in the baseline, not in the index)`]],
     ['MX2 the count fields', corpus([verdict()], [verdict({ rows: 2, unreadableMarkers: 3 })]),
       [`corpus ${A}: rows 1 -> 2`, `corpus ${A}: unreadableMarkers 0 -> 3`]],
+    ['MY1 the quoted-row and anchor counts', corpus([verdict()], [verdict({ quotedRows: 0, anchors: 2 })]),
+      [`corpus ${A}: quotedRows 1 -> 0`, `corpus ${A}: anchors 1 -> 2`]],
     ['MX3 a finding added', corpus([verdict()], [verdict({ findings: [finding] })]),
       [`corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1`]],
+    ['a finding added twice', corpus([verdict()], [verdict({ findings: [finding, finding] })]),
+      [`corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1 (0 -> 2)`]],
+    ['a finding once more', corpus([verdict({ findings: [finding] })], [verdict({ findings: [finding, finding] })]),
+      [`corpus ${A}: finding + fail evidence-supersession/cites-gone-page U-1 (1 -> 2)`]],
+    // Once in the baseline and twice now, so comparing it on either side alone prints a line too.
+    ['an excluded finding, once and then twice', corpus([verdict({ findings: [dated] })], [verdict({ findings: [dated, dated] })]), []],
+    ['MY3 an anchor added', anchors([], [anchor()]), [`anchor ${A} E-01 [0]: added, found "${Q}"`]],
+    ['MY4 an anchor removed', anchors([anchor()], []), [`anchor ${A} E-01 [0]: removed, was found "${Q}"`]],
+    ['MY2a an anchor that became too short', anchors([anchor()], [anchor({ tooShort: true })]),
+      [`anchor ${A} E-01 [0]: tooShort false -> true  "${Q}"`]],
+    ['MY2a an anchor that stopped being too short', anchors([anchor({ tooShort: true })], [anchor()]),
+      [`anchor ${A} E-01 [0]: tooShort true -> false  "${Q}"`]],
+    ['MY2b an anchor\'s quote', anchors([anchor()], [anchor({ quote: 'The free plan allows 20 requests per minute' })]),
+      [`anchor ${A} E-01 [0]: quote "${Q}" -> "The free plan allows 20 requests per minute"  "The free plan allows 20 requests per minute"`]],
+    ['MY2c an anchor\'s capture', anchors([anchor()], [anchor({ capture: `${A}/research/raw/page-2.md` })]),
+      [`anchor ${A} E-01 [0]: capture ${A}/research/raw/page.md -> ${A}/research/raw/page-2.md  "${Q}"`]],
+    ['an anchor whose capture left the disk (null prints as none)', anchors([anchor()], [anchor({ found: null })]),
+      [`anchor ${A} E-01 [0]: found true -> none  "${Q}"`]],
+    ['an anchor field the baseline did not record (undefined prints as none)', anchors([anchor({ found: undefined })], [anchor()]),
+      [`anchor ${A} E-01 [0]: found none -> true  "${Q}"`]],
+    ['a quote of 70 characters whole and one of 71 clipped', anchors([], [anchor({ quote: Q70 }), anchor({ anchor: 1, quote: Q71 })]),
+      [`anchor ${A} E-01 [0]: added, found "${Q70}"`, `anchor ${A} E-01 [1]: added, found "${'R'.repeat(67)}..."`]],
+    ['MY6 a refresh added', refresh([], [pair()]), [`refresh ${A} E-01: added, superseded by E-02`]],
+    ['MY7 a refresh removed', refresh([pair()], []), [`refresh ${A} E-01: removed, was superseded by E-02`]],
     ['MX4 the replacing row', refresh([pair()], [pair({ new: 'E-03' })]), [`refresh ${A} E-01: superseded by E-02 -> E-03`]],
     ['MX5 the citers', refresh([pair()], [pair({ citedBy: [] })]), [`refresh ${A} E-01: cited by U-1 -> none`]],
+    ['the citers, from none', refresh([pair({ citedBy: [] })], [pair()]), [`refresh ${A} E-01: cited by none -> U-1`]],
     ['MX7 an anchor added to a refresh', refresh([pair({ anchors: [] })], [pair()]), [`refresh ${A} E-01 [0]: anchor added, foundInNew true "${Q}"`]],
-    ['MX1 tooShort', refresh([pair()], [pair({ anchors: [{ anchor: 0, quote: Q, tooShort: true, foundInNew: true }] })]),
-      [`refresh ${A} E-01 [0]: tooShort false -> true  "${Q}"`]],
+    ['MY8 an anchor removed from a refresh', refresh([pair()], [pair({ anchors: [] })]), [`refresh ${A} E-01 [0]: anchor removed "${Q}"`]],
+    ['MX1 tooShort', refresh([pair()], [pairAnchor({ tooShort: true })]), [`refresh ${A} E-01 [0]: tooShort false -> true  "${Q}"`]],
+    ['a refresh whose new capture left the disk (null prints as none)', refresh([pair()], [pairAnchor({ foundInNew: null })]),
+      [`refresh ${A} E-01 [0]: foundInNew true -> none  "${Q}"`]],
+  ['a refresh anchor that stopped being too short', refresh([pairAnchor({ tooShort: true })], [pair()]),
+    [`refresh ${A} E-01 [0]: tooShort true -> false  "${Q}"`]],
+  ['a refresh anchor that moved in two fields', refresh([pair()], [pairAnchor({ tooShort: true, foundInNew: false })]),
+    [`refresh ${A} E-01 [0]: tooShort false -> true; foundInNew true -> false  "${Q}"`]],
+  ['the citers, one for another', refresh([pair()], [pair({ citedBy: ['U-2'] })]), [`refresh ${A} E-01: cited by U-1 -> U-2`]],
+  ['the citers, one more', refresh([pair()], [pair({ citedBy: ['U-1', 'U-2'] })]), [`refresh ${A} E-01: cited by U-1 -> U-1,U-2`]],
+  ['the replacing row, back to an earlier one', refresh([pair({ new: 'E-03' })], [pair()]), [`refresh ${A} E-01: superseded by E-03 -> E-02`]],
+  ['an anchor added not found', anchors([], [anchor({ found: false, status: 'not-found' })]), [`anchor ${A} E-01 [0]: added, not-found "${Q}"`]],
+  ['an anchor removed that was not found', anchors([anchor({ found: false, status: 'not-found' })], []),
+    [`anchor ${A} E-01 [0]: removed, was not-found "${Q}"`]],
+  ['an anchor added to a refresh, not found in the new capture', refresh([pair({ anchors: [] })], [pairAnchor({ foundInNew: false })]),
+    [`refresh ${A} E-01 [0]: anchor added, foundInNew false "${Q}"`]],
+  ['a corpus added that sorts first', corpus([verdict({ corpus: B })], [verdict(), verdict({ corpus: B, rows: 2 })]),
+    [`corpus ${A}: added (not in the baseline)`, `corpus ${B}: rows 1 -> 2`]],
+  ['two rows\' anchor 0 in one corpus, the one added sorting first', anchors([anchor({ row: 'E-02' })], [anchor(), anchor({ row: 'E-02', tooShort: true })]),
+    [`anchor ${A} E-01 [0]: added, found "${Q}"`, `anchor ${A} E-02 [0]: tooShort false -> true  "${Q}"`]],
+  ['two refreshes in one corpus, the one added sorting first',
+    refresh([pair({ old: 'E-03', new: 'E-04' })], [pair(), pair({ old: 'E-03', new: 'E-04', anchors: [{ anchor: 0, quote: Q, tooShort: true, foundInNew: true }] })]),
+    [`refresh ${A} E-01: added, superseded by E-02`, `refresh ${A} E-03 [0]: tooShort false -> true  "${Q}"`]],
+  ['a long quote: an anchor removed', anchors([anchor({ quote: Q71 })], []), [`anchor ${A} E-01 [0]: removed, was found "${R67}"`]],
+  ['a long quote: an anchor\'s quote changed', anchors([anchor({ quote: Q71 })], [anchor({ quote: S71 })]),
+    [`anchor ${A} E-01 [0]: quote "${R67}" -> "${S67}"  "${S67}"`]],
+  ['a long quote: an anchor that moved', anchors([anchor({ quote: Q71 })], [anchor({ quote: Q71, tooShort: true })]),
+    [`anchor ${A} E-01 [0]: tooShort false -> true  "${R67}"`]],
+  ['a long quote: an anchor added to a refresh', refresh([pair({ anchors: [] })], [pairAnchor({ quote: Q71 })]),
+    [`refresh ${A} E-01 [0]: anchor added, foundInNew true "${R67}"`]],
+  ['a long quote: an anchor removed from a refresh', refresh([pairAnchor({ quote: Q71 })], [pair({ anchors: [] })]),
+    [`refresh ${A} E-01 [0]: anchor removed "${R67}"`]],
+  ['a long quote: a refresh anchor that moved', refresh([pairAnchor({ quote: Q71 })], [pairAnchor({ quote: Q71, tooShort: true })]),
+    [`refresh ${A} E-01 [0]: tooShort false -> true  "${R67}"`]],
+  ['a refresh anchor that moved prints its quote now', refresh([pair()], [pairAnchor({ quote: S71, tooShort: true })]),
+    [`refresh ${A} E-01 [0]: tooShort false -> true  "${S67}"`]],
   ];
   for (const [what, [base, now], lines] of cases) {
     assert.deepEqual(movement(base, base), [], `${what}: a baseline compared with itself must not move`);
-    assert.deepEqual(movement(base, now), lines, `${what}: not printed as it moved`);
+    assert.deepEqual(movement(base, now), lines, `${what}: not printed as it moved, or printed though it is not compared`);
   }
 });
 

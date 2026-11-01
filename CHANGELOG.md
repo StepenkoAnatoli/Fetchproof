@@ -18,7 +18,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   stayed green with its "after" guard removed, because its copied scrape still asked for the row's
   URL; it now asks for the URL it is filed under, and a new test pins the "is a fail" guard. Three
   tests cover `movement.mjs`'s diff: the verdict, the refresh pairs and, in one table-driven test,
-  every other field it compares. AGENTS.md now states ADR-0192's real scope (the space before
+  every other comparison and print branch. Round 3 (GA3-1) found ten mutants (eleven comparisons)
+  that still stayed green when switched off: the quoted-row and anchor counts; an anchor's
+  `tooShort`, quote and capture; an anchor, a corpus, a refresh or a refresh's anchor removed; an
+  anchor or a refresh added. Its fix review found more: a refresh anchor's `tooShort` going back, a
+  citer or replacing row swapped, the anchor and refresh identity keys, a value an added or removed
+  entry prints, and the order lines print in. The table now has a row for each, `tooShort` in both
+  directions on both tables; it also covers a finding's repeat count, an excluded finding, a value
+  printed as `none` and a clipped quote. AGENTS.md now states ADR-0192's real scope (the space before
   `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's tests were
   untouched.
 
