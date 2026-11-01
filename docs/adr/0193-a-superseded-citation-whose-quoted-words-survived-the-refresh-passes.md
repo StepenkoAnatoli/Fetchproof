@@ -144,7 +144,10 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
      finding D), and it can only silence a move, never raise one.
    - Silent by design: a trailing slash or `www.` (one urlKey); a redirect-first row refreshed
      from where it landed, or through the redirect when it lands on R's URL again; and a failed
-     fetch, wherever it is filed (ADR-0194's, or nothing).
+     fetch, which is never a move, wherever it is filed (ADR-0194's, or nothing). That last item
+     does not cover a 404 or 410 at the address a move asked for (R2-3), or at the address an
+     ordinary refresh's replacing row N's own fetch asked for (BR4-1), recorded after that fetch:
+     it withholds the pass, as below. The owner ruled that narrowing on 2026-11-01.
    - A 404 on R's URL followed by a scrape that asked for that URL and landed elsewhere is a move,
      not a gone page (ADR-0194). A 404 or 410 recorded after the move, by ADR-0194's ledger rank
      and classification, is still gone, and the move never passes on it. Gone is read at three
@@ -158,6 +161,10 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
      - In the last two `cites-gone-page` stays quiet: it reads R's URL only, and a fail filed
        under another spelling is ADR-0194's alias consequence, unchanged. So "both fail" holds
        for R's URL; for the other two the reopen alone fails the gate.
+     - Known gap, pre-existing at base (a PR follow-up): a 404 or 410 at the address the move's
+       later current row (after `supersededRows`) was fetched through is not read, so the move
+       still passes on that row's capture (PR #440 review round 4, r4-fixrv-a H1, H3); that row's
+       re-point is read (`onward`).
    - A move of a move is not followed, and never passes. When the landed page's current row has
      itself moved since - Y, asked for directly, now lands on Z - the move reopens and says "Y has
      moved on since: the refresh on ... asked for Y and landed on Z". Until round 3 it passed on
@@ -176,6 +183,15 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
      URL), and a move through another address cannot end it. Reading R itself as moved instead - a
      landing on R's URL asked through R's own old address not ending that address's reading - was
      set aside, because it rewrites the second bullet above.
+   - The gone twin of that ordinary-path case, as R2-3 is a move's: when R is not moved and N's own
+     fetch asked for an address other than N's URL, a 404 or 410 filed under that address after N's
+     fetch withholds the pass. The citation reopens `cites-superseded-row` and says "found X, the
+     address N's own fetch asked for, gone (HTTP 404)". Until round 4 of the PR review it passed
+     on N's capture (BR4-1); fixed by the owner's ruling of 2026-11-01. A 404 at an address N did
+     not come through still passes (K), and `cites-gone-page` stays quiet, as for R2-3 (ADR-0194's
+     alias consequence). When that address was both found gone and re-pointed, the later word is
+     named: a scrape that asked for it after the 404 ends the gone state (ADR-0194), and the move
+     is named; a 404 after the re-point is named first, as in a move. Either order reopens.
    - `supersededRows` is unchanged, so the decision 7 readers are.
 
 ## Rejected alternatives

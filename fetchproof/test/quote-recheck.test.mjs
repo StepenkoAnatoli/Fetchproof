@@ -909,6 +909,65 @@ test('a redirect-first row refreshed through its old address, then its URL answe
   assert.ok(!mine[0].detail.includes('has moved on since'), mine[0].detail);
 });
 
+// Round 4 of the PR review, BR4-1: BR3-1's sequence with a deletion instead of a re-point. The
+// refresh through the old address passes (silent (b)); then the old address, still redirecting,
+// answers 404 or 410. The failure is filed under the address it asked for, which the cited row's
+// URL never sees, so until round 4 the citation PASSED on the refresh's capture while the same 404
+// after a refresh that landed elsewhere reopened (R2-3). Gone is read at the address the
+// replacement's own fetch asked for, after that fetch, as R2-3 reads it after a move.
+test('a redirect-first row refreshed through its old address, which then answered 404 or 410 - reopen naming that address, no pass (BR4-1)', () => {
+  for (const statusCode of [404, 410]) {
+    const dir = redirectFirstProject();
+    redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD, date: DAY3 });
+    assert.deepEqual(about(dir, { cited: 'E-02' }).mine.map((f) => f.rule), ['quote-survived-refresh'], 'the refresh alone must pass, or this proves nothing');
+    const failed = redirected(dir, LIMITS_URL, '# Gone', { asked: OLD, date: '2026-10-24', statusCode });
+    assert.equal(failed.status, 'failed', `the collector kept the ${statusCode} as a capture`);
+    assert.equal(readCorpus(dir).ledger.entries.at(-1).url, OLD, 'the failure is not filed under the address it asked for, so this proves nothing');
+    const { findings, mine } = about(dir, { cited: 'E-02' });
+    assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by]), [['cites-superseded-row', 'fail', 'E-03']], `HTTP ${statusCode}: ${JSON.stringify(findings)}`);
+    assert.equal(mine[0].detail, `U-1 rests on E-02, which has been superseded by E-03 - a fresher capture of the same URL (${DAY3}). `
+      + 'Re-read it, then move the citation or record why the earlier reading still holds. '
+      + `A refresh on ${failDay(dir)} found ${OLD}, the address E-03's own fetch asked for, gone (HTTP ${statusCode}), so no capture of it is current. `
+      + LIMIT_LINE);
+    const verdict = runPreflight(dir, { env: pluralistEnv() });
+    assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['evidence-supersession/cites-superseded-row'], JSON.stringify(verdict.failures));
+  }
+});
+
+// BR4-1's gone and BR3-1's move at the one address the replacement's own fetch asked for: the newer
+// word is named. A 404 there ends at the next scrape that asks for it (ADR-0194, `goneSince`), so a
+// re-point after the 404 is the move alone; a 404 after the re-point is gone, named first, as in
+// movedCitation. Either order reopens.
+test('the old address the refresh came through answered 404 and was re-pointed - the later of the two is named, and either order reopens (BR4-1 with BR3-1)', () => {
+  for (const goneFirst of [true, false]) {
+    const dir = redirectFirstProject();
+    redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD, date: DAY3 });
+    const gone = () => redirected(dir, LIMITS_URL, '# Not Found', { asked: OLD, date: '2026-10-23', statusCode: 404 });
+    const repoint = () => redirected(dir, LANDED, HOMEPAGE, { asked: OLD, date: '2026-10-24' });
+    if (goneFirst) { gone(); repoint(); } else { repoint(); gone(); }
+    const { findings, mine } = about(dir, { cited: 'E-02' });
+    assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by]), [['cites-superseded-row', 'fail', 'E-03']], `gone first: ${goneFirst}: ${JSON.stringify(findings)}`);
+    const named = goneFirst ? `${LIMITS_URL} has moved on since: the refresh on 2026-10-24 asked for ${OLD}`
+      : `found ${OLD}, the address E-03's own fetch asked for, gone (HTTP 404)`;
+    const other = goneFirst ? 'gone (HTTP 404)' : 'has moved on since';
+    assert.ok(mine[0].detail.includes(named), `gone first: ${goneFirst}: ${mine[0].detail}`);
+    assert.ok(!mine[0].detail.includes(other), `gone first: ${goneFirst}: ${mine[0].detail}`);
+  }
+});
+
+// The contrast that must stay a pass (decision 8, K): the 404 is at an old address the current
+// row did NOT come through. E-03 asked another address that redirects to the row's URL, so OLD's
+// failure is not E-03's to answer for.
+test('a redirect-first row refreshed through another old address, then its first old address answered 404 - an ordinary pass (BR4-1\'s K)', () => {
+  const dir = redirectFirstProject();
+  const { entry } = redirected(dir, LIMITS_URL, SAME_PAGE, { asked: 'https://example.invalid/limits-legacy', date: DAY3 });
+  const failed = redirected(dir, LIMITS_URL, '# Not Found', { asked: OLD, date: '2026-10-24', statusCode: 404 });
+  assert.equal(failed.status, 'failed', 'the collector kept the 404 as a capture');
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.by, f.capture]), [['quote-survived-refresh', 'E-03', entry.file]], JSON.stringify(findings));
+  assert.equal(runPreflight(dir, { env: pluralistEnv() }).pass, true);
+});
+
 // ---------------------------------------------------------------- the real fixture (Mandate C3)
 //
 // docs/decisions/2026-10-25-first-quoted-refresh is the kit's first refresh of rows that carry

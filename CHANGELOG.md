@@ -5,6 +5,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a superseded citation no longer passes on a refresh whose old address was found gone since** (PR #440
+  review round 4, BR4-1, ADR-0193 decision 8). A row first captured through a redirect, refreshed once through its
+  old address (a pass), after which that address answered 404 or 410, kept passing `quote-survived-refresh` on the
+  refresh's capture: the failure is filed under the address it asked for, which the row's URL never sees. The
+  ordinary path now also reads gone at the address the replacing row's own fetch asked for, after that fetch, as a
+  move does at the address it asked for (R2-3): the citation reopens `cites-superseded-row`, naming that address as
+  found gone. A 404 at an old address the replacing row did not come through still passes. Not covered yet (a
+  follow-up, as at base): a move whose landed page was later fetched through another address that then answered
+  404. Three tests.
+
 - **Fixed: a superseded citation no longer passes on a refresh whose page has moved since** (PR #440 review
   round 3, BR3-1, ADR-0193 decision 8). A row first captured through a redirect, refreshed once through its old
   address (a pass), and then re-pointed to another page kept passing `quote-survived-refresh` on the refresh's

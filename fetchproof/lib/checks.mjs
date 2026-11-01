@@ -723,7 +723,8 @@ function goneAfterScrape(corpus, row, rank, fetches, { findingExempts = true } =
  * (by urlKey) a fail `goneStatus` reads as gone, after ledger position `after`, with no scrape
  * that asked for `url` since? `{ status, day }` or null. `goneAfterScrape` asks it of a row's URL
  * after the row's capture; a moved citation also asks it of the address the move came through,
- * after the move (ADR-0193 decision 8).
+ * after the move, and an ordinary refresh of the address its replacement's own fetch asked for,
+ * after that fetch (`goneThroughOwnAsk`; ADR-0193 decision 8).
  */
 function goneSince(corpus, url, after, fetches) {
   const key = urlKey(url);
@@ -735,6 +736,23 @@ function goneSince(corpus, url, after, fetches) {
   const status = goneStatus(entry.error);
   if (status === null) return null;
   return { status, day: String(entry.at ?? '').slice(0, 10) };
+}
+
+/**
+ * The gone state of the address a row's own fetch asked for, after that fetch, when it is not the
+ * row's URL (urlKey) - a row captured through a redirect: `{ status, day, place }` or null. A
+ * failure is filed under the address it asked for, so `goneAfterScrape`, which reads the row's
+ * URL, never sees it. The ordinary refresh's twin of movedCitation's `goneThrough` (found
+ * 2026-11-01, PR review round 4, BR4-1); like it, only the quote recheck's reason reads it.
+ */
+function goneThroughOwnAsk(corpus, row, rank, fetches) {
+  if (!row?.url) return null;
+  const own = rank.get(row.raw || captureOf(corpus, row)?.file);
+  if (own === undefined) return null;
+  const asked = requestedUrl(corpus.ledger?.entries?.[own]?.cmd);
+  if (!asked || urlKey(asked) === urlKey(row.url)) return null;
+  const gone = goneSince(corpus, asked, own, fetches);
+  return gone && { ...gone, place: `${asked}, the address ${row.id}'s own fetch asked for,` };
 }
 
 /**
@@ -1025,15 +1043,20 @@ function evidenceSupersession(corpus) {
       // redirect-first row refreshed through its plan address, which was later re-pointed. Its own
       // citation is judged by that move; this one is not followed there, and reopens (decision 3's
       // default): a move is the newest word on the page, and a moved row's capture is not rechecked
-      // (found 2026-11-01, PR review round 3, BR3-1: it passed on that capture). Any later ask of the
-      // replacement's URL would be the cited row's own move, judged above, so a move here never
-      // clears `gone`; gone is named first.
-      const onward = gone ? null : movedAfterScrape(corpus, replacement, rank, fetches);
+      // (found 2026-11-01, PR review round 3, BR3-1: it passed on that capture). That address can be
+      // found gone instead - a 404 or 410 filed under it, which the replacement's URL never sees - so
+      // it is read after the replacement's own fetch, as movedCitation's `goneThrough` is read after
+      // a move (round 4, BR4-1: it passed on that capture too). Any later ask of the replacement's
+      // URL would be the cited row's own move, judged above, so a move here never clears the URL's
+      // `gone`; a move through the asked address after its 404 ends that address's (`goneSince`) and
+      // is named. Whatever gone is left is named first.
+      const goneHere = gone ?? goneThroughOwnAsk(corpus, replacement, rank, fetches);
+      const onward = goneHere ? null : movedAfterScrape(corpus, replacement, rank, fetches);
       const recheck = onward
         ? { reason: `${replacement.url} has moved on since: the refresh${onward.day ? ` on ${onward.day}` : ''} asked for ${onward.asked}`
           + (onward.through ? ` - the address ${replacement.id}'s own fetch asked for -` : '')
           + ` and landed on ${onward.landed}. A move is the newest word on the page, so ${replacement.id}'s capture is not rechecked.` }
-        : quoteRecheck(corpus, rank, id, replacement, gone);
+        : quoteRecheck(corpus, rank, id, replacement, goneHere);
       if (recheck.survived) {
         out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
           `${id}'s quoted words occur in ${replacement.id}'s capture ${recheck.file}. `
