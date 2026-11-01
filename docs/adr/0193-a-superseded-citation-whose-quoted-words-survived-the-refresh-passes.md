@@ -165,6 +165,17 @@ The attribution is unmeasured: no real refresh has yet lost a quote.
      Y's gone state (found by the round-3 builder's probe). Following the chain to Z's row was
      set aside: each hop adds a recheck whose wording and silent cases would need their own
      review, and the case needs two redirects of one cited page, none in the committed corpora.
+     The same holds for an ordinary refresh: when R is not moved but the row that superseded it by
+     URL has moved since - a redirect-first row refreshed through its old address, which was then
+     re-pointed - the citation reopens and says "Y has moved on since: the refresh on ... asked for
+     X - the address N's own fetch asked for - and landed on Z", and N's capture is not rechecked. A
+     citation of N is judged by that move instead (in BR3-1's shape, a homepage, it reopened); until
+     round 3 of the PR review a citation of R passed on N's capture (BR3-1). R's citation is not
+     followed to where N landed, so it reopens even when that page holds the quote and a citation of
+     N passes there: decision 3's default. R's own gone state is named first: it is N's too (one
+     URL), and a move through another address cannot end it. Reading R itself as moved instead - a
+     landing on R's URL asked through R's own old address not ending that address's reading - was
+     set aside, because it rewrites the second bullet above.
    - `supersededRows` is unchanged, so the decision 7 readers are.
 
 ## Rejected alternatives

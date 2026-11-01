@@ -852,6 +852,63 @@ test('a redirect-first row moved through its old address, then the old address a
   assert.equal(runPreflight(dir, { env: pluralistEnv() }).pass, false);
 });
 
+// Round 3 of the PR review, BR3-1: a redirect-first row refreshed once through its old address
+// (silent (b), a pass), and then the old address re-pointed to a homepage. The cited row is not
+// moved - a scrape has landed on its URL since (R2-5) - so the ordinary path judged it, and until
+// round 3 it PASSED on the refresh's capture while a citation of that very refresh reopened. A
+// replacement row that has moved since is not rechecked, as in a move of a move (decision 8).
+test('a redirect-first row refreshed through its old address, which is then re-pointed to a homepage - the older citation reopens naming that move, as a citation of the refresh does (BR3-1)', () => {
+  const dir = redirectFirstProject();
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD, date: DAY3 });
+  assert.equal(supersededRows(readCorpus(dir)).get('E-02')?.id, 'E-03', 'E-03 must supersede E-02, or this proves nothing');
+  assert.deepEqual(about(dir, { cited: 'E-02' }).mine.map((f) => f.rule), ['quote-survived-refresh'], 'the refresh alone must pass, or this proves nothing');
+  redirected(dir, LANDED, HOMEPAGE, { asked: OLD, date: '2026-10-24' });
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.severity, f.by, f.landed]), [['cites-superseded-row', 'fail', 'E-03', undefined]], JSON.stringify(findings));
+  assert.ok(mine[0].detail.startsWith(`U-1 rests on E-02, which has been superseded by E-03 - a fresher capture of the same URL (${DAY3}). `
+    + 'Re-read it, then move the citation or record why the earlier reading still holds. '
+    + `${LIMITS_URL} has moved on since: the refresh on 2026-10-24 asked for ${OLD} - the address E-03's own fetch asked for - `
+    + `and landed on ${LANDED}. A move is the newest word on the page, so E-03's capture is not rechecked. `), mine[0].detail);
+  assert.ok(mine[0].detail.endsWith(LIMIT_LINE), mine[0].detail);
+  const verdict = runPreflight(dir, { env: pluralistEnv() });
+  assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['evidence-supersession/cites-superseded-row'], JSON.stringify(verdict.failures));
+  // The same corpus citing the refresh itself: its own move reopens it, as it did before round 3.
+  corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-02', '| CLOSED | E-03'));
+  const refreshed = about(dir, { cited: 'E-03' });
+  assert.deepEqual(refreshed.mine.map((f) => [f.rule, f.by, f.landed]), [['cites-superseded-row', 'E-04', LANDED]], JSON.stringify(refreshed.findings));
+});
+
+// The longer chain BR3-1's breaker suspected and did not run: the refresh through the old address
+// is itself superseded by a direct fetch of the row's URL, and only then is the old address
+// re-pointed. The current row asked for its own URL, so the old address's move is not its own (K).
+test('a redirect-first row refreshed through its old address, then fetched directly, then the old address re-pointed - an ordinary pass on the direct fetch (BR3-1, the longer chain)', () => {
+  const dir = redirectFirstProject();
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD, date: DAY3 });
+  const { entry } = redirected(dir, LIMITS_URL, SAME_PAGE, { asked: LIMITS_URL, date: '2026-10-23' });
+  redirected(dir, LANDED, HOMEPAGE, { asked: OLD, date: '2026-10-24' });
+  assert.equal(supersededRows(readCorpus(dir)).get('E-02')?.id, 'E-04', 'E-04 must supersede E-02, or this proves nothing');
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.by, f.capture, f.landed]), [['quote-survived-refresh', 'E-04', entry.file, undefined]], JSON.stringify(findings));
+  assert.equal(runPreflight(dir, { env: pluralistEnv() }).pass, true);
+});
+
+// The gone interplay: in the ordinary path the replacement shares the cited row's URL, so the row's
+// own gone state is the replacement's too. A later move that asked for that URL would be the cited
+// row's own move (decision 8, judged first), so a move found here came through another address and
+// cannot clear the gone state. Gone is named first, as in a move of a move; both reopen.
+test('a redirect-first row refreshed through its old address, then its URL answered 404, then the old address re-pointed - reopen on the gone page, beside cites-gone-page, no pass', () => {
+  const dir = redirectFirstProject();
+  redirected(dir, LIMITS_URL, SAME_PAGE, { asked: OLD, date: DAY3 });
+  const failed = redirected(dir, LIMITS_URL, '# Not Found', { asked: LIMITS_URL, date: '2026-10-23', statusCode: 404 });
+  assert.equal(failed.status, 'failed', 'the collector kept the 404 as a capture');
+  const day = failDay(dir);
+  redirected(dir, LANDED, HOMEPAGE, { asked: OLD, date: '2026-10-24' });
+  const { findings, mine } = about(dir, { cited: 'E-02' });
+  assert.deepEqual(mine.map((f) => [f.rule, f.severity]), [['cites-superseded-row', 'fail'], ['cites-gone-page', 'fail']], JSON.stringify(findings));
+  assert.ok(mine[0].detail.includes(`A refresh on ${day} found the page gone (HTTP 404), so no capture of it is current.`), mine[0].detail);
+  assert.ok(!mine[0].detail.includes('has moved on since'), mine[0].detail);
+});
+
 // ---------------------------------------------------------------- the real fixture (Mandate C3)
 //
 // docs/decisions/2026-10-25-first-quoted-refresh is the kit's first refresh of rows that carry

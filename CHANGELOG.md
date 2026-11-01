@@ -5,6 +5,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a superseded citation no longer passes on a refresh whose page has moved since** (PR #440 review
+  round 3, BR3-1, ADR-0193 decision 8). A row first captured through a redirect, refreshed once through its old
+  address (a pass), and then re-pointed to another page kept passing `quote-survived-refresh` on the refresh's
+  capture, while a citation of that refresh was judged by the move. The ordinary path now asks whether the
+  replacing row has moved since, as a move of a move does: if it has, the citation reopens `cites-superseded-row`,
+  naming the move, and that capture is not rechecked. A gone page is named first. A refresh that was itself
+  superseded by a direct fetch of the row's URL still passes. Three tests.
+
 - **Tests: every guard on the gone path, and every comparison in the movement diff, now goes red
   alone** (PR #440 review round 1). The gone-page test for a 404 recorded before the row's own scrape
   stayed green with its "after" guard removed, because its copied scrape still asked for the row's

@@ -1021,7 +1021,19 @@ function evidenceSupersession(corpus) {
         out.push(movedCitation(corpus, rank, unknown, id, moved, gone, superseded, fetches));
         continue;
       }
-      const recheck = quoteRecheck(corpus, rank, id, replacement, gone);
+      // The replacement can have moved since, through the address its own fetch asked for - a
+      // redirect-first row refreshed through its plan address, which was later re-pointed. Its own
+      // citation is judged by that move; this one is not followed there, and reopens (decision 3's
+      // default): a move is the newest word on the page, and a moved row's capture is not rechecked
+      // (found 2026-11-01, PR review round 3, BR3-1: it passed on that capture). Any later ask of the
+      // replacement's URL would be the cited row's own move, judged above, so a move here never
+      // clears `gone`; gone is named first.
+      const onward = gone ? null : movedAfterScrape(corpus, replacement, rank, fetches);
+      const recheck = onward
+        ? { reason: `${replacement.url} has moved on since: the refresh${onward.day ? ` on ${onward.day}` : ''} asked for ${onward.asked}`
+          + (onward.through ? ` - the address ${replacement.id}'s own fetch asked for -` : '')
+          + ` and landed on ${onward.landed}. A move is the newest word on the page, so ${replacement.id}'s capture is not rechecked.` }
+        : quoteRecheck(corpus, rank, id, replacement, gone);
       if (recheck.survived) {
         out.push(finding('pass', 'evidence-supersession', 'quote-survived-refresh',
           `${id}'s quoted words occur in ${replacement.id}'s capture ${recheck.file}. `
