@@ -82,26 +82,126 @@ function extractAll(html) {
 /**
  * Eight small pages against one page holding the text of all eight: EQUAL WORK, timed in
  * alternating rounds, the fastest of each kept (noise only ever adds time). Returns ms for both.
+ * `extract` and `now` are the extraction and the clock; the check of this sampling replaces them.
  */
-function equalWorkMs(small, large, { bound }) {
+function equalWorkMs(small, large, { bound, extract, now }) {
   let eight = Infinity;
   let one = Infinity;
   for (let round = 0; round < 3; round += 1) {
-    let t = performance.now();
-    for (let i = 0; i < 8; i += 1) extractAll(small);
-    eight = Math.min(eight, performance.now() - t);
-    t = performance.now();
-    extractAll(large);
-    one = Math.min(one, performance.now() - t);
-    // A large page over the bound in two rounds has answered: a quadratic regression would
-    // otherwise spend minutes repeating it, where no watchdog reaches synchronous code. One round
-    // does not answer: a single run preempted under load read 7.4x and 15.6x on linear code
-    // (2026-10-27, review of PR #440), so the fastest of two rounds, an eight-page run apart, must
-    // be over the bound too.
+    let t = now();
+    for (let i = 0; i < 8; i += 1) extract(small);
+    eight = Math.min(eight, now() - t);
+    t = now();
+    extract(large);
+    one = Math.min(one, now() - t);
+    // A large page over the bound in two rounds ends this measurement: a quadratic regression
+    // would otherwise spend minutes repeating it, where no watchdog reaches synchronous code. A
+    // single run preempted under load read 7.4x and 15.6x on linear code (2026-10-27, review of
+    // PR #440), so the fastest of two rounds, an eight-page run apart, must be over the bound. That
+    // is still one stretch of time, and does not answer alone (superlinearShapes).
     if (round >= 1 && one > bound * Math.max(eight, 1)) break;
   }
   return { eight: Math.max(eight, 1), one };
 }
+
+/** One measurement of a shape, from scratch: null when it reads linear, else what it read. */
+function measureShape(make, { bound, extract, now }) {
+  const small = `<title>t</title>${make(10_000)}`;
+  // Extraction is synchronous, so the watchdog cannot stop it: a quadratic regression would
+  // spend minutes on the large page. A small page this slow twice ends the measurement (once
+  // could be a preempted run: the first passes take 0.1-0.6 s under load).
+  const timed = () => { const t = now(); extract(small); return now() - t; };
+  let first = timed();
+  if (first > 1500) first = Math.min(first, timed());
+  if (first > 1500) return `${first.toFixed(0)} ms for ~100 KB - superlinear, the large page was not tried`;
+  const { eight, one } = equalWorkMs(small, `<title>t</title>${make(80_000)}`, { bound, extract, now });
+  const ratio = one / eight;
+  if (ratio > bound) return `one page with the text of eight took ${ratio.toFixed(1)}x as long as the eight (${eight.toFixed(0)} ms -> ${one.toFixed(0)} ms)`;
+  return null;
+}
+
+/** Blocks the thread for `ms`: the test is synchronous, and so is the wait between measurements. */
+const sleepSync = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+/**
+ * The shapes that read superlinear, each in two measurements made at least `apartMs` apart. A
+ * shape over the bound is measured again from scratch, after every other shape, and reported only
+ * when that reads over the bound too: one slow stretch of the host made both rounds of a large page
+ * slow (2026-10-27, review of PR #440 round 2, BT2-1: 4.3x, 164 ms -> 706 ms, on linear code that
+ * read 0.8-1.3x outside the harness), and a third round right after them would have shared it. A
+ * shape is measured again only when it read over the bound, so a run with no shape over it costs
+ * nothing more.
+ * Once one shape has read over the bound twice the test has failed, and the others over it once
+ * are listed as they read, not measured again: with every closing tag searched for again (the class
+ * of the regex extractor, PR #176), 15 shapes read over the bound, and measuring each of them again
+ * made the test take 26 minutes under load (2026-10-31). So a red costs one more measurement of
+ * each shape over the bound, in order, until one reads over it again (one measurement when the
+ * regression is real), and at most `apartMs` of waiting in all: a quadratic regression still
+ * answers in bounded time.
+ */
+function superlinearShapes(shapes, { bound, apartMs = 5_000, extract = extractAll, now = () => performance.now(), sleep = sleepSync }) {
+  const once = [];
+  for (const [name, make] of Object.entries(shapes)) {
+    const read = measureShape(make, { bound, extract, now });
+    if (read) once.push({ name, make, read, at: now() });
+  }
+  const slow = [];
+  for (const { name, make, read, at } of once) {
+    if (slow.length) { slow.push(`${name}: ${read} (not measured again)`); continue; }
+    const wait = at + apartMs - now();
+    if (wait > 0) sleep(wait);
+    const again = measureShape(make, { bound, extract, now });
+    if (again) slow.push(`${name}: ${again}; measured first: ${read}`);
+  }
+  return { slow };
+}
+
+// The check of that sampling, on a clock each extraction moves on: `cost(shape, kind, at)` is how
+// long a small or a large page takes when its extraction starts at `at`, so a slow stretch of the
+// host is a span of the clock. Shape 'b' is the one watched; shape 'a' is linear and comes after it.
+function sampled(cost) {
+  let clock = 0;
+  const runs = [];
+  const extract = (html) => {
+    const kind = html.length > 50_000 ? 'large' : 'small';
+    const start = clock;
+    clock += cost(html[16], kind, start);
+    runs.push({ shape: html[16], kind, start, end: clock });
+  };
+  const sleep = (ms) => { clock += ms; };
+  const shapes = { b: (n) => 'b'.repeat(n), a: (n) => 'a'.repeat(n) };
+  const { slow } = superlinearShapes(shapes, { bound: 4, extract, now: () => clock, sleep });
+  return { slow, runs: runs.filter((r) => r.shape === 'b'), others: runs.filter((r) => r.shape !== 'b') };
+}
+
+test('the timing check reports a shape only when a measurement taken again, seconds later, reads over the bound too', () => {
+  const linear = (kind) => (kind === 'large' ? 140 : 20);
+  // BT2-1 (2026-10-27, review of PR #440 round 2): eight small pages in 164 ms, then the large page
+  // in 706 ms in two rounds in a row, about 5x its usual 122-144 ms - a slow stretch of the host,
+  // starting after the first eight-page run and lasting longer than the two rounds after it.
+  const stretch = sampled((shape, kind, at) => linear(kind) * (shape === 'b' && at >= 180 && at < 3_500 ? 5 : 1));
+  assert.deepEqual(stretch.slow, [], 'a slow stretch of the host was reported as superlinear extraction');
+  const apart = Math.max(...stretch.runs.slice(1).map((r, i) => r.start - stretch.runs[i].end));
+  assert.ok(apart >= 5_000, `the second measurement began ${apart} ms after the first, not 5 s`);
+  assert.equal(stretch.others.filter((r) => r.kind === 'large').length, 3, 'a shape that reads linear is measured once');
+  // So does one in the first pass of the small page, twice.
+  const firstPass = sampled((shape, kind, at) => (shape === 'b' && kind === 'small' && at < 3_200 ? 1_600 : linear(kind)));
+  assert.deepEqual(firstPass.slow, [], 'a slow first pass was reported as superlinear extraction');
+  // Extraction that IS superlinear reads so every time, and still answers in bounded time.
+  const quadratic = sampled((shape, kind) => (shape === 'b' && kind === 'large' ? 1_360 : linear(kind)));
+  assert.equal(quadratic.slow.length, 1);
+  assert.match(quadratic.slow[0], /^b: one page with the text of eight took 8\.5x as long as the eight/);
+  assert.equal(quadratic.runs.filter((r) => r.kind === 'large').length, 4, 'two large pages in each measurement');
+  const slowSmall = sampled((shape, kind) => (shape === 'b' && kind === 'small' ? 1_600 : linear(kind)));
+  assert.equal(slowSmall.slow.length, 1);
+  assert.match(slowSmall.slow[0], /^b: 1600 ms for ~100 KB - superlinear, the large page was not tried/);
+  assert.equal(slowSmall.runs.filter((r) => r.kind === 'large').length, 0, 'the large page is not tried');
+  // Once one shape has answered twice, a second shape over the bound is not measured again.
+  const both = sampled((shape, kind) => (kind === 'large' ? 1_360 : 20));
+  assert.equal(both.slow.length, 2);
+  assert.match(both.slow[1], /^a: one page with the text of eight took 8\.5x .*\(not measured again\)$/);
+  assert.equal(both.others.filter((r) => r.kind === 'large').length, 2, 'shape a was measured once');
+});
 
 // EQUAL WORK, so the ratio does not depend on how busy the machine is. Linear extraction takes
 // about as long for one page as for eight pages an eighth its size; quadratic extraction takes
@@ -184,20 +284,6 @@ test('extraction time grows linearly with a page of unclosed tags, not quadratic
     // that none follows is remembered, and searched for again from each comment, it read 7.7-8.0x.
     'an unterminated <!-- with a ">" before each tag': (n) => '<!-- x> <b class="a">w '.repeat(n / 4),
   };
-  const BOUND = 4;
-  const slow = [];
-  for (const [name, make] of Object.entries(shapes)) {
-    const small = `<title>t</title>${make(10_000)}`;
-    // Extraction is synchronous, so the watchdog cannot stop it: a quadratic regression would
-    // spend minutes on the large page. A small page this slow twice has already answered (once
-    // could be a preempted run: the first passes take 0.1-0.6 s under load).
-    const timed = () => { const t = performance.now(); extractAll(small); return performance.now() - t; };
-    let first = timed();
-    if (first > 1500) first = Math.min(first, timed());
-    if (first > 1500) { slow.push(`${name}: ${first.toFixed(0)} ms for ~100 KB - superlinear, the large page was not tried`); continue; }
-    const { eight, one } = equalWorkMs(small, `<title>t</title>${make(80_000)}`, { bound: BOUND });
-    const ratio = one / eight;
-    if (ratio > BOUND) slow.push(`${name}: one page with the text of eight took ${ratio.toFixed(1)}x as long as the eight (${eight.toFixed(0)} ms -> ${one.toFixed(0)} ms)`);
-  }
+  const { slow } = superlinearShapes(shapes, { bound: 4 });
   assert.deepEqual(slow, [], `extraction is superlinear:\n  ${slow.join('\n  ')}`);
 });
