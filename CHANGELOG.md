@@ -23,21 +23,25 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   naming the move, and that capture is not rechecked. A gone page is named first. A refresh that was itself
   superseded by a direct fetch of the row's URL still passes. Three tests.
 
-- **Tests: every guard on the gone path, and every comparison in the movement diff, now goes red
-  alone** (PR #440 review round 1). The gone-page test for a 404 recorded before the row's own scrape
-  stayed green with its "after" guard removed, because its copied scrape still asked for the row's
-  URL; it now asks for the URL it is filed under, and a new test pins the "is a fail" guard. Three
-  tests cover `movement.mjs`'s diff: the verdict, the refresh pairs and, in one table-driven test,
-  every other comparison and print branch. Round 3 (GA3-1) found ten mutants (eleven comparisons)
-  that still stayed green when switched off: the quoted-row and anchor counts; an anchor's
-  `tooShort`, quote and capture; an anchor, a corpus, a refresh or a refresh's anchor removed; an
-  anchor or a refresh added. Its fix review found more: a refresh anchor's `tooShort` going back, a
-  citer or replacing row swapped, the anchor and refresh identity keys, a value an added or removed
-  entry prints, and the order lines print in. The table now has a row for each, `tooShort` in both
-  directions on both tables; it also covers a finding's repeat count, an excluded finding, a value
-  printed as `none` and a clipped quote. AGENTS.md now states ADR-0192's real scope (the space before
-  `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's tests were
-  untouched.
+- **Tests: every guard on the gone path, and each listed comparison and print branch of the movement
+  diff, now goes red alone** (PR #440 review rounds 1, 3 and 4). The gone-page test for a 404 recorded
+  before the row's own scrape stayed green with its "after" guard removed, because its copied scrape still
+  asked for the row's URL; it now asks for the URL it is filed under, and a new test pins the "is a fail"
+  guard. Three tests cover `movement.mjs`'s diff: the verdict, the refresh pairs and, in one table-driven
+  test, each other comparison and print branch that the inventories of review rounds 1, 3 and 4 (r1 fix
+  review; r3 review and its fix review; GA4-1) listed; a branch no inventory listed is not claimed. Round 3
+  (GA3-1) found ten mutants (eleven comparisons) that still stayed green when switched off: the quoted-row
+  and anchor counts; an anchor's `tooShort`, quote and capture; an anchor, a corpus, a refresh or a
+  refresh's anchor removed; an anchor or a refresh added. Its fix review found more: a refresh anchor's
+  `tooShort` going back, a citer or replacing row swapped, the anchor and refresh identity keys, a value an
+  added or removed entry prints, and the order lines print in. The table now has a row for each, `tooShort`
+  in both directions on both tables; it also covers a finding's repeat count going up, an excluded finding,
+  a value printed as `none` and a clipped quote. Round 4 (GA4-1) found four more that stayed green, each
+  changing only how a line prints: dropping the `(2 -> n)` suffix from a repeat count going down (2 -> 0,
+  2 -> 1), and printing `null` for `none` on the refresh table for an anchor added with no new capture and
+  for the baseline side of a moved anchor; four rows pin them. AGENTS.md now states ADR-0192's real scope
+  (the space before `. , ; : ! ? % ) ] }` and after `( [ {`), and ADR-0194 no longer says the collector's
+  tests were untouched.
 
 - **Fixed: the refresh baseline's movement script records every field of a finding but its prose and line**
   (PR #440 review round 2, BR-1). `movement.mjs` recorded and compared a fixed list of fields - check, rule,
