@@ -133,6 +133,8 @@ moves no committed verdict.
   the collector asked as the plan URL) is not seen by `cites-gone-page`. No corpus here has one;
   reopen if one does. A moved citation reads two more addresses for its reason only (ADR-0193
   decision 8): where the move landed, and the address a redirect-first row's move came through.
+  An ordinary refresh's citation reads one more, the address the replacing row's own fetch asked
+  for (ADR-0193 decision 8, PR #440 review r4, BR4-1, 2026-11-01).
 - A moved page is not gone: a refresh that asked for the cited URL and landed on another one is a
   successful scrape, and ADR-0193 handles it (decision 8, 2026-10-26).
 - So a later scrape that asked for the cited URL and got content, wherever it landed, ends a

@@ -80,8 +80,9 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   found gone (404/410) since, or when the landed page has itself moved on. A 404 followed by such a
   move is judged as the move, not as `cites-gone-page` (ADR-0194). The collector's 30-day "gone"
   memory is unchanged, so it can still skip that URL. Silent: a trailing slash, a redirect that
-  lands on the row's URL again, a failed fetch. Two new `KNOWN GAP` tests: a quote inside a
-  struck-through span, and a change inside an ellipsis gap.
+  lands on the row's URL again, a failed fetch anywhere else (a 404 or 410 at the address an
+  ordinary refresh's replacing row asked for withholds the pass: the BR4-1 bullet above). Two new
+  `KNOWN GAP` tests: a quote inside a struck-through span, and a change inside an ellipsis gap.
 
 - **Added: `evidence-supersession/quote-survived-refresh`** (ADR-0193). A citation of a superseded
   row passes when every usable quote of the old row is found in that row's own capture and in the
