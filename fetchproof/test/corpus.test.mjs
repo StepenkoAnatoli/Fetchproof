@@ -9,6 +9,10 @@ import {
   claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl,
 } from '../lib/corpus.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
+import { command as keylessCommand } from '../lib/http-transport.mjs';
+import { command as firecrawlCommand } from '../lib/firecrawl.mjs';
+import { command as browserCommand } from '../lib/browser-transport.mjs';
+import { isWebUrl } from '../lib/research-run.mjs';
 
 describe('corpus');
 
@@ -139,6 +143,28 @@ test('the capture index also answers to the URL a redirected fetch was asked for
   assert.equal(captures.byUrl.get('https://x.invalid/asked'), remembered, 'a mid-run capture is remembered under both');
 });
 
+// The same alias for a plan URL holding whitespace, whose command the transport JSON-quotes: read as
+// no URL, it got no alias, so the plan's next run missed the cache and fetched the page again, every
+// run (PR #440 review r5, BR5-1 fix review NIT-2). The command lines here are the keyless command().
+test('a redirected plan URL holding whitespace is a cache hit under its own spelling, on disk and mid-run (BR5-1)', () => {
+  const dir = makeProject();
+  const now = new Date('2026-01-02T10:00:00Z');
+  const asked = ['https://x.invalid/old a', ' https://x.invalid/lead'];
+  asked.forEach((url, i) => writeText(resolve(dir, `${PATHS.raw}/2026-01-01-a-x-${i}.md`),
+    `---\nurl: https://x.invalid/new-${i}\nretrieved: 2026-01-01\ncommand: ${keylessCommand(['scrape', url])}\n---\n\nmoved\n`));
+  const captures = readCaptures(dir);
+  const hits = (index, url) => [url, cacheDecision(index, url, { now }).hit, cacheDecision(index, url, { now }).entry?.url ?? null];
+  assert.deepEqual([...asked, 'https://x.invalid/old%20a'].map((url) => hits(captures, url)), [
+    ['https://x.invalid/old a', true, 'https://x.invalid/new-0'],
+    [' https://x.invalid/lead', true, 'https://x.invalid/new-1'],
+    ['https://x.invalid/old%20a', true, 'https://x.invalid/new-0'],
+  ]);
+  const midRun = { entries: [], byUrl: new Map(), byKey: new Map(), byFile: new Map() };
+  rememberCapture(midRun, captureEntry({ file: 'research/raw/m.md', url: 'https://x.invalid/landed', retrieved: '2026-01-01',
+    command: keylessCommand(['scrape', 'https://x.invalid/mid run']) }));
+  assert.deepEqual(hits(midRun, 'https://x.invalid/mid run'), ['https://x.invalid/mid run', true, 'https://x.invalid/landed']);
+});
+
 test('requestedUrl reads the asked-for URL out of each transport\'s command line', () => {
   assert.equal(requestedUrl('http-keyless scrape https://x.invalid/a'), 'https://x.invalid/a');
   assert.equal(requestedUrl('firecrawl scrape https://x.invalid/b --only-main-content --json'), 'https://x.invalid/b');
@@ -147,6 +173,58 @@ test('requestedUrl reads the asked-for URL out of each transport\'s command line
   assert.equal(requestedUrl('agent page fetch'), '', 'a command naming no URL aliases nothing');
   assert.equal(requestedUrl(''), '');
   assert.equal(requestedUrl(undefined), '');
+});
+
+// A URL holding whitespace is JSON-quoted by every transport's `command()`, and the split on
+// whitespace came before the unquote, so it was read as naming no URL and the gate read the fetch
+// as asking for where it landed (PR #440 review r5, BR5-1). Each command here is the transport's own.
+test('requestedUrl reads a URL holding whitespace back out of each transport\'s own command line (BR5-1)', () => {
+  const spaced = 'https://x.invalid/a b';
+  assert.equal(requestedUrl(keylessCommand(['scrape', spaced])), spaced, keylessCommand(['scrape', spaced]));
+  const fc = firecrawlCommand(['scrape', spaced, '--only-main-content', '--max-age', '0', '--format', 'markdown,rawHtml', '--json']);
+  assert.equal(requestedUrl(fc), spaced, fc);
+  assert.equal(requestedUrl(`${fc} # transport: firecrawl-cli 1.2.3`), spaced, 'the transport suffix still reads the URL before it');
+  assert.equal(requestedUrl(browserCommand([spaced])), spaced, browserCommand([spaced]));
+  // JSON escapes inside the quoted argument are read back as the characters command() wrote.
+  for (const url of ['https://x.invalid/a "b"', 'https://x.invalid/a\tb', 'https://x.invalid/a\\ b']) {
+    const cmd = keylessCommand(['scrape', url]);
+    assert.equal(requestedUrl(cmd), url, cmd);
+  }
+});
+
+// The plan check (`planProblems`: `new URL` parses it as http or https) accepts a URL with leading
+// whitespace or a leading C0 control, because the URL parser strips them, and the collector hands
+// it to the transport verbatim. Read back by a scheme test on the raw string, such a URL was still
+// no URL, and BR5-1's false green stayed open for it (PR #440 review r5, fix review S2-1). The
+// oracle is `isWebUrl`, the vendor-URL check, which agrees with the plan check's scheme test on
+// every spelling below: what it accepts, the command line reads back verbatim; what it refuses by
+// scheme, it does not. (A URL with credentials is read back too; the plan check refuses it first.)
+test('requestedUrl reads back, verbatim, every spelling the plan check accepts, and none whose scheme it refuses (BR5-1, fix review S2-1)', () => {
+  const spellings = [' https://x.invalid/a', '\thttps://x.invalid/a', '\u0001https://x.invalid/a', '\n https://x.invalid/a',
+    'https://x.invalid/a ', 'https://x.invalid/a b', 'https:x.invalid/a', 'HTTPS://x.invalid/a',
+    '\u00a0https://x.invalid/a', 'ftp://x.invalid/a', 'x.invalid/a', 'ht\ttps://x.invalid/a', '\u0000\u001f https://x.invalid/a',
+    'httpx://x.invalid/a'];
+  const got = [];
+  const want = [];
+  for (const url of spellings) {
+    const expected = isWebUrl(url) ? url : '';
+    const cmds = [keylessCommand(['scrape', url]), firecrawlCommand(['scrape', url, '--only-main-content', '--json']), browserCommand([url])];
+    for (const cmd of cmds) { got.push([cmd, requestedUrl(cmd)]); want.push([cmd, expected]); }
+  }
+  assert.deepEqual(got, want);
+  assert.ok(isWebUrl(' https://x.invalid/a') && isWebUrl('\u0001https://x.invalid/a') && !isWebUrl('ftp://x.invalid/a'),
+    'the plan check no longer reads these as it did, so the table above proves nothing');
+});
+
+// A quoted token command() could not have written - unterminated, or an escape JSON does not have -
+// is not read as a URL, whole or in part: requestedUrl never throws, skips that token and reads on.
+// '' (no URL) is the old reading of such a command; the ledger entry's hash covers its `cmd`, so
+// such a command only reaches the gate in a ledger whose chain already fails.
+test('requestedUrl skips a malformed quoted token and never throws (BR5-1)', () => {
+  assert.equal(requestedUrl('http-keyless scrape "https://x.invalid/a b'), '', 'an unterminated quote is no URL, not its first word');
+  assert.equal(requestedUrl('http-keyless scrape "https://x.invalid/a \\q b"'), '', 'a bad JSON escape is no URL');
+  assert.equal(requestedUrl('http-keyless scrape "https://x.invalid/a \\q b" https://x.invalid/next'), 'https://x.invalid/next',
+    'the token after a malformed one is still read');
 });
 
 test('dotfiles under research/raw are the kit\'s logs, not captures', () => {

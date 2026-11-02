@@ -93,6 +93,8 @@ The sequence is decompose -> contract -> collect -> gate -> brief.
 3. **Rewrite** each auto-extracted `Finding` cell into a real claim, keeping the `Raw`
    cell pointing at the cached page. Where a claim rests on one sentence, add it as
    `[quote: the sentence, copied from the capture]` - the gate checks it is really there.
+   After a refresh, a citation of the replaced row passes only if its quoted words
+   survived; re-read the new row anyway. A cited page a refresh found gone fails.
 4. **Gate**: `node "{{KIT}}/bin/preflight.mjs"`. **Do not start building until it prints
    PASS.** Evidence must be *fetched*, not typed, and by a named transport.
 5. **Hand off**: write `research/BRIEF.md`.

@@ -35,5 +35,5 @@ Choices that are yours (a variable name, an internal default with no external so
 ## When a cited fact goes stale
 
 `freshness-recheck` on the collector re-collects the page; a superseded row fails the
-gate where it is cited. Search the code for the old row ID and update the value with the
-new one.
+gate where it is cited, unless its quoted words survived the refresh (ADR-0193); re-read it
+anyway. Search the code for the old row ID and update the value with the new one.

@@ -1356,7 +1356,10 @@ test('a page the kit refused for what it is, is not fetched again within the ref
       error: 'the response is application/pdf, which is not text - the keyless transport cannot keep a faithful copy of it. Fetch it with --transport firecrawl-cli, which converts documents such as PDFs to text, or cite an HTML page that carries the same text.' }),
     'https://x.invalid/keyless404': (url) => ({ ok: false, url, error: 'HTTP 404 - the server said: "no such page"', transport: 'http-keyless', cmd: 'stub' }),
   };
+  // A 500 is the server's fault, not a standing answer about the page (found 2026-10-26, Phase 4b
+  // mutation F9: with the standing range read as 400-500, a 500 was remembered as a refusal).
   const transient = {
+    'https://x.invalid/broken': (url) => ({ ok: true, url, title: 'x', markdown: 'x', statusCode: 500, transport: 'stub-transport', completeness: 'full', cmd: 'stub' }),
     'https://x.invalid/busy': (url) => ({ ok: true, url, title: 'x', markdown: 'x', statusCode: 503, transport: 'stub-transport', completeness: 'full', cmd: 'stub' }),
     'https://x.invalid/slow': (url) => ({ ok: false, url, error: 'HTTP 408 - the server said: "Request Timeout"', cmd: 'stub' }),
     'https://x.invalid/limited': (url) => ({ ok: false, url, error: 'HTTP 429 - rate limited, the server asks for a retry after 1s', retryAfterMs: 0, cmd: 'stub' }),
@@ -1381,7 +1384,7 @@ test('a page the kit refused for what it is, is not fetched again within the ref
   assert.match(collectOne(dir, 'https://x.invalid/keyless403', { runScrape, corpus: readCorpus(dir), transportName: 'http-keyless' }).reason, /refused on .*: the page answered HTTP 403/);
   assert.equal(collectOne(dir, 'https://x.invalid/keyless404', { runScrape, corpus: readCorpus(dir) }).status, 'gone', 'a keyless 404 is gone, as the collector\'s own wording of one is');
   for (const url of Object.keys(transient)) collectOne(dir, url, { runScrape, corpus: readCorpus(dir), transportName: 'stub-transport', sleep: () => {}, maxRateLimitRetries: 0 });
-  assert.equal(calls, first + Object.keys(transient).length, 'a 503, a 408, a 429 and a cut connection are asked again');
+  assert.equal(calls, first + Object.keys(transient).length, 'a 500, a 503, a 408, a 429 and a cut connection are asked again');
   assert.equal(collectOne(dir, 'https://x.invalid/status403', { runScrape, corpus: readCorpus(dir), force: true }).status, 'failed', '--force retries');
   // Another route is not told what one route was answered: the page that refused the keyless
   // client is what the browser transport is for (ADR-0088). A size or binary refusal is the page's.

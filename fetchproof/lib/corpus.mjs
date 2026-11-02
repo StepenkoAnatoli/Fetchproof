@@ -286,15 +286,32 @@ export function countRenderFailures(body) {
 
 /**
  * The URL a capture was asked for, read out of its command line: `http-keyless scrape <url>`,
- * `firecrawl scrape <url> ...`, `browser <url>` - the first argument that is an http(s) URL.
- * '' when the command names none. A fetch that redirected records where the bytes came from
- * as its `url`; this is the other half of that pair, the one the plan keeps naming.
+ * `firecrawl scrape <url> ...`, `browser <url>` - the first argument that is an http(s) URL,
+ * returned verbatim. '' when the command names none. A fetch that redirected records where the
+ * bytes came from as its `url`; this is the other half of that pair, the one the plan keeps naming.
+ *
+ * Read as the transports' `command()` writes it: an argument holding whitespace is JSON-quoted,
+ * so a quoted token is read whole and unescaped. An http(s) URL is what `new URL` parses as one,
+ * the plan check's test (`planProblems`), so a spelling the URL parser strips - leading whitespace or
+ * a C0 control - is read as the plan wrote it. Until 2026-11-01 the command was split on
+ * whitespace first and the scheme tested on the raw text, so an asked URL holding whitespace
+ * was read as no URL, or as a corrupt one, and the gate took the fetch as asking for where it
+ * landed (PR #440 review r5, BR5-1 and its fix review). A token that opens a quote and is
+ * not a JSON string - unterminated, or an escape JSON does not have - is no URL, whole or in
+ * part, and the next token is read: no transport writes one, and the ledger hashes its entry's
+ * `cmd` and the capture file whole, so one reaches a reader only through an edit the gate
+ * already fails.
  */
 export function requestedUrl(command) {
-  for (const token of String(command ?? '').split(/\s+/)) {
-    const bare = token.replace(/^"(.*)"$/, '$1');
-    if (!/^https?:\/\//i.test(bare)) continue;
-    try { new URL(bare); return bare; } catch { /* not a URL after all */ }
+  for (const [token] of String(command ?? '').matchAll(/"(?:[^"\\]|\\.)*"|\S+/g)) {
+    let bare = token;
+    if (token.startsWith('"')) {
+      try { bare = JSON.parse(token); } catch { continue; }   // not a quote command() writes: no URL
+    }
+    // The URL parser drops leading C0 controls and spaces and every tab and newline before it reads
+    // the scheme, so this is only a fast path past the many tokens that cannot open an http(s) URL.
+    if (!/^[\x00-\x20]*https?:/i.test(bare.replace(/[\t\n\r]/g, ''))) continue;
+    try { if (/^https?:$/.test(new URL(bare).protocol)) return bare; } catch { /* not a URL: the next token */ }
   }
   return '';
 }

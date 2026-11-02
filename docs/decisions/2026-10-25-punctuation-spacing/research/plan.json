@@ -1,0 +1,48 @@
+{
+  "topic": "Punctuation spacing after inline HTML tags: what Firecrawl and the kit's keyless HTML-to-Markdown converter write before . , ; : ! ? % ) ] } and after ( [ {, and how Firecrawl documents its HTML-to-Markdown conversion",
+  "notes": "Phase 0 was a dry run; pages named directly. Run 1: every URL keyless (free); three converter source files were added after the first keyless run read html-to-markdown.ts, and collected keyless in a second free run. Run 2: the two test pages through firecrawl-cli with --force (research/plan-firecrawl.json, 2 credits). Run 3: the first test page keyless again with --force (research/plan-keyless-refetch.json), so that each transport has one current capture an unknown can cite (ADR-0026 supersession).",
+  "depth": "quick",
+  "refreshDays": 30,
+  "limit": 8,
+  "perQuery": 3,
+  "maxScrapes": 7,
+  "prefer": [],
+  "queries": [],
+  "urls": [
+    {
+      "url": "https://docs.python.org/3/library/re.html",
+      "type": "P",
+      "why": "U-01, U-02: test page - Sphinx HTML with <code><span class=pre> and <em> signature parameters directly beside . , ; : ( ) [ ] { } ? !"
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Percent_sign",
+      "type": "P",
+      "why": "U-01, U-02: test page - MediaWiki HTML with <span>, <abbr>, <sup> and links directly beside punctuation and %"
+    },
+    {
+      "url": "https://docs.firecrawl.dev/advanced-scraping-guide",
+      "type": "P",
+      "why": "U-03: what Firecrawl documents about its markdown format and main-content extraction"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/firecrawl/firecrawl/main/apps/api/src/lib/html-to-markdown.ts",
+      "type": "P",
+      "why": "U-03: the open-source converter Firecrawl runs, which library it calls"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/firecrawl/firecrawl/main/apps/go-html-to-md-service/converter.go",
+      "type": "P",
+      "why": "U-03: the HTTP conversion service html-to-markdown.ts tries first - which library and which plugins it configures"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/firecrawl/firecrawl/main/apps/go-html-to-md-service/go.mod",
+      "type": "P",
+      "why": "U-03: the pinned version of that library"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/firecrawl/firecrawl/main/apps/api/sharedLibs/go-html-to-md/html-to-markdown.go",
+      "type": "P",
+      "why": "U-03: the Go shared library html-to-markdown.ts falls back to"
+    }
+  ]
+}

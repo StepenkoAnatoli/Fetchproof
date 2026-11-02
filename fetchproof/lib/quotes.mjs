@@ -114,7 +114,7 @@ function unwrap(quote) {
  * distinctions). It undoes what a capture does to a sentence and nothing more: compatibility
  * forms (the "fi" ligature), the invisible formatting characters a page's own tooling inserts,
  * curly quotes and long dashes, Markdown link syntax, emphasis, backticks and backslash escapes,
- * runs of whitespace, and case.
+ * runs of whitespace, case, and the space a transport writes beside punctuation (ADR-0192).
  */
 export function normalizeForMatch(text) {
   return String(text ?? '')
@@ -141,7 +141,22 @@ export function normalizeForMatch(text) {
     .replace(/[*_`\\]/g, '')
     .replace(/\s+/g, ' ')
     .toLowerCase()
-    .trim();
+    .trim()
+    // The two transports space punctuation beside an inline tag differently (ADR-0192; research
+    // docs/decisions/2026-10-25-punctuation-spacing, E-01/E-02 keyless against E-08/E-09
+    // Firecrawl, measured 2026-10-25). The keyless converter writes a space on both sides of
+    // every tag it strips, so `<span>2019</span>.` reads `2019 .`; Firecrawl writes `2019.`, and
+    // writes `( [Mexico](...)` where the keyless converter writes `([Mexico](...)`. A quote copied
+    // from one capture was quote-not-found in the other transport's capture of the same page.
+    // So whitespace goes BEFORE a closing mark and AFTER an opening one, and never after a
+    // closing mark: `1.5` and `1. 5`, `15` and `1,5`, `1000` and `1,000` stay distinct (the
+    // plan's pins, tested). The merges it accepts - `1 .5` = `1.5`, `at .claude` = `at.claude` -
+    // are pinned as KNOWN MERGE; no number had that shape in the repository's 430 captures. Not
+    // covered, each a decision of its own: quote marks, the space after `.` in tokenized code
+    // (`re . escape`), the space before `(`, and whitespace Firecrawl drops beside no mark.
+    // Applied last, to both sides, so the floor (ADR-0191) and `anchorFound` read the same text.
+    .replace(/\s+([.,;:!?%)\]}])/g, '$1')
+    .replace(/([([{])\s+/g, '$1');
 }
 
 /**
@@ -197,9 +212,45 @@ export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
  * spaces and by weight. Weighed alone, a spaced fragment such as `每月 20 美元` - three words on
  * spaces, checked before - was one word and four characters, so it warned and an altered figure
  * in it passed (second review of the 2026-10-19 sweep, F1).
+ *
+ * Every count is taken on the COMPARED text, `normalizeForMatch(f)`, the text `anchorFound`
+ * looks for (ADR-0191). Counted on the raw marker, `[Free plan](https://vendor.example.com/
+ * pricing#free-plan-details)` was 65 characters and not short, yet it anchored `free plan`;
+ * zero-width spaces padded `**Free** plan` past the floor the same way, and a formatting-only
+ * fragment beside `free plan` made the whole quote specific (plan section 5.1, 2026-10-25). A
+ * fragment that compares as nothing anchors nothing, so it is short.
+ *
+ * One branch: an anchor with NO compared text at all is measured on its raw fragments, as it
+ * was before ADR-0191, so the long formatting-only quotes that fail `quote-not-found` (forty
+ * `*`, 2026-10-08) keep exactly that result, with no warning beside it, and `***` keeps its
+ * short warning.
+ *
+ * The verdict this feeds does NOT stop at the warning alone (review of ADR-0191, 2026-10-25,
+ * F1): `checks.mjs` skips the comparison only when `quoteTooShortOnRaw` agrees. Skipped on this
+ * measure alone, `[Enterprise plan](https://...)` - long raw, short compared, invented - went
+ * from failing `quote-not-found` to a warning and a passing gate. So B1 removes no failure:
+ * every quote compared before it is still compared. It is not warnings only, either: NFKC and
+ * case folding can LENGTHEN a fragment (`㍿` folds to `株式会社`), so a few quotes short on raw
+ * text are long on compared text; they lose the warning and are compared now - the strict
+ * direction.
  */
 export function quoteTooShort(anchor) {
-  return anchor.fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
+  const compared = anchor.fragments.map((f) => normalizeForMatch(f));
+  return fragmentsShort(compared.some(Boolean) ? compared : anchor.fragments);
+}
+
+/**
+ * Whether the quote is short on its RAW fragments, as written in the Finding cell: the measure
+ * before ADR-0191. The check leaves a short quote uncompared only when this is true too, so a
+ * quote that was compared before ADR-0191 is still compared after it (review F1, 2026-10-25).
+ */
+export function quoteTooShortOnRaw(anchor) {
+  return fragmentsShort(anchor.fragments);
+}
+
+/** Every fragment under all three floors: words on spaces, ADR-0176's weight, and characters. */
+function fragmentsShort(fragments) {
+  return fragments.every((f) => f.split(/\s+/).filter(Boolean).length < MIN_QUOTE_WORDS
     && fragmentWeight(f) < MIN_QUOTE_WORDS * CHARS_PER_WORD
     && f.length < MIN_QUOTE_CHARS);
 }
@@ -209,9 +260,4 @@ function fragmentWeight(fragment) {
   const unspaced = fragment.match(UNSPACED_CHARACTER)?.length ?? 0;
   const words = fragment.replace(UNSPACED_CHARACTER, ' ').split(/\s+/).filter(Boolean).length;
   return words * CHARS_PER_WORD + unspaced;
-}
-
-/** Characters in a quote, across its fragments: what MIN_QUOTE_CHARS was measured against. */
-export function quoteChars(anchor) {
-  return anchor.fragments.join(' ').length;
 }

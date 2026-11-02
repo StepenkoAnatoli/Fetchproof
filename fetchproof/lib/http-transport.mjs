@@ -67,40 +67,48 @@ function runJob(job, { timeout = 60_000, spawn = spawnSync, nodePath = process.e
  * are remembered as the scan moves forward, so no stretch of the page is searched twice.
  *
  *   open   a global regex for where a pair may start; `close(match)` names its closing tag
- *   tag    'attributes' - `[^>]*>` follows: the tag ends at the first '>' after the name
+ *   tag    'attributes' - the opening tag ends where the tag stripper ends a tag (tagEnd): at
+ *                         the first '>' outside a quoted attribute value
  *          'none'       - the body starts right after the name (`<script\b[\s\S]*?</script>`)
- *          { find, match } - `[^>]*` then a required attribute: `find` (global) locates where
- *          the attribute may start, `match` (sticky) matches from there to the tag's end
+ *          { find, match } - the same opening tag, which must carry an attribute: `find`
+ *          (global) locates where the attribute may start, `match` (sticky) matches the
+ *          attribute, which must end before the tag does
  *   close  (openMatch) => the closing pattern's regex source, searched case-insensitively
  *
- * The attribute form is the one that needs care. `<a\b[^>]*href=...` backtracks to the
- * RIGHTMOST href before the first '>' where the rest matches - and every `<a` before that same
- * '>' searches the same stretch. So the stretch is searched once, and each `<a` in it takes the
- * rightmost hit after itself; without that, `<a <a <a ...` with one '>' was quadratic again.
+ * The opening tag ended at the first '>' after the name until 2026-10-25 (review of the B3 fix,
+ * F1): a list item, heading, cell, link or content block carrying `title="Tier 3 > unlimited"`
+ * kept `unlimited">` as the start of its text. It now ends as a stripped tag ends, so the same
+ * tag reads the same way in every pass.
+ *
+ * The attribute form takes the RIGHTMOST hit inside the tag, as `<a\b[^>]*href=...` backtracked
+ * to it. Every hit is listed once, left to right, so the many `<a` of `<a <a <a ...` with one '>'
+ * do not search the same stretch each - quadratic again, before 2026-09-30.
+ *
+ * A pair that finds no closing tag is tried again from the next character, as the regex does, so
+ * an opening tag can start inside the one before it: inside one of its quoted values, where a
+ * different tag end, body and closing tag follow. So a tag end is remembered by every '=' its scan
+ * passed (`ends`), and the tags starting along one long tag do not each scan the rest of it:
+ * `<li y='a' ` repeated with no `</li>` would otherwise rescan every later attribute from each.
+ * And the closing tags and attribute hits are listed (`occurrences`), as the questions come in
+ * any order: a closing tag remembered only forward was searched for again, to the end of the page,
+ * after each list item inside a quoted value of the one before it.
  */
 function tagPairs(text, { open, tag = 'attributes', close }) {
   const pairs = [];
   const closers = new Map();
   const nextClose = (source, from) => {
     let c = closers.get(source);
-    if (!c) { c = { re: new RegExp(source, 'gi'), from: -1, at: -1, len: 0 }; closers.set(source, c); }
-    // No closer starts inside [c.from, c.at), so for any `from` in that range the next is c.at.
-    if (c.from === -1 || from < c.from || (c.at !== -1 && from > c.at)) {
-      c.re.lastIndex = from;
-      const m = c.re.exec(text);
-      c.from = from;
-      c.at = m ? m.index : -1;
-      c.len = m ? m[0].length : 0;
+    if (!c) {
+      const re = new RegExp(source, 'gi');
+      let len = 0;
+      c = occurrences((after) => { re.lastIndex = after; const m = re.exec(text); len = m ? m[0].length : 0; return m ? m.index : -1; }, () => len);
+      closers.set(source, c);
     }
-    return { at: c.at, len: c.len };
+    const k = c.first(from);
+    return k < c.at.length ? { at: c.at[k], len: c.items[k] } : { at: -1, len: 0 };
   };
-  let gtFrom = -1;
-  let gtAt = -1;
-  let region = { gt: -1, hits: [] };
-  const nextGt = (from) => {
-    if (gtFrom === -1 || from < gtFrom || (gtAt !== -1 && from > gtAt)) { gtFrom = from; gtAt = text.indexOf('>', from); }
-    return gtAt;
-  };
+  let scan = null;
+  let hits = null;
   const starts = new RegExp(open.source, open.flags.includes('g') ? open.flags : `${open.flags}g`);
   let pos = 0;
   while (pos < text.length) {
@@ -112,35 +120,38 @@ function tagPairs(text, { open, tag = 'attributes', close }) {
     let tagMatch = null;
     if (tag === 'none') {
       bodyStart = at + m[0].length;
-    } else if (tag === 'attributes') {
-      const gt = nextGt(at + m[0].length);
-      if (gt === -1) break;                 // no '>' from here on: no later tag can end either
-      bodyStart = gt + 1;
     } else {
-      const from = at + m[0].length;
-      const gt = nextGt(from);
-      if (gt === -1) break;
-      if (region.gt !== gt) {
-        region = { gt, hits: [] };
-        tag.find.lastIndex = from;
-        for (let f = tag.find.exec(text); f && f.index < gt; f = tag.find.exec(text)) {
-          tag.match.lastIndex = f.index;
-          const hit = tag.match.exec(text);
-          if (hit) region.hits.push({ at: f.index, hit });
-          tag.find.lastIndex = f.index + 1;
+      scan ??= { text, last: text.lastIndexOf('>'), gt: nextOf(text, '>'), eq: nextOf(text, '='), comments: commentsOf(text), rawText: rawTextOf(text), ends: new Map(), passed: [], passedEnd: -1 };
+      if (at >= scan.last) break;           // no '>' from here on: no later tag can end either
+      // The '=' the last tag's scan passed are remembered only for a tag starting inside it: a
+      // later start cannot reach them otherwise, and remembering every '=' of the page made the
+      // link passes about 1.5x slower.
+      if (at < scan.passedEnd) for (const equals of scan.passed) scan.ends.set(equals, scan.passedEnd);
+      scan.passed.length = 0;
+      const end = tagEnd(scan, at);
+      if (tag !== 'attributes') {
+        if (!hits) {
+          let hit = null;
+          hits = occurrences((after) => {
+            for (tag.find.lastIndex = after; ;) {
+              const f = tag.find.exec(text);
+              if (!f) return -1;
+              tag.match.lastIndex = f.index;
+              hit = tag.match.exec(text);
+              if (hit) return f.index;
+              tag.find.lastIndex = f.index + 1;
+            }
+          }, () => hit);
         }
+        // The rightmost hit after the name whose attribute ends inside the tag. At most one hit
+        // runs past the tag's '>': the value of the one before it would have to hold its quote.
+        const from = at + m[0].length;
+        let h = hits.first(end) - 1;
+        while (h >= 0 && hits.at[h] >= from && hits.at[h] + hits.items[h][0].length > end) h -= 1;
+        if (h < 0 || hits.at[h] < from) { pos = at + 1; continue; }
+        tagMatch = hits.items[h];
       }
-      // Rightmost first, as the regex backtracks; an earlier hit is tried only if a later one
-      // leaves no closing tag after it.
-      let found = null;
-      for (let h = region.hits.length - 1; h >= 0 && region.hits[h].at >= from; h -= 1) {
-        const end = region.hits[h].at + region.hits[h].hit[0].length;
-        const c = nextClose(close(m), end);
-        if (c.at !== -1) { found = { hit: region.hits[h].hit, end, c }; break; }
-      }
-      if (!found) { pos = at + 1; continue; }
-      tagMatch = found.hit;
-      bodyStart = found.end;
+      bodyStart = end + 1;
     }
     const c = nextClose(close(m), bodyStart);
     if (c.at === -1) { pos = at + 1; continue; }   // as the regex does: fail here, try the next position
@@ -152,16 +163,256 @@ function tagPairs(text, { open, tag = 'attributes', close }) {
 }
 
 /**
- * `text.replace(/<[^>]+>/g, by)`, and the number of tags it replaced. After the last '>' no tag
- * can end, and there each '<' made the regex scan to the end of the page and fail - quadratic in
- * a run of `<li <a ...` with no '>' (found 2026-09-30). So it runs only up to that last '>'.
+ * Every tag replaced by `by`, and the number of tags replaced. A tag is a '<', at least one
+ * character, and the first '>' outside a quoted attribute value - as `/<[^>]+>/g` read it, except
+ * that a '>' inside `"…"` or `'…'` does not end a tag that starts as HTML starts one (tagEnd).
+ * Found 2026-10-25 (reasoning-layer plan, B3): `<span title="Tier 3 > unlimited API requests">`
+ * left `unlimited API requests">` in the capture, text no reader of the page sees and that the
+ * quote check then accepted.
+ *
+ * A quote opens a value only right after `=` and optional whitespace, as in HTML: the apostrophe
+ * of `title=O'Brien` is part of an unquoted value, and one in text opens nothing. A quote whose
+ * partner does not come before the last '>' could end no tag, so it is no quote: the tag ends at
+ * its first '>' as before. Failing the tag there instead, and trying the next '<', would look for
+ * that quote's partner again from every '<' before it, each time to the end of the page.
+ *
+ * After the last '>' no tag can end, and there each '<' made the regex scan to the end of the page
+ * and fail - quadratic in a run of `<li <a ...` with no '>' (found 2026-09-30). So no tag starts
+ * at or after that last '>'. Every other scan ends at a '>' and the next resumes after it, and a
+ * quote's partner is looked up once per quote that opens. A quote with no partner before the last
+ * '>' is the last of its kind before it, so that lookup - the one that can run past the tag -
+ * fails at most once for each kind of quote. Linear.
  */
 function stripTags(text, by) {
   const last = text.lastIndexOf('>');
   if (last === -1) return { text, tags: 0 };
+  const scan = { text, last, gt: nextOf(text, '>'), eq: nextOf(text, '='), comments: commentsOf(text), rawText: rawTextOf(text) };
+  let out = '';
   let tags = 0;
-  const head = text.slice(0, last + 1).replace(/<[^>]+>/g, () => { tags += 1; return by; });
-  return { text: head + text.slice(last + 1), tags };
+  let kept = 0;
+  for (let at = text.indexOf('<'); at !== -1 && at < last; ) {
+    const end = tagEnd(scan, at);
+    if (end === -1) { at = text.indexOf('<', at + 1); continue; }
+    out += text.slice(kept, at) + by;
+    tags += 1;
+    kept = end + 1;
+    at = text.indexOf('<', kept);
+  }
+  return { text: out + text.slice(kept), tags };
+}
+
+/**
+ * The next `ch` at or after a position, remembered while the scan moves forward, as `tagPairs`
+ * remembers the next '>': a tag with no '=' before its '>' costs two lookups and no regex.
+ * Reading every tag through a sticky regex and an array of parts made extraction 1.3-2x slower
+ * than the regex it replaced, and the http-linear timing test 30-80% longer (measured 2026-10-25).
+ * A position before the last one asked searches again. In tagPairs, where a tag can start inside
+ * the one before it, that happens about once per such start, and the search runs only to the next
+ * `ch`: an any-order list (`occurrences`) here was up to 1.7x slower on the http-linear shapes, and
+ * no shape found made this one superlinear (measured 2026-10-25, review of the B3 fix).
+ */
+function nextOf(text, ch) {
+  let from = -1;
+  let at = -1;
+  return (pos) => {
+    if (from === -1 || pos < from || (at !== -1 && pos > at)) { from = pos; at = text.indexOf(ch, pos); }
+    return at;
+  };
+}
+
+/**
+ * Every match of `next(from)` (its index, or -1 for none) in a text, listed left to right as far
+ * as the questions reach, with `item()` kept beside each: `first(pos)` is the index in the list of
+ * the first match at or after `pos`, or the list's length. Positions may be asked in any order:
+ * each match is searched for once, however often the questions go back and forth across it.
+ */
+function occurrences(next, item = () => null) {
+  const at = [];
+  const items = [];
+  let done = 0;          // every match before `done` is listed; -1 once the text has no more
+  let k = 0;             // the last answer
+  const first = (pos) => {
+    while (done !== -1 && (!at.length || at[at.length - 1] < pos)) {
+      const found = next(done);
+      if (found === -1) done = -1;
+      else { at.push(found); items.push(item()); done = found + 1; }
+    }
+    if (k < at.length && at[k] >= pos && (k === 0 || at[k - 1] < pos)) return k;
+    if (k + 1 < at.length && at[k] < pos && at[k + 1] >= pos) return (k += 1);
+    let lo = 0;
+    let hi = at.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (at[mid] < pos) lo = mid + 1; else hi = mid; }
+    return (k = lo);
+  };
+  return { at, items, first };
+}
+
+const QUOTE_OPENS = /=[\t\n\f\r ]*["']/y;
+
+/**
+ * The comments of a text, as tagEnd reads them (2026-10-27, review of PR #440, BR-2 and R-1).
+ * `end(pos)` is the first `-->` at or after `pos`, or -1. `inside(p)` says whether the '<' at `p`
+ * lies inside a comment: after the last `<!--` before it, and before that comment's `-->` - or,
+ * for a `<!--` with no `-->` after it, before its first '>'. The last `<!--` before `p` decides,
+ * so a `<!--` inside another comment opens one of its own, as `-->` searched from `<!--` reads it.
+ * `stop(open)` is where the comment opened by the `<!--` at `open` stops - its `-->`, or with none
+ * after it its first '>' - or -1 when neither follows; `inside` and `rawTextOf` both read it there.
+ * Every lookup is remembered as the scan moves forward (nextOf, occurrences), and a page with no
+ * comment answers at once: no stretch is searched twice for a `<!--`, a `-->` or that comment's '>'.
+ */
+function commentsOf(text) {
+  const end = nextOf(text, '-->');
+  const gt = nextOf(text, '>');
+  const stop = (open) => { const close = end(open + 4); return close !== -1 ? close : gt(open + 4); };
+  if (!text.includes('<!--')) return { end, stop, inside: () => false };
+  const opens = occurrences((after) => text.indexOf('<!--', after));
+  let open = -1;
+  let until = -1;
+  return {
+    end,
+    stop,
+    inside(p) {
+      const k = opens.first(p) - 1;
+      if (k < 0) return false;
+      if (opens.at[k] !== open) {
+        open = opens.at[k];
+        until = stop(open);
+        if (until === -1) until = Infinity;
+      }
+      return p < until;
+    },
+  };
+}
+
+/**
+ * The elements whose content HTML reads as text, never as tags (RCDATA and RAWTEXT). mainContent
+ * and htmlToMarkdown remove <script>, <style>, <noscript> and <iframe> whole first (BLOCK_DROP),
+ * but resultLinks and titleOf read the raw page, where an `<a class='` in a script ran on to an
+ * apostrophe in the first result's snippet and took that result with it (2026-10-27, review of
+ * PR #440, FRA2-1). <plaintext> is obsolete, and nothing ends it.
+ */
+const RAW_TEXT = /<(textarea|title|xmp|noembed|noframes|script|style|noscript|iframe)\b/gi;
+/** A RAW_TEXT opening tag (its name in group 1), or a `<!` or `<?`, inside which nothing opens. */
+const DATA_NEXT = new RegExp(`<[!?]|${RAW_TEXT.source}`, 'gi');
+
+/**
+ * Whether the '<' at `p` lies in the content of a RAW_TEXT element (2026-10-27, review of PR #440,
+ * FRA-2 of the BR-2 fix): after a RAW_TEXT opening tag, and at or before the first closing tag of
+ * that name after it - to the end of the text when none follows, where HTML too reads the rest of
+ * the page as the element's text. The elements are found FORWARD, as HTML reads them: inside one,
+ * no '<' opens another, so the next opening tag is looked for only after its closing tag. Taking
+ * the last opening tag before `p` instead, an `'<iframe></iframe>'` string in a script ended the
+ * script at that `</iframe>`, and an `<a class='` after it took a search result with it again
+ * (FRA3-1). Nor does one open inside a comment, which is stepped over to where commentsOf stops it
+ * (an instance of its own, whose lookups only move forward), or inside any other `<!` or `<?`,
+ * stepped over to its first '>', as tagEnd reads them: a `<!-- <title> -->` ran on to a `</title>`
+ * in a later script string, and the script was never opened (FRA4-1). One exception: an opening
+ * tag, or a `<!--`, inside a quoted attribute value (or anywhere inside a tag) is still taken as
+ * one, as tag ends are not read here; such a `<!--` steps the scan to its `-->` (FRA5-2, recorded).
+ * The elements found so far are listed once, and each stretch is searched once.
+ */
+function rawTextOf(text) {
+  const comments = commentsOf(text);
+  const gt = nextOf(text, '>');
+  const opens = [];
+  const untils = [];
+  let pos = 0;
+  let done = false;
+  const extend = (p) => {
+    while (!done && (!opens.length || untils[untils.length - 1] < p)) {
+      DATA_NEXT.lastIndex = pos;
+      const m = DATA_NEXT.exec(text);
+      if (!m) { done = true; break; }
+      if (!m[1]) {
+        const stop = text.startsWith('<!--', m.index) ? comments.stop(m.index) : gt(m.index + 1);
+        if (stop === -1) { done = true; break; }   // it runs to the end: nothing opens after it
+        pos = stop + 1;
+        continue;
+      }
+      const re = new RegExp(`</${m[1]}\\b`, 'gi');
+      re.lastIndex = m.index + 1;
+      const c = re.exec(text);
+      opens.push(m.index); untils.push(c ? c.index : Infinity);
+      if (!c) { done = true; break; }
+      pos = c.index + 1;
+    }
+  };
+  return (p) => {
+    extend(p);
+    let lo = 0; let hi = opens.length;
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (opens[mid] < p) lo = mid + 1; else hi = mid; }
+    return lo > 0 && p <= untils[lo - 1];
+  };
+}
+
+/**
+ * A letter or '/': after a '<', where HTML starts a tag. A `<!` or `<?` starts a comment, a
+ * declaration or a processing instruction, which reads no quoted value (tagEnd).
+ */
+const startsTag = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '/';
+
+/**
+ * Where the tag opened by the '<' at `at` ends, or -1 for `<>`: no tag, as `[^>]+` needs one
+ * character. The one reading of a tag's end, for the stripper and for every pass that reads a tag
+ * by name (tagPairs). Where the scan has gone from an '=' on depends on that '=' alone, so with
+ * `ends` (tagPairs) a scan reaching a remembered '=' stops there, and the '=' it passed are left in
+ * `passed` for tagPairs to remember.
+ *
+ * Only a '<' that starts a tag reads quoted values. Any other - `a <= "x > y" and more` in text -
+ * ends at its first '>' as `/<[^>]+>/` read it: reading its `="` as a value swallowed the rest of
+ * the sentence, to the '>' after the next '"' (found 2026-10-25, review of the B3 fix, F2). It is
+ * still stripped as a tag, as before B3: reading it as text instead, as HTML does, also keeps
+ * `<\/jats:title>` in the abstract of a captured Crossref record, so it would change what counts
+ * as a tag on a page already in the corpus.
+ *
+ * A comment is no tag: `<!--` ends at the next `-->`, as HTML ends it, and nothing inside it opens
+ * a quoted value. Read as a tag that starts with '!', a `="` or `='` in a comment ran on to the
+ * next quote of its kind on the page, and the page's <main> lost its words to one "tag" (found
+ * 2026-10-27, review of PR #440, BR-2). A `<!--` with no `-->` after it ends at its first '>' and
+ * reads no quoted value, as `/<[^>]+>/` read it: HTML reads the rest of the page as the comment,
+ * which would take every word after it out of the capture.
+ *
+ * A pass that finds a tag by name (tagPairs) still finds one written inside a comment, as it did
+ * before B3, and such a tag reads no quoted value either: it ends at its first '>', as before B3.
+ * Reading its quotes, `<!-- <div class='promo -->` ran on to the apostrophe of "It's" in the
+ * content after the comment, and the content block was neither kept nor reported dropped: a
+ * capture of the sidebar graded `full` (found 2026-10-27, review of PR #440, R-1 of the BR-2 fix).
+ * Where a comment lies is read by `commentsOf`.
+ *
+ * Any other `<!` - a DOCTYPE, `<![CDATA[`, a bogus comment - and any `<?` ends at its first '>' and
+ * reads no quoted value, as HTML ends a bogus comment and as `/<[^>]+>/` read it: what follows that
+ * '>' is text a reader sees. Reading their quotes, `<?php $label = 'Upgrade ?>` ran on to the next
+ * apostrophe on the page, and <main> lost its words (2026-10-27, review of PR #440, FRA-2). So does
+ * a tag in the content of a <textarea>, <title>, <xmp>, <noembed>, <noframes>, <script>, <style>,
+ * <noscript> or <iframe> (RAW_TEXT, `rawTextOf`), which HTML reads as text.
+ */
+function tagEnd(scan, at) {
+  const { text, last, gt, eq, ends } = scan;
+  if (text[at + 1] === '>') return -1;
+  if (text[at + 1] === '!' && text.startsWith('<!--', at)) {
+    const close = scan.comments.end(at + 4);
+    return close === -1 ? gt(at + 1) : close + 2;
+  }
+  if (!startsTag(text[at + 1]) || scan.comments.inside(at) || scan.rawText(at)) return gt(at + 1);
+  let i = at + 1;
+  const passed = ends ? scan.passed : null;
+  let end;
+  for (;;) {
+    // Every step lands at or before the last '>', so a '>' is always ahead.
+    const close = gt(i);
+    const equals = eq(i);
+    if (equals === -1 || equals > close) { end = close; break; }
+    if (ends) {
+      const known = ends.size ? ends.get(equals) : undefined;
+      if (known !== undefined) { end = known; break; }
+      passed.push(equals);
+    }
+    QUOTE_OPENS.lastIndex = equals;
+    const partner = QUOTE_OPENS.test(text) ? text.indexOf(text[QUOTE_OPENS.lastIndex - 1], QUOTE_OPENS.lastIndex) : -1;
+    i = partner !== -1 && partner < last ? partner + 1 : equals + 1;
+  }
+  if (ends) scan.passedEnd = end;
+  return end;
 }
 
 /** `text.replace(pairRegex, fn)`, through tagPairs. */
@@ -333,9 +584,9 @@ export function htmlToMarkdown(html) {
   return text.replace(/\n{3,}/g, '\n\n').split('\n').map((l) => l.replace(/[ \t]+$/, '')).join('\n').trim();
 }
 
-// An opening tag that must carry an attribute cannot end at the first '>': the attribute's
-// quoted value is matched as the regex matched it, anchored where the tag starts.
-const LINK = { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["']([^"']*)["'][^>]*>/iy }, close: () => '<\\/a>' };
+// A link is an <a> whose opening tag carries an href, matched as the regex matched it; the tag
+// ends where every tag ends (tagEnd), so a quoted '>' before or after the href ends nothing.
+const LINK = { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["']([^"']*)["']/iy }, close: () => '<\\/a>' };
 
 /**
  * Inline markup to Markdown. `decode: false` leaves entities as written, for a body that a
@@ -615,9 +866,9 @@ export function search(query, { limit = 8, ...opts } = {}) {
  */
 export function resultLinks(body) {
   const text = String(body ?? '');
-  const marked = tagPairs(text, { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["']([^"']+)["'][^>]*class=["']result-link["'][^>]*>/iy }, close: () => '<\\/a>' });
+  const marked = tagPairs(text, { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["']([^"']+)["'][^>]*class=["']result-link["']/iy }, close: () => '<\\/a>' });
   if (marked.length) return marked.map((p) => ({ href: p.tag[1], title: inline(p.body), marked: true }));
-  return tagPairs(text, { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["'](https?:\/\/[^"']+)["'][^>]*>/iy }, close: () => '<\\/a>' })
+  return tagPairs(text, { open: /<a\b/gi, tag: { find: /href=/gi, match: /href=["'](https?:\/\/[^"']+)["']/iy }, close: () => '<\\/a>' })
     .map((p) => ({ href: p.tag[1], title: inline(p.body), marked: false }));
 }
 

@@ -1,0 +1,1 @@
+I expect WARC 1.1 to require a version line, WARC-Type, WARC-Record-ID, WARC-Date and Content-Length per record, with 'resource' records for content fetched without its HTTP exchange and 'metadata' records for description; and gzip per record to be optional. Since the kit keeps text, not raw HTTP responses, resource records are the honest type.

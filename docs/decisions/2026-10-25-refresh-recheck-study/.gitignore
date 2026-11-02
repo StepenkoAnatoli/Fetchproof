@@ -1,0 +1,32 @@
+node_modules/
+.DS_Store
+
+# Credentials never belong in a research project (AGENTS.md Rule 6). Note that
+# `firecrawl env` writes the key into .env, which is why the rule says never to run it
+# inside a repository.
+.env
+.env.*
+*.pem
+*.key
+
+# The Firecrawl CLI saves scrape output into .firecrawl/ in whatever directory it runs
+# from. That is a vendor cache, not evidence - the kit's own captures live in
+# research/raw/ with a ledger entry behind each one.
+.firecrawl/
+
+# The kit's local review logs are not evidence.
+research/raw/.usage.jsonl
+research/raw/.failures.jsonl
+research/raw/.diagnostics.jsonl
+research/raw/.fetches.lock
+# The gate's override log is this machine's record of a bypass (ADR-0081); doctor reads it here.
+research/overrides.log
+
+# export-warc's default output (ADR-0090): a copy of the corpus for archive tools, not
+# evidence - the captures and the ledger are. A WARC written elsewhere with --out is yours.
+research-corpus.warc.gz
+
+# The chain IS evidence and must travel. The explicit negation is here so a broader
+# dotfile rule added later cannot silently exclude it - this repository lost its ledger
+# exactly that way once.
+!research/raw/.fetches.jsonl

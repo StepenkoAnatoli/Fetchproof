@@ -182,7 +182,7 @@ The sequence is decompose -> contract -> collect -> gate -> brief.
    ```
 
    Prefer the page that *owns* the fact (official docs, repo, pricing page, statute) over any write-up about it. Raw page text is cached under `research/raw/`; rows are appended to `research/EVIDENCE.md`.
-4. Rewrite each auto-extracted `Finding` cell into a real claim, with the URL and retrieval date that support it. Keep the `Raw` cell pointing at the cached page - that is what makes the claim checkable. Where a claim rests on one sentence, add it as `[quote: the sentence, copied from the capture]` - word for word; quotation marks around it are optional - and the gate checks the quote occurs in the capture (ADR-0087).
+4. Rewrite each auto-extracted `Finding` cell into a real claim, with the URL and retrieval date that support it. Keep the `Raw` cell pointing at the cached page - that is what makes the claim checkable. Where a claim rests on one sentence, add it as `[quote: the sentence, copied from the capture]` - word for word; quotation marks around it are optional - and the gate checks the quote occurs in the capture (ADR-0087). After a refresh replaces a cited row, the citation still fails `cites-superseded-row` unless every usable quote of the old row is in the new capture (ADR-0193); even then, re-read the new row, because surviving words say nothing about whether the claim still holds. A cited page that a later refresh found gone fails `cites-gone-page` (ADR-0194). Quotes match across transports whatever space a transport writes before `. , ; : ! ? % ) ] }` or after `( [ {` - not beside quote marks, not before `(`, not after `.` in code (ADR-0192) - and `measure.mjs` reports how many closed unknowns rest on a checked quote (ADR-0195).
 5. Run the gate:
 
    ```
@@ -402,7 +402,17 @@ what has gone stale).
 - **Baseline.** `main` is green on all seven jobs. One intermittent failure is on record: on
   2026-10-11 the `node (24)` job's LIVE `browser-guard` meta-refresh test failed once on a
   documents-only commit (Chromium never made a request in 45 s, with D-Bus errors) and passed
-  on re-run and in every sibling job; nothing else is known to flake. An UNSUP (an
+  on re-run and in every sibling job. On 2026-10-26 the `panel` test "an oversized POST receives
+  the 413 JSON refusal and the panel keeps answering" failed once in a local commit hook on
+  Windows, on a documents-only commit, while another agent's tests loaded the machine (1 failed,
+  2197 passed; the hook keeps no error text). It then passed 3 of 3 runs of its group alone; the
+  cause is not established. The same day, with the machine at 63-100% CPU from other programs
+  and process start-up about five times its usual time (`git --version` 318 ms), the
+  `requests` test "a delivery held back by an earlier request's failed push reaches the remote
+  on the next cycle (#325)" failed in one hook run and in 2 of 3 runs of its group alone, which
+  took 1080-1632 s; "nothing fetched is failed only with evidence ... (#321)" failed in one of
+  those. Run alone, the #325 test passed 3 of 3 in 29-38 s against the 60 s per-test watchdog:
+  a timeout under load is likely, not confirmed. Nothing else is known to flake. An UNSUP (an
   unsupported capability, ADR-0108) is not red.
 - **Sources of truth.** `docs/ARCHITECTURE.md` (one row per module), `docs/adr/` (every
   decision with a rejected alternative), `CONTEXT.md` (the domain terms), `CHANGELOG.md`

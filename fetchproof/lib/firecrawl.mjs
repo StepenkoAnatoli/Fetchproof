@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CHILD_OUTPUT_LIMIT, outputOverflow } from './runtime.mjs';
+import { isRateLimited } from './fetch-failure.mjs';
 
 export const name = 'firecrawl-cli';
 /**
@@ -577,7 +578,9 @@ export const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
 export function rateLimitWaitMs(errorText) {
   const text = String(errorText ?? '');
-  if (!/rate limit exceeded/i.test(text)) return null;
+  // Whether this is a rate limit at all is lib/fetch-failure.mjs's answer (ADR-0194), so the
+  // gate, which does not import a transport, reads a failure as this wait loop does.
+  if (!isRateLimited(text)) return null;
   const retry = text.match(/retry after (\d+)\s*s/i);
   // Capped at the minute that clears a per-minute window: the number is the vendor's text,
   // and "retry after 999999999999s" was slept as given, with the corpus lock held, so every

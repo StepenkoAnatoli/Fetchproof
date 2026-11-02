@@ -17,7 +17,8 @@ Match the claim to an appropriate observation:
   quantities and scope. A real page or matching quotation establishes an observation;
   interpreting what it means still requires judgment. Preserve disagreements and
   distinguish what the source states from your inference. Reuse relevant captures and
-  collect missing external facts through the kit's existing process.
+  collect missing external facts through the kit's existing process. A quote that survived
+  a refresh shows that the words are still on the page, not that the claim still holds.
 - **Coding:** derive meaningful acceptance behavior from the task. Inspect the delivered
   implementation and run appropriate checks against its actual state. Use existing
   relevant checks; add a test when it can distinguish an important wrong behavior.

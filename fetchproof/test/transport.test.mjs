@@ -9,6 +9,7 @@ import * as firecrawl from '../lib/firecrawl.mjs';
 import * as httpKeyless from '../lib/http-transport.mjs';
 import { TRANSPORTS, TRANSPORT_NAMES, selectTransport, selectSearch, probeFirecrawl, unusedKeyNote, canSearch } from '../lib/transport.mjs';
 import { mergeByRank } from '../lib/research-run.mjs';
+import * as regexExtract from './fixtures/regex-extract.mjs';
 
 describe('transport');
 
@@ -353,6 +354,285 @@ test('comparison text inside a link label in a paragraph or a div survives, deco
   // `&lt;`, not `<`.
   assert.equal(httpKeyless.decodeEntities('&#38;lt; &#x26;gt; &amp;amp;'), '&lt; &gt; &amp;');
   assert.equal(httpKeyless.htmlToMarkdown('<p>&#38;lt;b&#38;gt;</p>'), '&lt;b&gt;');
+});
+
+// Found 2026-10-25 (reasoning-layer plan, B3): the tag stripper ended a tag at the first '>',
+// even inside a quoted attribute value. `<span title="Tier 3 > unlimited API requests">` left
+// `unlimited API requests">` in the keyless capture - text no reader of the page sees, which the
+// quote check then accepts as quotable. A tag ends at the first '>' outside a `"…"` or `'…'`
+// value; a quote opens a value only right after `=`, as in HTML, so `title=O'Brien` opens none.
+test('a ">" inside a quoted attribute value does not end the tag', () => {
+  assert.equal(httpKeyless.htmlToMarkdown('<p>Plans: <span title="Tier 3 > unlimited API requests">Tier 3</span> has 100 requests a day.</p>'),
+    'Plans: Tier 3 has 100 requests a day.');
+  assert.equal(httpKeyless.htmlToMarkdown(`<div title=O'Brien><span data-x='A > <p>INJECTED</p> B'>Visible</span></div>`), 'Visible',
+    "an unquoted value with an apostrophe opens no quote, and a single-quoted value hides its '>' and its tags");
+  // The other two places the stripper runs: a link's label, and a title taken from the <h1>.
+  assert.equal(httpKeyless.htmlToMarkdown('<p>See <a href="/x"><img alt="a > b">label</a> now.</p>'), 'See [label](/x) now.');
+  assert.equal(httpKeyless.titleOf('<h1><span title="a > b">Name</span></h1>'), 'Name');
+  // R3 still survives beside a quoted '>', written as a page writes it; and a bare '<' in text,
+  // with an apostrophe and quotes after its '>', opens no quote that would swallow them.
+  const md = httpKeyless.htmlToMarkdown(`<ul><li>It's rare: <span title='p > q'>p</span> &lt; 0.001 and x &gt; 3.</li><li>Raw: p < 0.001 and x > 3. Ask O'Brien about "q".</li></ul>`);
+  assert.match(md, /^- It's rare: p < 0\.001 and x > 3\.$/m, 'R3');
+  assert.match(md, /^- Raw: .* Ask O'Brien about "q"\.$/m, 'the text after a bare <');
+});
+
+// The stripper's tag count is the denominator of the words-per-tag score that picks the densest
+// block. A quoted value holding tags is one tag, not one per '<' in it: counted the old way, the
+// 200 `<i></i>` inside this attribute buried the block of prose under the shorter one.
+test('a quoted attribute value holding tags counts as one tag when the densest block is picked', () => {
+  const prose = `<div>${'alpha '.repeat(300)}<span data-x='${'<i></i>'.repeat(200)}'>end</span></div>`;
+  const other = `<div>${'beta '.repeat(120)}<b>x</b></div>`;
+  const chosen = httpKeyless.mainContent(`<html><body>${prose}${other}</body></html>`);
+  assert.equal(chosen.basis, 'densest');
+  assert.match(chosen.html, /alpha/, 'the block of prose is the densest');
+  assert.doesNotMatch(chosen.html, /beta/);
+  assert.equal(chosen.chosenWords, 301);
+});
+
+// Found 2026-10-25 (review of the B3 fix, F1): B3 made only the tag stripper read quoted values.
+// Every tag a conversion pass reads by name still ended at its first '>': a list item, a heading,
+// a table cell, bold, italic and code, a link, and the title. So the same
+// `title="Tier 3 > unlimited API requests"` on an <li> still left `unlimited API requests">` in
+// the capture, and an <a> whose quoted '>' came before its href lost the link. Each of them now
+// ends its opening tag where the stripper does.
+test('a ">" inside a quoted attribute value ends no tag a conversion pass reads', () => {
+  const tier = 'title="Tier 3 > unlimited API requests"';
+  const md = (html) => httpKeyless.htmlToMarkdown(html);
+  assert.equal(md(`<ul><li ${tier}>Tier 3</li></ul>`), '- Tier 3', 'a list item');
+  assert.equal(md(`<h2 ${tier}>Plans</h2>`), '## Plans', 'a heading');
+  assert.equal(md(`<table><tr><td ${tier}>Tier 3</td></tr></table>`), '| Tier 3 |', 'a table cell');
+  assert.equal(md(`<p>See <strong ${tier}>Tier 3</strong> now.</p>`), 'See **Tier 3** now.', 'bold');
+  assert.equal(md(`<p>See <em data-x='a > b'>Tier 3</em> or <code data-x="a > b">npm i</code>.</p>`), 'See *Tier 3* or `npm i`.', 'italic and code');
+  assert.equal(md(`<p>See <a href="/x" ${tier}>label</a> now.</p>`), 'See [label](/x) now.', 'a link with the value after its href');
+  assert.equal(md(`<p>See <a ${tier} href="/x">label</a> now.</p>`), 'See [label](/x) now.', 'a link with the value before its href is still a link');
+  assert.equal(httpKeyless.titleOf('<title data-x="a > b">Name</title>'), 'Name', 'the <title>');
+  assert.equal(httpKeyless.titleOf('<h1 data-x="a > b">Name</h1>'), 'Name', 'the <h1> a page without a <title> is named by');
+});
+
+// Two shapes the http-linear equivalence generator never writes, so nothing compared them with
+// the regex extractor (test/fixtures/regex-extract.mjs) until 2026-10-26 (Phase 4b mutations H1
+// and H8). A literal `<>` in text is no tag: `/<[^>]+>/` needs a character inside, and tagEnd
+// says so first. And an href whose value opens with one quote kind and is closed by the other,
+// with no partner of its own kind before the page's last '>', is no attribute value: the tag ends
+// at its first '>', and the href hit that runs past it makes no link, as the regex found none.
+test('a literal "<>" stays in the text, and an href closed by the other quote kind past the tag\'s ">" makes no link', () => {
+  const same = (html, expected, what) => {
+    assert.equal(httpKeyless.htmlToMarkdown(html), expected, what);
+    assert.equal(regexExtract.htmlToMarkdown(html), expected, `${what}: the regex extractor, which this must match`);
+  };
+  same('<p>In C#, a <> b compares; List<> is an open generic.</p>', 'In C#, a <> b compares; List<> is an open generic.', 'a literal <>');
+  same(`<p>See <a href="x>t</a> and O'Brien's <a href='z'>u</a> now.</p>`, "See t and O'Brien's [u](z) now.", '" opened, \' closes');
+  same(`<p>See <a title="q" href="x>t</a> and it's <a href='z'>u</a> now.</p>`, "See t and it's [u](z) now.", 'the same after another attribute');
+  same(`<p>See <a href='x>t</a> and "this" <a href="z">u</a> now.</p>`, 'See t and "this" [u](z) now.', '\' opened, " closes');
+});
+
+// The same defect one level up (F1): the block mainContent keeps is the body of a <div>, <main>
+// or <article> found by its opening tag, and that tag ended at its first '>' too, so the capture
+// began with the rest of the attribute.
+test('the block mainContent keeps begins after its opening tag, past a quoted ">"', () => {
+  const words = (word, n) => `${word} `.repeat(n);
+  const densest = httpKeyless.mainContent(`<html><body><div data-tip="a > hidden-div">${words('alpha', 150)}</div>`
+    + `<div>${'<b>x</b> '.repeat(40)}</div></body></html>`);
+  assert.equal(densest.basis, 'densest');
+  assert.match(densest.html, /^alpha /, 'the densest <div> begins with its own text');
+  const declared = httpKeyless.mainContent(`<html><body><div>${words('nav', 20)}</div>`
+    + `<main data-x="a > hidden-main">${words('gamma', 150)}</main></body></html>`);
+  assert.equal(declared.basis, 'declared');
+  assert.match(declared.html, /^gamma /, 'the declared <main> begins with its own text');
+});
+
+// Found 2026-10-25 (review of the B3 fix, F2): B3 read a quoted value after any '<', and in text
+// `a <= "x > y" and more text` read `="x > y"` as one, so the "tag" ran on to the '>' after the
+// next '"' and took the rest of the sentence with it. Only a '<' that starts a tag as HTML does - a
+// letter or '/' after it - reads quoted values; any other ends at its first '>', as before B3 (a
+// `<!` or a `<?` read them too until 2026-10-27: FRA-2, below; a comment ends at its `-->`). That
+// reading still strips `<= "x >`, as it always did: reading such a '<' as text, as a browser does,
+// would also change a capture already in the corpus (`<\/jats:title>` in a Crossref record's
+// abstract), so it is not this fix.
+test('a "<" that starts no tag reads no quoted value, and the sentence after it survives', () => {
+  assert.equal(httpKeyless.htmlToMarkdown('<p>a <= "x > y" and more text</p><p>next</p>'), 'a y" and more text\n\n next');
+  assert.equal(httpKeyless.htmlToMarkdown('<p>if (a <= "x") return;</p>'), 'if (a <= "x") return;');
+  assert.equal(httpKeyless.htmlToMarkdown(`<p>a <b title="x > y">bold</b> and <!-- note="x > y" --> <?pi a="x > y"?>c</p>`), 'a **bold** and y"?>c',
+    "a tag still reads its quoted values, a comment ends at its '-->', and a processing instruction at its first '>'");
+});
+
+// Found 2026-10-27 (review of PR #440, BR-2): B3 read a comment as a tag that starts with '!', so
+// a `="` or `='` inside `<!-- ... -->` opened a quoted value. With no partner inside the comment
+// it ran on to the next quote of its kind on the page - an apostrophe in prose - and everything
+// in between counted as one tag. <main> was left with almost no words, the densest-block fallback
+// kept the sidebar, nothing was reported dropped, and the capture was graded `full`. A comment
+// ends at its `-->`, as HTML ends one, and nothing inside it opens a quoted value.
+test('a quote left open inside an HTML comment does not swallow the main content', () => {
+  const prose = 'The free plan allows 10 requests per minute and includes 1,000 credits each month for every account. '.repeat(40);
+  const side = 'Our newsletter shares product news and customer stories with readers around the world every week. '.repeat(20);
+  for (const note of ['<!-- old banner: <div class="promo -->', "<!-- TODO: escape the '=' sign in titles -->"]) {
+    const html = `<html><body><main>${note}<h1>Limits</h1><p>${prose}</p><p class="note">Paid plans differ. It's all on the pricing page.</p></main>`
+      + `<div class="sidebar"><p>${side}</p></div></body></html>`;
+    const extraction = httpKeyless.mainContent(html);
+    assert.equal(extraction.basis, 'declared', note);
+    assert.ok(httpKeyless.htmlToMarkdown(extraction.html).includes('The free plan allows 10 requests per minute'), `${note}: the main prose was dropped`);
+    assert.deepEqual(regexExtract.mainContent(html), extraction, `${note}: the regex extractor, which this must match`);
+  }
+});
+
+// The same quote, in a block tag written inside the comment (R-1 of the BR-2 fix, 2026-10-27). The
+// passes that find a block by name still find `<div` there, as before B3, and reading its `class='`
+// ran on to the apostrophe of "It's" in the content: the content block was neither kept nor
+// reported dropped, and a capture of the sidebar alone was graded `full`. A tag inside a comment
+// reads no quoted value and ends at its first '>', as before B3: the sidebar still wins on density
+// here, as it did then, and the content is reported as dropped, so the capture is graded `partial`.
+test('a block tag inside an HTML comment reads no quoted value, so content it would swallow is reported dropped', () => {
+  const prose = 'The free plan allows 10 requests per minute and includes 1,000 credits each month for every account. '.repeat(40);
+  const side = 'Our newsletter shares product news and customer stories with readers around the world every week. '.repeat(30);
+  const html = `<html><body><!-- <div class='promo --><div class="content"><h1>Limits</h1><p>${prose}</p><p>It's all on the pricing page.</p>`
+    + `<p>See the table.</p></div><div class="sidebar"><p>${side}</p></div></body></html>`;
+  const extraction = httpKeyless.mainContent(html);
+  assert.equal(extraction.basis, 'densest');
+  assert.ok(extraction.dropped.some((block) => block.text.includes('The free plan allows 10 requests per minute')), 'the content block was neither kept nor reported dropped');
+  assert.equal(httpKeyless.gradeCompleteness(httpKeyless.htmlToMarkdown(extraction.html), extraction).completeness, 'partial');
+  assert.deepEqual(regexExtract.mainContent(html), extraction, 'the regex extractor, which this must match');
+});
+
+// A `<!--` with no `-->` anywhere after it. HTML reads the rest of the document as the comment;
+// here it ends at its first '>' and reads no quoted value, as `/<[^>]+>/` read it before B3. Of the
+// two, this one keeps the main content: read as running to the end, it would take every word after
+// it out of the counts that pick and grade the block, and out of the capture.
+test('an unterminated "<!--" ends at its first ">", so the main content after it is kept', () => {
+  const prose = 'The free plan allows 10 requests per minute and includes 1,000 credits each month for every account. '.repeat(40);
+  const html = `<html><body><main><h1>Limits</h1><!-- note="x > <p>${prose}</p><p class="note">It's all on the pricing page.</p></main></body></html>`;
+  const extraction = httpKeyless.mainContent(html);
+  assert.equal(extraction.basis, 'declared');
+  const md = httpKeyless.htmlToMarkdown(extraction.html);
+  assert.ok(md.includes('The free plan allows 10 requests per minute'), 'the main prose after the unterminated comment was dropped');
+  assert.ok(!md.includes('note='), 'the comment up to its first ">" is stripped as a tag');
+  assert.deepEqual(regexExtract.mainContent(html), extraction, 'the regex extractor, which this must match');
+});
+
+// Found 2026-10-27 (review of PR #440, FRA-2): the BR-2 fix still read a quoted value in any other
+// `<!` - a DOCTYPE, `<![CDATA[`, a bogus comment - and in a `<?`, so `<?php $label = 'Upgrade ?>`
+// ran on to the apostrophe of "It's" and took <main> with it, and the capture of the sidebar alone
+// was graded `full`. HTML ends each of them at its first '>' and shows the text after it; so does
+// the converter, as before B3. A legacy DOCTYPE and an xml-stylesheet, whose quotes are closed,
+// read as they always did.
+test('a "<!" that opens no comment, and a "<?", end at their first ">", so the main content after them is kept', () => {
+  const prose = 'The free plan allows 10 requests per minute and includes 1,000 credits each month for every account. '.repeat(40);
+  const side = 'Our newsletter shares product news and customer stories with readers around the world every week. '.repeat(20);
+  const page = (before, first) => `${before}<html><body><main>${first}<h1>Limits</h1><p>${prose}</p><p class="note">Paid plans differ. It's all on the pricing page.</p></main>`
+    + `<div class="sidebar"><p>${side}</p></div></body></html>`;
+  const plain = httpKeyless.mainContent(page('', ''));
+  const plainMd = httpKeyless.htmlToMarkdown(plain.html);
+  for (const note of ["<?php $label = 'Upgrade ?>", "<![CDATA[ var a = 'b; ]]>", "<!DOCTYPE html x='y>", "<!x a='b>",
+    '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">', '<?xml-stylesheet href="a.css" type="text/css"?>']) {
+    for (const [before, first] of [[note, ''], ['', note]]) {
+      const html = page(before, first);
+      const extraction = httpKeyless.mainContent(html);
+      assert.equal(extraction.basis, 'declared', note);
+      assert.deepEqual([extraction.chosenWords, extraction.totalWords, extraction.dropped.length], [plain.chosenWords, plain.totalWords, plain.dropped.length], `${note}: counted as the page without it`);
+      assert.equal(httpKeyless.htmlToMarkdown(extraction.html), plainMd, `${note}: the capture differs from the page without it`);
+      assert.deepEqual(regexExtract.mainContent(html), extraction, `${note}: the regex extractor, which this must match`);
+    }
+  }
+});
+
+// The same quote in a tag written inside a <textarea>, <title>, <xmp>, <noembed> or <noframes>
+// (FRA-2): HTML reads their content as text, never as tags, so a `class='` there opens no quoted
+// value; read as one, it ran on to "It's" as above. Such a tag ends at its first '>', as before B3
+// - a `<textarea>` with no closing tag included, whose content HTML runs to the end of the page.
+// With no <main>, the content block the quote would have swallowed is reported dropped again.
+test('a tag inside a <textarea>, <title> or <xmp> reads no quoted value, so the main content after it is kept', () => {
+  const prose = 'The free plan allows 10 requests per minute and includes 1,000 credits each month for every account. '.repeat(40);
+  const side = 'Our newsletter shares product news and customer stories with readers around the world every week. '.repeat(20);
+  const page = (head, first) => `<html>${head}<body><main>${first}<h1>Limits</h1><p>${prose}</p><p class="note">Paid plans differ. It's all on the pricing page.</p></main>`
+    + `<div class="sidebar"><p>${side}</p></div></body></html>`;
+  for (const note of ["<textarea>Use <b class='x for bold</textarea>", "<TEXTAREA>Use <b class='x for bold</textarea >", "<xmp><b class='x</xmp>",
+    "<noembed><b class='x</noembed>", "<noframes><b class='x</noframes>", "<textarea>Use <b class='x for bold"]) {
+    const html = page('', note);
+    const extraction = httpKeyless.mainContent(html);
+    assert.equal(extraction.basis, 'declared', note);
+    assert.ok(httpKeyless.htmlToMarkdown(extraction.html).includes('The free plan allows 10 requests per minute'), `${note}: the main prose was dropped`);
+    assert.deepEqual(regexExtract.mainContent(html), extraction, `${note}: the regex extractor, which this must match`);
+  }
+  const titled = page("<head><title>A <b class='x</title></head>", '');
+  assert.equal(httpKeyless.mainContent(titled).totalWords, httpKeyless.mainContent(page('<head><title>A</title></head>', '')).totalWords, 'a tag in the <title> swallowed the page');
+  assert.deepEqual(regexExtract.mainContent(titled), httpKeyless.mainContent(titled), 'the regex extractor, which this must match');
+  const sidebar = 'Our newsletter shares product news and customer stories with readers around the world every week. '.repeat(30);
+  const html = `<html><body><textarea><div class='promo</textarea><div class="content"><h1>Limits</h1><p>${prose}</p><p>It's all on the pricing page.</p>`
+    + `<p>See the table.</p></div><div class="sidebar"><p>${sidebar}</p></div></body></html>`;
+  const extraction = httpKeyless.mainContent(html);
+  assert.equal(extraction.basis, 'densest');
+  assert.ok(extraction.dropped.some((block) => block.text.includes('The free plan allows 10 requests per minute')), 'the content block was neither kept nor reported dropped');
+  assert.equal(httpKeyless.gradeCompleteness(httpKeyless.htmlToMarkdown(extraction.html), extraction).completeness, 'partial');
+  assert.deepEqual(regexExtract.mainContent(html), extraction, 'the regex extractor, which this must match');
+  // Where the content ends (2026-10-27, review of PR #440, FRA2-2): HTML closes a <textarea> on
+  // `</TEXTAREA>` too, `</textareax>` closes nothing, and `<textareax>` opens nothing. Read any of
+  // them otherwise, and the span's quoted '>' after it ends the tag, or the `class='` runs on.
+  const tier = '<p>Plans: <span title="Tier 3 > unlimited API requests">Tier 3</span> is the top plan.</p>';
+  const tiered = (first) => `<html><body><main>${first}<h1>Limits</h1><p>${prose}</p>${tier}<p class="note">Paid plans differ. It's all on the pricing page.</p></main>`
+    + `<div class="sidebar"><p>${side}</p></div></body></html>`;
+  for (const first of ['<textarea>a</TEXTAREA>', '<textareax>a</textareax>']) {
+    const page = tiered(first);
+    const read = httpKeyless.mainContent(page);
+    assert.ok(!httpKeyless.htmlToMarkdown(read.html).includes('unlimited API requests">'), `${first}: the quoted ">" after it ended the tag`);
+    assert.deepEqual(regexExtract.mainContent(page), read, `${first}: the regex extractor, which this must match`);
+  }
+  const reopened = tiered("<textarea></textareax><b class='x</textarea>");
+  const read = httpKeyless.mainContent(reopened);
+  assert.equal(read.basis, 'declared', '</textareax> closed the <textarea>');
+  assert.ok(httpKeyless.htmlToMarkdown(read.html).includes('The free plan allows 10 requests per minute'), '</textareax>: the main prose was dropped');
+  assert.deepEqual(regexExtract.mainContent(reopened), read, '</textareax>: the regex extractor, which this must match');
+  // Nor does anything open inside the content (FRA3-1): a <textarea> ends only at its own closing
+  // tag, so a <script> written in it closes nothing, and the `class='` after its `</script >` is
+  // still text. Read as the last opening tag deciding, the <main> lost its prose.
+  const nested = tiered("<textarea><script>a()</script ><b class='x</textarea>");
+  const kept = httpKeyless.mainContent(nested);
+  assert.equal(kept.basis, 'declared', 'the </script > in the <textarea> closed it');
+  assert.ok(httpKeyless.htmlToMarkdown(kept.html).includes('The free plan allows 10 requests per minute'), '</script > in the <textarea>: the main prose was dropped');
+  assert.deepEqual(regexExtract.mainContent(nested), kept, '</script > in the <textarea>: the regex extractor, which this must match');
+  // And an element opens only where HTML can open one (FRA4-1): a `<title>` written in a comment
+  // opens nothing, so its name's closing tag in the <textarea> after it ends nothing either. Read
+  // as an opening tag, it ran on to that `</title>`, the <textarea> was never opened, and the
+  // <main> lost its prose to the `class='` while the sidebar was graded `full`. So does one in a
+  // `<?`, which ends at its first '>'. Beside them, the same <textarea> with no comment, and
+  // `<xmpx>`, which opens no <xmp> in either reading.
+  for (const first of ["<!-- <title> --><textarea>a</title><b class='x</textarea>", "<?php echo '<title>'; ?><textarea>a</title><b class='x</textarea>",
+    "<textarea>a</title><b class='x</textarea>", "<xmpx>a<textarea>b</xmp><b class='x</textarea>"]) {
+    const page = tiered(first);
+    const read = httpKeyless.mainContent(page);
+    const md = httpKeyless.htmlToMarkdown(read.html);
+    assert.equal(read.basis, 'declared', `${first}: the <main> was not believed`);
+    assert.ok(md.includes('The free plan allows 10 requests per minute'), `${first}: the main prose was dropped`);
+    assert.equal(httpKeyless.gradeCompleteness(md, read).completeness, 'partial', `${first}: graded`);
+    assert.deepEqual(regexExtract.mainContent(page), read, `${first}: the regex extractor, which this must match`);
+  }
+});
+
+// Found 2026-10-27 (review of PR #440, FRA2-1): resultLinks reads the raw page, where <script> and
+// <style> are not removed first, so an `<a class='` in a script string read a quoted value that ran
+// on to the apostrophe in the first result's snippet: the first result took the second's title, and
+// the second was lost. Their content is text, as a <textarea>'s is; so is a <noscript>'s and an
+// <iframe>'s (FRA3-2). And inside one, nothing opens another (FRA3-1): an <iframe>, <style> or
+// <title> named in a script string, or a <script> in a <textarea>, ended the outer element at its
+// own closing tag, and the `<a class='` after it took a result again. Nor does a name written in a
+// comment, a `<?` or a `<!` open one (FRA4-1): read as an opening tag, it ran on to its name's
+// closing tag in a script string, the <script> was never opened, and the `<a class='` took a result.
+test('an "<a" with an open quote inside a <script>, <style>, <noscript> or <iframe> takes no search result with it', () => {
+  const results = Array.from({ length: 5 }, (_, i) => `<tr><td>${i + 1}.&nbsp;</td><td><a rel="nofollow" href="https://r${i + 1}.example/page" class="result-link">Result ${i + 1}</a></td></tr>`
+    + `<tr><td class="result-snippet">It's the snippet of result ${i + 1}, with an apostrophe.</td></tr>`).join('\n');
+  const more = `if (x) el.innerHTML = "<a class='more";</script>`;
+  for (const [head, body] of [['', `<script>${more}`], ["<style>/* <a title='x */ .r{}</style>", ''],
+    ['', "<noscript><a href='/html/?q=limits>JS off</a></noscript>"], ['', "<iframe><a href='x></iframe>"],
+    ['', `<script>var e = '<iframe src="https://v.example/e"></iframe>'; ${more}`], ['', `<script>var css = '<style>.a{}</style>'; ${more}`],
+    ['', `<script>var t = '<title>' + n + '</title>'; ${more}`], ['', "<textarea><script src=\"a.js\"></script><a class='more</textarea>"],
+    ['<!-- <iframe src="old.html"> -->', `<script>var e = '<div></iframe>'; ${more}`], ['<?php echo "<title>"; ?>', `<script>var t = '</title>'; ${more}`],
+    ['<!-- a > <title> -->', `<script>var t = '</title>'; ${more}`],
+    ['<![CDATA[ x <title> ]]>', `<script>var t = '</title>'; ${more}`],
+    ['<?php echo "<title>"; ?>', `<script>var t = '</title> -->'; ${more}`]]) {
+    const html = `<html><head><title>limits at DuckDuckGo</title>${head}</head><body>${body}<table>\n${results}\n</table></body></html>`;
+    const links = httpKeyless.resultLinks(html);
+    assert.equal(links.length, 5, `${head}${body}: a result was lost`);
+    assert.deepEqual([links[0].href, links[0].title], ['https://r1.example/page', 'Result 1'], `${head}${body}: the first result`);
+    assert.deepEqual(regexExtract.searchLinks(html), links.map(({ href, title }) => ({ href, title })), `${head}${body}: the regex extractor, which this must match`);
+  }
 });
 
 test('a page that marks its content with <main> is believed over a denser fragment', () => {

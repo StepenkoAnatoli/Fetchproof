@@ -1,0 +1,25 @@
+{
+  "measuredAt": "ab2e605",
+  "treeClean": true,
+  "corpora": 41,
+  "rows": 417,
+  "quotedRows": 213,
+  "anchors": 517,
+  "unreadableMarkers": 0,
+  "anchorStatus": {
+    "found": 517
+  },
+  "tooShort": 0,
+  "corporaPassing": 41,
+  "corporaPassingComparable": 41,
+  "supersededPairs": 27,
+  "supersededPairsQuoted": 0,
+  "supersededPairsCited": 0,
+  "excluded": {
+    "unknown-closure/stale-evidence": "date",
+    "unknown-closure/closure": "date",
+    "hygiene/future-date": "date",
+    "hygiene/hygiene": "date",
+    "gate-integrity/*": "machine"
+  }
+}

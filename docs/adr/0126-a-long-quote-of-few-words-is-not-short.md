@@ -1,7 +1,8 @@
 # ADR-0126: A long quote of few words is not short
 
 Date: 2026-10-02
-Status: accepted; amends ADR-0087 (`quote-too-short`)
+Status: accepted; amends ADR-0087 (`quote-too-short`); amended by ADR-0191 (2026-10-25): the
+floor is measured on the compared text, and a quote short only there is still compared
 
 ## Context
 
