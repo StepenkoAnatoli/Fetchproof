@@ -5,6 +5,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
+  2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
+  reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same
+  function blocked it. It is now an unreadable index (`scratch-failed`) and blocks, with a fix that names the temp
+  folder. One test.
 - **Fixed: the gate reads the address a fetch asked for when that URL holds whitespace** (PR #440 review round 5,
   BR5-1 and its fix review, ADR-0193 decision 8). Every transport writes an argument holding whitespace
   JSON-quoted, and `requestedUrl` split the command on whitespace before it removed quotes, then tested the scheme
