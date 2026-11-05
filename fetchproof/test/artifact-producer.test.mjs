@@ -121,6 +121,37 @@ test('two files differing only in case are refused before anything is written', 
   );
 });
 
+// The reader folds Unicode form as well as case, and a file in another case's folder, since
+// the independent audit of 532c696 (2026-11-04, F03); the producer asks the same question
+// before it writes, for the reason above.
+test('two files differing only in Unicode form are refused before anything is written', () => {
+  const root = collectedProject();
+  const raw = path.join(root, 'research', 'raw');
+  fs.writeFileSync(path.join(raw, 'caf\u00e9.md'), 'one\n', 'utf8');
+  fs.writeFileSync(path.join(raw, 'cafe\u0301.md'), 'two\n', 'utf8');
+  if (fs.readdirSync(raw).filter((n) => n.normalize('NFC') === 'caf\u00e9.md').length < 2) return;   // a normalizing filesystem holds one file
+  assert.throws(
+    () => build(root),
+    (err) => err.code === 'UNPACKAGEABLE_NAME' && /differ only in case or Unicode form/.test(err.message),
+    'the producer must refuse a Unicode-form collision the reader would refuse',
+  );
+});
+
+test('a file and a folder whose names differ only in Unicode form are refused before anything is written', () => {
+  const root = collectedProject();
+  const docs = path.join(root, 'docs');
+  fs.mkdirSync(docs, { recursive: true });
+  fs.writeFileSync(path.join(docs, 'caf\u00e9'), 'a file\n', 'utf8');
+  try { fs.mkdirSync(path.join(docs, 'cafe\u0301')); } catch { return; }   // a normalizing filesystem cannot hold both
+  fs.writeFileSync(path.join(docs, 'cafe\u0301', 'a.md'), 'in the folder\n', 'utf8');
+  assert.throws(
+    () => build(root),
+    (err) => err.code === 'UNPACKAGEABLE_NAME'
+      && err.message.includes('docs/caf\u00e9') && err.message.includes('docs/cafe\u0301/a.md'),
+    'the producer must refuse a folded file-folder collision the reader would refuse',
+  );
+});
+
 // ---------------------------------------------------------------- authorization is derived
 
 test('a caller cannot ask for authorization: there is no such option', () => {

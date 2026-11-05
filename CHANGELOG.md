@@ -5,6 +5,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a ZIP entry name another platform reads as a different name is refused** (independent audit
+  2026-11-04, F03). The artifact reader judged a name by its spelling while an extractor writes it by its
+  meaning: `project/research//BRIEF.md` validated PASS beside the reviewed brief and extracted onto it,
+  `research/gate_off` and `research//GATE_OFF` carried the gate override past the never-packaged check, and a
+  trailing dot, an NTFS stream, a device name or a case-folded file-folder pair each meant another file on
+  Windows. `checkEntryName` now also refuses an empty segment, a character Windows does not allow, a segment
+  ending in a dot or a space, a device name and an 8.3 short-name shape; duplicates, collisions and the
+  never-packaged paths are compared by one key that folds case and Unicode form, and the never-packaged paths
+  are matched as folders too. The producer refuses the same names before it writes (ADR-0197). Thirteen tests.
 - **Fixed: a table in an HTML comment or a code fence is no longer read as the contract** (independent audit
   2026-11-04, F01). The header search took the first table with the header wherever it stood, so an archived
   CLOSED copy of the unknowns table, commented out or kept as a fenced example above the live one, was read in its

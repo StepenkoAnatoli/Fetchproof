@@ -315,6 +315,54 @@ const FIXTURES = {
     },
     expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
   },
+  // Names another platform reads as a different name (independent audit 2026-11-04, F03):
+  // each one extracts onto, or beside, a path the validator judged as a different file.
+  '32-empty-segment': {
+    build: () => hostile('project/research//EVIDENCE.md'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '33-trailing-dot': {
+    build: () => hostile('project/docs/readme.md.'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '34-trailing-space': {
+    build: () => hostile('project/docs/report.md '),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '35-alternate-data-stream': {
+    build: () => hostile('project/research/EVIDENCE.md::$DATA'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '36-character-windows-replaces': {
+    build: () => hostile('project/research/GATE?OFF'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '37-device-name': {
+    build: () => hostile('project/docs/CON'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '38-short-name': {
+    build: () => hostile('project/research/EVIDEN~1.MD'),
+    expect: { status: 'FAIL', code: 'ZIP-PATH' },
+  },
+  '39-file-directory-collision-in-another-case': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/A/child.md', data: text('child') });
+      payload.push({ name: 'project/docs/a', data: text('file') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-PATH-COLLISION', noTempPath: true },
+  },
+  '40-unicode-form-collision': {
+    build: () => {
+      const payload = copyPayload(collected.payload);
+      payload.push({ name: 'project/docs/caf\u00e9.md', data: text('composed') });
+      payload.push({ name: 'project/docs/cafe\u0301.md', data: text('decomposed') });
+      return seal(payload, clone(collected.manifest), { recomputeFiles: false });
+    },
+    expect: { status: 'FAIL', code: 'ZIP-CASE-COLLISION' },
+  },
   '18-unsupported-major-version': {
     build: () => {
       const manifest = clone(collected.manifest);
@@ -656,6 +704,58 @@ test('entry-name rules refuse each shape on its own', () => {
   }
   for (const good of ['project/research/EVIDENCE.md', 'research/raw/.fetches.jsonl', 'a.md']) {
     assert.equal(checkEntryName(good).ok, true, `${JSON.stringify(good)} should be accepted`);
+  }
+});
+
+// Found by the independent audit of 532c696 (2026-11-04, F03): a name Windows, or an
+// extractor running there, reads as another name was judged by its spelling and extracted
+// by its meaning. Each is refused; the near misses beside them are still names.
+test('entry-name rules refuse a name another platform reads as a different name', () => {
+  const bad = [
+    'project/research//BRIEF.md', 'project/research/', 'project/docs/readme.md.', 'project/docs./a.md',
+    'project/docs/report.md ', 'project/research/BRIEF.md::$DATA', 'project/docs/report.md:hidden',
+    'project/research/GATE?OFF', 'project/research/GATE*OFF', 'project/docs/a<b.md', 'project/docs/a|b.md',
+    'project/docs/a"b.md', 'project/docs/a\tb.md',
+    'project/docs/CON', 'project/docs/con.txt', 'project/docs/Nul.tar.gz', 'project/AUX/a.md', 'project/docs/prn',
+    'project/docs/COM1', 'project/docs/lpt9.md', 'project/docs/COM\u00b9', 'project/docs/COM0',
+    'project/research/EVIDEN~1.MD', 'project/docs/PROGRA~1', 'project/docs/di8a3f~12.md',
+  ];
+  for (const name of bad) {
+    assert.equal(checkEntryName(name).ok, false, `${JSON.stringify(name)} should be refused`);
+  }
+  const good = [
+    'project/docs/console.md', 'project/docs/com10.md', 'project/docs/auxiliary/a.md', 'project/docs/a.b.c.md',
+    'project/research/raw/2026-11-04-rate-limits-firecrawl-552467ff.md', 'project/research/raw/.fetches.jsonl',
+    'project/docs/notes.md.~1~', 'project/docs/~$draft.docx', 'project/docs/v1~draft.md', 'project/docs/ caf\u00e9.md',
+  ];
+  for (const name of good) {
+    assert.equal(checkEntryName(name).ok, true, `${JSON.stringify(name)} should be accepted: ${checkEntryName(name).detail}`);
+  }
+});
+
+test('an approved package carrying another spelling of a packaged or forbidden path is refused and authorizes nothing', () => {
+  const run = (label, payload, options) => {
+    const file = writeFixture(scratch, `f03-${label.replace(/\W+/g, '-')}`, seal(payload, clone(approved.manifest), options));
+    return validateArtifact({ file, tempRoot: scratch });
+  };
+  const control = run('control', copyPayload(approved.payload));
+  assert.equal(control.status, 'PASS', control.errors.map((e) => `${e.code}: ${e.message}`).join('\n'));
+  assert.equal(control.buildAuthorized, true);
+
+  const variants = [
+    ['a second brief by a doubled slash', { name: 'project/research//BRIEF.md', data: text('# UNREVIEWED CONTENT\n') }, /ZIP-PATH/],
+    ['the gate override by a doubled slash', { name: 'project/research//GATE_OFF', data: text('') }, /ZIP-PATH/],
+    ['the gate override in lower case', { name: 'project/research/gate_off', data: text('') }, /must never be packaged/],
+    ['the gate override as a folder', { name: 'project/research/GATE_OFF/note.md', data: text('a note\n') }, /must never be packaged/],
+    // Undeclared on purpose: a folder entry is no file, so the manifest never lists one.
+    ['the gate override as an empty folder entry', { name: 'project/research/GATE_OFF/', data: Buffer.alloc(0) }, /must never be packaged/, { recomputeFiles: false }],
+  ];
+  for (const [label, entry, expected, options] of variants) {
+    const result = run(label, [...copyPayload(approved.payload), entry], options);
+    const said = result.errors.map((e) => `${e.code}: ${e.message}`).join('\n');
+    assert.equal(result.status, 'FAIL', `${label}: expected FAIL, got ${result.status}\n${said}`);
+    assert.equal(result.buildAuthorized, false, `${label}: must not authorize a build`);
+    assert.match(said, expected, `${label}: refused for the wrong reason\n${said}`);
   }
 });
 
