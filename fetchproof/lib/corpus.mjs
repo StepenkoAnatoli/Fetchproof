@@ -54,6 +54,32 @@ function isSeparator(line) {
 }
 
 /**
+ * Fed a document's trimmed lines in order, says whether GitHub shows each one as code or hides
+ * it: a line of a fenced code block (its fences included), or of an HTML comment. The header
+ * search and the stray-row scan ask the same one, so a table is judged by one rule wherever it
+ * stands (independent audit 2026-11-04, F01). A fence closes on a run of its own character at
+ * least as long as the one that opened it, with nothing after it; a backtick fence's info string
+ * holds no backtick, so ```code``` on one line is inline code; a fence never closed runs to the
+ * end of the document; inside a comment a fence opens nothing. Indentation is not weighed.
+ */
+function blockContext() {
+  let fence = null;
+  let comment = false;
+  return (text) => {
+    if (fence) {
+      const closes = /^(`+|~+)\s*$/.exec(text);
+      if (closes && closes[1][0] === fence[0] && closes[1].length >= fence.length) fence = null;
+      return true;
+    }
+    if (comment) { if (text.includes('-->')) comment = false; return true; }
+    const opens = /^(`{3,}|~{3,})(.*)$/.exec(text);
+    if (opens && !(opens[1][0] === '`' && opens[2].includes('`'))) { fence = opens[1]; return true; }
+    if (text.startsWith('<!--')) { if (!text.includes('-->')) comment = true; return true; }
+    return false;
+  };
+}
+
+/**
  * A row with too few cells is padded and a row with too many is folded into its last
  * cell - both are reported. Repairing silently would hide the defect; refusing outright
  * would lose the rest of a corpus over one bad line.
@@ -82,16 +108,22 @@ export function repairRowArity(cells, width, free = width - 1) {
 const FREE_TEXT_COLUMNS = ['finding', 'unknown', 'why it matters', 'title'];
 
 /**
- * Parse the first markdown table whose header starts with `header[0]`.
- * Returns `{ header, rows, problems }`; every row carries its 1-based `line`.
+ * Parse the first markdown table whose header starts with `header[0]`, of those GitHub renders
+ * as a table. Returns `{ header, rows, problems, found, line }`; `line` is the header's 1-based
+ * line, and every row carries its own.
  */
 export function parseTable(text, header) {
-  const out = { header: [...header], rows: [], problems: [], found: false };
+  const out = { header: [...header], rows: [], problems: [], found: false, line: 0 };
   if (!text) return out;
   const lines = String(text).split(/\r?\n/);
   const want = new Set(header.map((name) => name.trim().toLowerCase()));
+  // A table in a fence or an HTML comment is shown as code or hidden, so it is not the table. An
+  // archived CLOSED copy of the unknowns table commented out above the live one was read in its
+  // place, and the live table's OPEN unknown passed the gate (independent audit 2026-11-04, F01).
+  const hidden = blockContext();
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) {
+    if (hidden(lines[i].trim())) continue;
     if (!lines[i].trim().startsWith('|')) continue;
     if (!isSeparator(lines[i + 1] ?? '')) continue;
     const cells = splitRow(lines[i]);
@@ -106,6 +138,7 @@ export function parseTable(text, header) {
     start = i;
     out.header = cells;
     out.found = true;
+    out.line = i + 1;
     break;
   }
   if (start < 0) return out;
@@ -180,17 +213,12 @@ export function parseTable(text, header) {
     while (j > end && rowShaped(lines[j].trim())) j -= 1;
     return j === end;
   };
-  let fence = null;
-  let comment = false;
+  const hiddenBelow = blockContext();
   let i = out.rows.length ? out.rows[out.rows.length - 1].line : start + 2;
   for (; i < lines.length; i += 1) {
     const line = lines[i];
     const text = line.trim();
-    if (fence) { if (text.startsWith(fence)) fence = null; continue; }
-    const opens = /^(`{3,}|~{3,})/.exec(text);
-    if (opens) { fence = opens[1][0] === '`' ? '```' : '~~~'; continue; }
-    if (comment) { if (text.includes('-->')) comment = false; continue; }
-    if (text.startsWith('<!--')) { if (!text.includes('-->')) comment = true; continue; }
+    if (hiddenBelow(text)) continue;
     const heading = /^(#{1,6})\s/.exec(line);
     if (heading && heading[1].length <= level) break;
     // A row without its leading pipe is row-shaped here too: below a blank line it was dropped
@@ -957,18 +985,13 @@ export function appendRow(root, rel, header, cells) {
     return line;
   }
   const lines = text.split(/\r?\n/);
-  let last = -1;
   const table = parseTable(text, header);
-  if (table.rows.length) last = table.rows[table.rows.length - 1].line - 1;
-  else {
-    // Find the header by the column the TABLE ACTUALLY LEADS WITH, not by the canonical
-    // first column: on a reordered table those differ, the lookup failed, and the row was
-    // spliced in at line 0 - above the document's own title.
-    const leading = (onDisk?.[0] ?? header[0]).trim().toLowerCase();
-    for (let i = 0; i < lines.length; i += 1) {
-      if (splitRow(lines[i])[0]?.trim().toLowerCase() === leading) { last = i + 1; break; }
-    }
-  }
+  // An empty table takes the row below its separator: the separator of the header the reader
+  // found, so the row goes where it is read. A search of its own once looked for the canonical
+  // first column, missed a reordered table and spliced the row in above the document's title;
+  // then for the column the table leads with, and found an archived copy of the header in a
+  // comment above the live table just as readily (independent audit 2026-11-04, F01).
+  const last = table.rows.length ? table.rows[table.rows.length - 1].line - 1 : table.line;
   lines.splice(last + 1, 0, line);
   writeText(file, lines.join('\n'));
   return line;

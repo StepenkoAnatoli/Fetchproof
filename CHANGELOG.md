@@ -5,6 +5,12 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a table in an HTML comment or a code fence is no longer read as the contract** (independent audit
+  2026-11-04, F01). The header search took the first table with the header wherever it stood, so an archived
+  CLOSED copy of the unknowns table, commented out or kept as a fenced example above the live one, was read in its
+  place: a visible OPEN unknown passed preflight and the portable state derived `buildAuthorized: true`. The
+  header search and the stray-row scan now share one rule for what GitHub shows as code or hides, with fences
+  closed as GitHub closes them, and `appendRow` writes into the table the reader reads. Two tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

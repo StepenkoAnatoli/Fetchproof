@@ -430,6 +430,59 @@ test('the table-split scan skips fences and comments, runs past deeper headings,
   assert.match(named[0].detail, /separator/, named[0].detail);
 });
 
+// Found 2026-11-04 by an independent audit (F01). Only the stray-row scan below the table knew
+// fences and comments; the header search took the first table with the header, wherever it
+// stood. An archived CLOSED copy of the unknowns table, commented out or kept as a fenced
+// example ABOVE the live table, was read as the contract: the visible OPEN unknown was never
+// read, and preflight printed PASS.
+test('a contract table in an HTML comment or a code fence is not the table: the visible one is read, and its OPEN unknown blocks', () => {
+  const hideAbove = (wrap) => (text) => {
+    const at = text.indexOf('| ID |');
+    const table = text.slice(at);
+    return `${text.slice(0, at)}${wrap(table.trimEnd())}\n\n${table.replace('| CLOSED |', '| OPEN |')}`;
+  };
+  const cases = [
+    ['an HTML comment', (table) => `<!-- Archived table, kept for the reviewer\n${table}\n-->`],
+    ['a fenced example', (table) => `\`\`\`markdown\n${table}\n\`\`\``],
+    ['a tilde fence', (table) => `~~~\n${table}\n~~~`],
+    // A fence closes on a run of its own character at least as long as the one that opened it.
+    ['a longer fence holding a shorter one', (table) => `\`\`\`\`\n\`\`\`\n${table}\n\`\`\`\``],
+    // Inside a comment a fence opens nothing; the comment ends at its -->.
+    ['a comment holding a fence', (table) => `<!--\n\`\`\`\n${table}\n-->`],
+  ];
+  for (const [name, wrap] of cases) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, hideAbove(wrap));
+    const corpus = readCorpus(dir);
+    assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']], `${name}: ${JSON.stringify(corpus.unknowns)}`);
+    assert.equal(runPreflight(dir).pass, false, `${name}: a visible OPEN unknown passed preflight`);
+  }
+
+  // The fence has to be one GitHub renders. ```code``` on one line is inline code, not a fence,
+  // so the table below it is still the table; a fence never closed runs to the end of the file.
+  const inline = makePassingProject();
+  corrupt(inline, PATHS.discovery, (text) => text.replace('| ID |', '```code``` is inline code, not a fence.\n\n| ID |').replace('| CLOSED |', '| OPEN |'));
+  assert.deepEqual(readCorpus(inline).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
+  const unclosed = `\`\`\`\n${tableRow(HEADERS.unknowns)}\n|---|---|---|---|---|\n| U-1 | q | w | CLOSED | E-01 |\n`;
+  assert.equal(parseTable(unclosed, HEADERS.unknowns).found, false, 'a table inside a fence that is never closed is code');
+});
+
+// The writers ask the reader where the table is, so they must write where it reads (F01): a row
+// appended below an archived copy in a comment is hidden, and a row for an empty live table went
+// below the first header led by the same column - which was the commented one.
+test('appendRow writes into the table the reader reads, not into an archived copy above it', () => {
+  const head = `${tableRow(HEADERS.evidence)}\n|${HEADERS.evidence.map(() => '---').join('|')}|`;
+  const example = tableRow(['E-00', '2026-01-01', 'P', 'https://example.invalid/', 'an example', 'research/raw/example.md']);
+  for (const archived of [`<!-- An example, kept for the reviewer\n${head}\n${example}\n-->`, `<!--\n${head}\n-->`]) {
+    const dir = makeProject();
+    writeText(resolve(dir, PATHS.evidence), `# Evidence\n\n${archived}\n\n${head}\n`);
+    appendRow(dir, PATHS.evidence, HEADERS.evidence, ['E-01', '2026-01-02', 'P', 'https://x.invalid', 'a claim', 'research/raw/a.md']);
+    const text = readText(resolve(dir, PATHS.evidence));
+    assert(text.includes(archived), `the archived copy was written into:\n${text}`);
+    assert.deepEqual(parseTable(text, HEADERS.evidence).rows.map((r) => r.ID), ['E-01'], text);
+  }
+});
+
 // #331: GFM makes a row's outer pipes optional, so `E-03 | ... |` renders as the third row on
 // GitHub. The kit ended the table there, and named every later row as standing after a blank
 // line the file did not have - 24 times, and never the one line at fault.
