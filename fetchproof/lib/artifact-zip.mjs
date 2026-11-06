@@ -11,7 +11,16 @@
 // Every structural refusal is decided from the CENTRAL DIRECTORY, before one byte is
 // inflated: names, duplicates, case collisions, entry count, declared uncompressed total,
 // and per-entry compression ratio. A zip bomb is refused by reading its table of
-// contents, which costs nothing.
+// contents, which costs nothing. Each entry's LOCAL HEADER is read before inflation too, and
+// must agree with the directory on what an extractor takes from it (audit F05): the name,
+// the method, encryption, the name's encoding, and - unless a data descriptor defers them
+// - the CRC-32 and sizes. A streaming extractor reads only local headers, so a package
+// whose two headers disagree is two packages, depending on the tool that opens it.
+//
+// The CRC-32 of each body is checked when it is read. It proves nothing against whoever
+// wrote the archive - the manifest's SHA-256 does that - but an ordinary extractor checks
+// it and refuses the entry, so a package that passed here with a wrong one would strand
+// its recipient at extraction.
 //
 // The central directory is also attacker-controlled, so it is never the only defence:
 // `inflateRawSync` is called with `maxOutputLength`, which makes the ceiling the runtime's
@@ -222,6 +231,9 @@ export function readCentralDirectory(buf, { limits = ZIP_LIMITS } = {}) {
 
     entries.push({
       name,
+      // The stored bytes, not the decoded name: two different invalid sequences decode to
+      // the same replacement character, and an extractor writes the bytes.
+      nameBytes: buf.subarray(at + 46, nameEnd),
       flags,
       method,
       crc32,
@@ -379,9 +391,74 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
   return { problems, totalBytes };
 }
 
+// ---------------------------------------------------------------- local headers
+
+/** General-purpose flags a local header must share with the directory, and what each means. */
+const AGREED_FLAGS = Object.freeze([[0x1, 'encryption'], [0x800, 'the UTF-8 name flag']]);
+/** Bit 3: the CRC-32 and sizes follow the body in a data descriptor, and the local fields are zero. */
+const DATA_DESCRIPTOR = 0x8;
+const hex = (n) => `0x${n.toString(16).padStart(8, '0')}`;
+
+/**
+ * Judge each entry's local header against its directory record, still before one byte is
+ * inflated. Returns problems in `inspectEntries`'s shape. Only what an extractor reads from
+ * a local header must agree: a version, a timestamp or an extra field that differ change
+ * nothing an extractor writes, so comparing every field would refuse archives ordinary
+ * tools read. With bit 3 set the writer did not know the CRC-32 and sizes when it wrote the
+ * local header, so those fields are not compared; the data descriptor holding them is not
+ * read (ADR-0200). A body that, at the directory's compressed size, would run past the end
+ * of the file is named as that before anything is compared: the directory's own size is then
+ * the fault, and the local header's disagreeing with it only follows from it (#318).
+ */
+export function inspectLocalHeaders(buf, entries) {
+  const problems = [];
+  for (const entry of entries) {
+    const at = entry.localOffset;
+    if (at + 30 > buf.length || buf.readUInt32LE(at) !== SIG_LOCAL) {
+      problems.push({ code: 'ZIP-READ', detail: `entry "${entry.name}" has no local header where the directory says it does`, path: entry.name });
+      continue;
+    }
+    const nameEnd = at + 30 + buf.readUInt16LE(at + 26);
+    const start = nameEnd + buf.readUInt16LE(at + 28);
+    if (start > buf.length) {
+      problems.push({ code: 'ZIP-READ', detail: `entry "${entry.name}" has a local header that runs past the end of the file`, path: entry.name });
+      continue;
+    }
+    if (start + entry.compressedSize > buf.length) {
+      problems.push({ code: 'ZIP-READ', detail: `entry "${entry.name}" runs past the end of the file`, path: entry.name });
+      continue;
+    }
+    const differs = [];
+    const localName = buf.subarray(at + 30, nameEnd);
+    if (!localName.equals(entry.nameBytes)) differs.push(`the name (${JSON.stringify(localName.toString('utf8'))} there)`);
+    const method = buf.readUInt16LE(at + 8);
+    if (method !== entry.method) differs.push(`the compression method (${method} there, ${entry.method} in the directory)`);
+    const flags = buf.readUInt16LE(at + 6);
+    for (const [bit, what] of AGREED_FLAGS) {
+      if ((flags & bit) !== (entry.flags & bit)) differs.push(what);
+    }
+    if (!(flags & DATA_DESCRIPTOR)) {
+      const crc = buf.readUInt32LE(at + 14);
+      const compressed = buf.readUInt32LE(at + 18);
+      const uncompressed = buf.readUInt32LE(at + 22);
+      if (crc !== entry.crc32) differs.push(`the CRC-32 (${hex(crc)} there, ${hex(entry.crc32)} in the directory)`);
+      if (compressed !== entry.compressedSize) differs.push(`the compressed size (${compressed} there, ${entry.compressedSize} in the directory)`);
+      if (uncompressed !== entry.uncompressedSize) differs.push(`the uncompressed size (${uncompressed} there, ${entry.uncompressedSize} in the directory)`);
+    }
+    if (differs.length) {
+      problems.push({
+        code: 'ZIP-READ',
+        detail: `entry "${entry.name}": its local header disagrees with the central directory on ${differs.join(', ')} - an extractor that reads the local header gets another entry than the one listed`,
+        path: entry.name,
+      });
+    }
+  }
+  return problems;
+}
+
 // ---------------------------------------------------------------- reading a body
 
-/** Inflate (or copy) one entry. Never called before `inspectEntries` has passed. */
+/** Inflate (or copy) one entry. Never called before `inspectEntries` and `inspectLocalHeaders` have passed. */
 export function readEntry(buf, entry, { limits = ZIP_LIMITS } = {}) {
   const at = entry.localOffset;
   if (at + 30 > buf.length || buf.readUInt32LE(at) !== SIG_LOCAL) {
@@ -411,6 +488,10 @@ export function readEntry(buf, entry, { limits = ZIP_LIMITS } = {}) {
   if (body.length !== entry.uncompressedSize) {
     fail('ZIP-READ', `entry "${entry.name}" inflated to ${body.length} bytes, but the directory declares ${entry.uncompressedSize}`, entry.name);
   }
+  const crc = zlib.crc32(body);
+  if (crc !== entry.crc32) {
+    fail('ZIP-READ', `entry "${entry.name}" does not match its CRC-32: the directory declares ${hex(entry.crc32)}, its bytes give ${hex(crc)}`, entry.name);
+  }
   return body;
 }
 
@@ -423,7 +504,9 @@ export function readEntry(buf, entry, { limits = ZIP_LIMITS } = {}) {
  */
 export function openZip(buf, { limits = ZIP_LIMITS } = {}) {
   const { entries } = readCentralDirectory(buf, { limits });
-  const { problems, totalBytes } = inspectEntries(entries, { limits });
+  const inspected = inspectEntries(entries, { limits });
+  const problems = [...inspected.problems, ...inspectLocalHeaders(buf, entries)];
+  const { totalBytes } = inspected;
   const files = entries.filter((e) => !e.isDirectory);
   const byName = new Map(files.map((e) => [e.name, e]));
   return {

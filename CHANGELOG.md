@@ -5,6 +5,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a ZIP whose local header disagrees with its directory, or whose bytes miss their CRC-32, is
+  refused** (independent audit 2026-11-04, F05). The artifact reader took each entry's name, method, sizes and
+  CRC-32 from the central directory alone: a package whose local header named `README-ALTER.md` where the
+  directory lists `README-FIRST.md`, and one whose CRC-32 fields were zeroed, validated PASS and stayed
+  `buildAuthorized`, while Python's `zipfile` refuses both and a streaming extractor writes another file. The
+  local header must now agree with the directory on the name, the method, the encryption and UTF-8 name bits
+  and - unless bit 3 defers them to a data descriptor - the CRC-32 and sizes, judged before anything is
+  inflated; each body's CRC-32 is checked when it is read; a `manifest.json` or `manifest.sha256` that does
+  not read is FAIL, not BLOCKED. All `ZIP-READ` (ADR-0200). Five tests.
 - **Fixed: a quote of repeated fragments is judged in bounded time** (independent audit 2026-11-04, F04).
   `anchorFound` searched where a quote's fragments lie by recursion over every chain of their occurrences, so a
   quote repeating one phrase over a page that repeats it, ending in a fragment the page lacks, took time
