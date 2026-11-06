@@ -176,22 +176,40 @@ export const MAX_QUOTE_GAP = 300;
  * nothing is skipped, and an anchor with no fragment left is not found (2026-10-08). A placement
  * is TRIED at each occurrence, not only at the first: a word that appears earlier out of context
  * must not hide the passage the quote meant, which a bounded first-occurrence match would.
+ *
+ * The placements are carried as a set, fragment by fragment, not tried one chain at a time: `ends`
+ * holds where each placement of the fragments so far ends, and an occurrence of the next fragment
+ * extends one when it starts no more than `maxGap` after the nearest end before it. The recursion
+ * this replaces tried every chain of occurrences, so a quote repeating one phrase over a page that
+ * repeats it, ending in a fragment the page lacks, took time exponential in the fragment count
+ * (independent audit 2026-11-04, F04: twenty copies of `alpha beta gamma` did not finish in 3 s).
+ * Each fragment now costs one pass over its occurrences, which are found once per distinct text.
  */
 export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
   const haystack = normalizeForMatch(body);
   const parts = fragments.map((f) => normalizeForMatch(f)).filter(Boolean);
   if (!parts.length) return false;
-  const place = (i, from, first) => {
-    if (i === parts.length) return true;
-    const needle = parts[i];
-    for (let at = haystack.indexOf(needle, from); at >= 0; at = haystack.indexOf(needle, at + 1)) {
-      // Occurrences are increasing, so once one is past the bound every later one is too.
-      if (!first && at - from > maxGap) return false;
-      if (place(i + 1, at + needle.length, false)) return true;
+  const found = new Map();
+  const occurrences = (needle) => {
+    if (!found.has(needle)) {
+      const at = [];
+      for (let i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + 1)) at.push(i);
+      found.set(needle, at);
     }
-    return false;
+    return found.get(needle);
   };
-  return place(0, 0, true);
+  // Ascending, because occurrences are: the nearest end before an occurrence only moves forward.
+  let ends = occurrences(parts[0]).map((at) => at + parts[0].length);
+  for (let i = 1; i < parts.length && ends.length; i += 1) {
+    const next = [];
+    let e = 0;
+    for (const at of occurrences(parts[i])) {
+      while (e + 1 < ends.length && ends[e + 1] <= at) e += 1;
+      if (ends[e] <= at && at - ends[e] <= maxGap) next.push(at + parts[i].length);
+    }
+    ends = next;
+  }
+  return ends.length > 0;
 }
 
 /**

@@ -1,6 +1,7 @@
 // ADR-0087: a claim may carry `[quote: ...]`, and the gate checks the quote is really in the
 // row's capture. Research: docs/decisions/2026-09-28-quote-anchors.
 
+import { spawnSync } from 'node:child_process';
 import { test, describe, assert, makePassingProject, corrupt } from './harness.mjs';
 import { PATHS } from '../lib/core.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
@@ -274,6 +275,33 @@ test('an ellipsis does not bridge a page: the fragments must lie in one passage'
   const twice = `The free plan starts at $0. ${'y'.repeat(1000)} The free plan grants credits.`;
   assert.equal(anchorFound(quoteAnchors('[quote: The free plan ... grants credits]')[0].fragments, twice), true,
     'the placement is searched, not the first occurrence only');
+});
+
+// F04 (independent audit 2026-11-04): the placement was searched by recursion over every chain of
+// occurrences, so a quote repeating one phrase over a page that repeats it, ending in a fragment
+// the page lacks, tried every chain before failing - time exponential in the fragment count:
+// twenty copies of `alpha beta gamma` over 680 characters did not finish in 3 s. Run in a child
+// process with a timeout, so a regression fails here instead of holding the suite.
+test('a quote of repeated fragments is judged in bounded time, whether it is found or not', () => {
+  const script = [
+    `const { anchorFound, quoteAnchors } = await import(${JSON.stringify(new URL('../lib/quotes.mjs', import.meta.url).href)});`,
+    "const verdict = (n, tail) => anchorFound(quoteAnchors('[quote: ' + Array(n).fill('alpha beta gamma').concat(tail).join(' ... ') + ']')[0].fragments, 'alpha beta gamma '.repeat(2 * n));",
+    "console.log(JSON.stringify([verdict(20, ['absent final fragment']), verdict(20, []), verdict(400, ['absent final fragment']), verdict(400, [])]));",
+  ].join(' ');
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  assert.equal(run.error?.code, undefined, 'the search did not finish within 10 s');
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout), [false, true, false, true], 'twenty and four hundred fragments, without and with the page holding them all');
+});
+
+// Kept from the search it replaces: a middle fragment's first occurrence may leave the next out of
+// reach while a later one, still within the bound, reaches it - a placement is tried at each
+// occurrence of every fragment, not only of the first (ADR-0162).
+test('a middle fragment is placed at whichever occurrence lets the next one follow', () => {
+  const body = `alpha beta ${'x'.repeat(250)} beta ${'y'.repeat(100)} gamma`;
+  assert.equal(anchorFound(['alpha', 'beta', 'gamma'], body), true, 'the second beta, 257 characters on, reaches gamma');
+  const far = `alpha beta ${'x'.repeat(350)} beta ${'y'.repeat(100)} gamma`;
+  assert.equal(anchorFound(['alpha', 'beta', 'gamma'], far), false, 'a second beta past the bound is no placement');
 });
 
 // Rank 4: the length floor was measured over the JOINED fragments, so three one-word fragments
