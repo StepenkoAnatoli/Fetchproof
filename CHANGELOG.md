@@ -33,10 +33,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   `anchorFound` searched where a quote's fragments lie by recursion over every chain of their occurrences, so a
   quote repeating one phrase over a page that repeats it, ending in a fragment the page lacks, took time
   exponential in the fragment count: twenty copies of `alpha beta gamma` over 680 characters did not finish in
-  3 s, and the citations check - which preflight and the commit gate run - waited on it. The placements are now
-  carried as a set, one pass per fragment over its occurrences: every placement the search accepted is still
-  accepted, a later occurrence of any fragment still counts (ADR-0162), and the 300-character bound is
-  unchanged. Two tests.
+  3 s, and the citations check - which preflight and the commit gate run - waited on it. The leftmost
+  placement is now tried first, one search per fragment, and decides a quote it places within the bound and
+  one with a fragment that does not occur after it; otherwise the placements are carried as a set, fragment
+  by fragment, over only the occurrences a placement can reach, each fragment's listed once per distinct text
+  when the set first needs them (ADR-0202). Every placement the search
+  accepted is still accepted, a later occurrence of any fragment still counts (ADR-0162), and the
+  300-character bound is unchanged. A crafted quote whose leftmost placement goes past the bound still costs
+  up to one read of every occurrence per fragment. Three tests.
 - **Fixed: a lost evidence table is named, and no check passes over it** (independent audit 2026-11-04, FP-011,
   alias B-2). `readCorpus` read a missing `research/EVIDENCE.md`, a directory in its place, or a file holding no
   evidence table as an empty table, with no problem recorded: `corpus-shape` said "the corpus parses cleanly",
