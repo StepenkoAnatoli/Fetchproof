@@ -408,7 +408,10 @@ const hex = (n) => `0x${n.toString(16).padStart(8, '0')}`;
  * local header, so those fields are not compared; the data descriptor holding them is not
  * read (ADR-0200). A body that, at the directory's compressed size, would run past the end
  * of the file is named as that before anything is compared: the directory's own size is then
- * the fault, and the local header's disagreeing with it only follows from it (#318).
+ * the fault, and the local header's disagreeing with it only follows from it (#318). A local
+ * header that gives its sizes as ZIP64 (0xFFFFFFFF, the values in an extra field) with bit 3
+ * clear is refused as ZIP64, as the directory's are, and not compared: this reader does not
+ * implement ZIP64, and the two headers may well agree.
  */
 export function inspectLocalHeaders(buf, entries) {
   const problems = [];
@@ -428,12 +431,16 @@ export function inspectLocalHeaders(buf, entries) {
       problems.push({ code: 'ZIP-READ', detail: `entry "${entry.name}" runs past the end of the file`, path: entry.name });
       continue;
     }
+    const flags = buf.readUInt16LE(at + 6);
+    if (!(flags & DATA_DESCRIPTOR) && (buf.readUInt32LE(at + 18) === U32_MAX || buf.readUInt32LE(at + 22) === U32_MAX)) {
+      problems.push({ code: 'ZIP-READ', detail: `entry "${entry.name}" uses ZIP64 size fields in its local header, which this reader does not implement`, path: entry.name });
+      continue;
+    }
     const differs = [];
     const localName = buf.subarray(at + 30, nameEnd);
     if (!localName.equals(entry.nameBytes)) differs.push(`the name (${JSON.stringify(localName.toString('utf8'))} there)`);
     const method = buf.readUInt16LE(at + 8);
     if (method !== entry.method) differs.push(`the compression method (${method} there, ${entry.method} in the directory)`);
-    const flags = buf.readUInt16LE(at + 6);
     for (const [bit, what] of AGREED_FLAGS) {
       if ((flags & bit) !== (entry.flags & bit)) differs.push(what);
     }
@@ -457,6 +464,28 @@ export function inspectLocalHeaders(buf, entries) {
 }
 
 // ---------------------------------------------------------------- reading a body
+
+// `zlib.crc32` is native, but Node added it in 22.2.0, and the kit's runtime checks admit any
+// Node 22 (`checkNode`, the doctor's `nodeLine`): on 22.0 and 22.1 every read would throw. So
+// the reader carries the table form too, used only where zlib has none (ADR-0200). It is not
+// the writer's (`archive.mjs`): the module header keeps the two files apart.
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+/** The CRC-32 of `body`: zlib's where this Node has it, looked up per call, else the same sum from the table. */
+function crc32Of(body) {
+  if (typeof zlib.crc32 === 'function') return zlib.crc32(body);
+  let c = 0xffffffff;
+  for (let i = 0; i < body.length; i += 1) c = CRC_TABLE[(c ^ body[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
 
 /** Inflate (or copy) one entry. Never called before `inspectEntries` and `inspectLocalHeaders` have passed. */
 export function readEntry(buf, entry, { limits = ZIP_LIMITS } = {}) {
@@ -488,7 +517,7 @@ export function readEntry(buf, entry, { limits = ZIP_LIMITS } = {}) {
   if (body.length !== entry.uncompressedSize) {
     fail('ZIP-READ', `entry "${entry.name}" inflated to ${body.length} bytes, but the directory declares ${entry.uncompressedSize}`, entry.name);
   }
-  const crc = zlib.crc32(body);
+  const crc = crc32Of(body);
   if (crc !== entry.crc32) {
     fail('ZIP-READ', `entry "${entry.name}" does not match its CRC-32: the directory declares ${hex(entry.crc32)}, its bytes give ${hex(crc)}`, entry.name);
   }

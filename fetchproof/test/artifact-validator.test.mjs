@@ -6,6 +6,7 @@
 // directory the harness removes.
 
 import { execFileSync } from 'node:child_process';
+import zlib from 'node:zlib';
 import { test, describe, assert, fs, path, os, cleanup, tempDir, requirePython } from './harness.mjs';
 import { sha256, canonicalJson } from '../lib/core.mjs';
 import { validateArtifact, authorizationProblems, SUPPORTED_FORMAT_MAJOR } from '../lib/artifact-validator.mjs';
@@ -685,6 +686,44 @@ test('a ZIP that defers its CRC-32 and sizes to a data descriptor is read, and i
   wrong.writeUInt32LE(0, headersOf(wrong, 'stored.md').central + 16);
   assert.deepEqual(openZip(wrong).problems, [], 'bit 3 defers the local fields, so only the directory says what the CRC-32 is');
   assert.throws(() => openZip(wrong).read('stored.md'), /CRC-32/);
+});
+
+test('a body is checked against its CRC-32 on a Node without zlib.crc32, which 22.0 and 22.1 lack and the runtime checks admit (#442 review)', () => {
+  const body = 'deflated body, deflated body, deflated body';
+  const zip = rawZip([{ name: 'stored.md', data: 'stored body' }, { name: 'deflated.md', data: body, deflate: true }]);
+  const wrong = Buffer.from(zip);
+  const at = headersOf(wrong, 'deflated.md');
+  wrong.writeUInt32LE(0x12345678, at.local + 14);
+  wrong.writeUInt32LE(0x12345678, at.central + 16);
+  // Taken away and put back in one synchronous step, so nothing else in this process meets it gone.
+  const native = Object.getOwnPropertyDescriptor(zlib, 'crc32');
+  let read;
+  let refusal;
+  delete zlib.crc32;
+  try {
+    const opened = openZip(zip);
+    read = opened.names.map((name) => opened.read(name).toString('utf8'));
+    try { openZip(wrong).read('deflated.md'); } catch (err) { refusal = err; }
+  } finally {
+    if (native) Object.defineProperty(zlib, 'crc32', native);
+  }
+  assert.deepEqual(read, ['stored body', body]);
+  const sum = `0x${zlib.crc32(Buffer.from(body)).toString(16).padStart(8, '0')}`;
+  assert.equal(refusal?.code, 'ZIP-READ', String(refusal));
+  assert.ok(refusal.message.includes(`the directory declares 0x12345678, its bytes give ${sum}`), refusal.message);
+});
+
+test('a local header giving its sizes as ZIP64 is refused for that, not as a disagreement with the directory (#442 review)', () => {
+  // 0xFFFFFFFF in the local sizes, the real ones in a ZIP64 extra field, 32-bit sizes in the
+  // directory: the two headers agree, and the reader, which does not implement ZIP64, must say why it refuses.
+  const data = 'a body long enough to be worth deflating, a body long enough';
+  const problems = openZip(rawZip([{ name: 'a.md', data, deflate: true, zip64Local: true }])).problems;
+  assert.deepEqual(problems.map((p) => [p.code, p.path]), [['ZIP-READ', 'a.md']], JSON.stringify(problems));
+  assert.equal(problems[0].detail, 'entry "a.md" uses ZIP64 size fields in its local header, which this reader does not implement');
+  // With bit 3 set the local sizes are not the ones read, so they are not judged: such an entry still reads.
+  const deferred = openZip(rawZip([{ name: 'a.md', data, deflate: true, zip64Local: true, descriptor: true }]));
+  assert.deepEqual(deferred.problems, []);
+  assert.equal(deferred.read('a.md').toString('utf8'), data);
 });
 
 test('the fixtures an independent reader refuses are refused here, and the archives it reads are read (audit F05)', () => {

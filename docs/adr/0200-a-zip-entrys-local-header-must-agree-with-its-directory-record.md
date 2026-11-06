@@ -44,16 +44,22 @@ every read, a manifest with a wrong one would have been that case.
    agree with the directory on what an extractor takes from it: the name, as stored bytes; the
    compression method; the encryption bit (0); the UTF-8 name bit (11); and, when the local
    header's bit 3 is clear, the CRC-32, the compressed size and the uncompressed size. One `ZIP-READ`
-   problem per entry names every field that disagrees, with both values.
+   problem per entry names every field that disagrees, with both values. A local header whose bit 3
+   is clear and whose compressed or uncompressed size is the ZIP64 sentinel (`0xFFFFFFFF`: the size
+   is in a ZIP64 extra field) is refused as ZIP64, in the words the directory's ZIP64 sizes are
+   refused in, and not compared: the reader does not implement ZIP64, and the two headers may agree
+   (Python's `zipfile` writes such a header with `force_zip64`; found by the review of #442).
 2. **Bit 3 is the data-descriptor convention, respected.** A writer that does not know the CRC-32 and
    sizes when it writes the local header sets bit 3, writes zeros there, and puts the values in a
    data descriptor after the body (PKWARE's APPNOTE, general-purpose bit 3). With bit 3 set in the local header those
    three fields are not compared; the directory's are the ones read, as before. The descriptor is
    not read.
-3. **`readEntry` checks the CRC-32 of each body** (`zlib.crc32`, Node 22.2 and later, inside the
-   kit's 22.22.1 floor) after its length, against the directory's, and refuses a body that does not
-   match with `ZIP-READ`. The manifest's SHA-256s stay the integrity check; the CRC-32 is format
-   conformance.
+3. **`readEntry` checks the CRC-32 of each body** after its length, against the directory's, and
+   refuses a body that does not match with `ZIP-READ`. It uses `zlib.crc32` where Node has it
+   (22.2.0 and later) and the same sum from a 256-entry table where it does not: the kit's runtime
+   checks (`checkNode`, the doctor's `nodeLine`) admit Node 22.0 and 22.1, which lack it, and every
+   read there would throw (found by the review of #442). The manifest's SHA-256s stay the integrity
+   check; the CRC-32 is format conformance.
 4. **The validator reads `manifest.json` and `manifest.sha256` under a catch**: a `ZipError` there is
    FAIL with its code, as in the payload loop. Any other error still reaches the outer catch.
 5. **The code is `ZIP-READ`**, the one the reader already gives a container that does not read as
@@ -86,7 +92,14 @@ every read, a manifest with a wrong one would have been that case.
 - **New error codes** (a header-mismatch code, a CRC code). New codes under the freeze for faults in
   the class `ZIP-READ` already names, and every consumer that maps codes would need a case.
 - **The writer's `crc32` (`archive.mjs`) imported into the reader.** The module header keeps the
-  writer and the reader apart, and zlib's is native.
+  writer and the reader apart; the reader carries its own table, used only where zlib has no `crc32`.
+- **`zlib.crc32` alone, with the floor `checkNode` and the doctor enforce raised to 22.2.** The
+  documented floor is 22.22.1+ or 24+, and neither check enforces it (both admit 22.0); which Node
+  the kit refuses is a support decision of its own, not one for a ZIP reader to make in passing. Not
+  taken here; the gap between the documented and the enforced floor is a follow-up.
+- **A local header's ZIP64 extra field read, and its sizes compared with the directory's.** That
+  reads part of ZIP64 in the local header while the directory's ZIP64 is refused outright: the
+  half-read this module refuses. The kit's own writer never writes ZIP64.
 
 ## Consequences
 
@@ -99,9 +112,12 @@ every read, a manifest with a wrong one would have been that case.
 - Stricter than Python's `zipfile` on purpose: it checks a local header's signature and compares its
   name with the directory's, and nothing else. A local method, encryption bit, UTF-8 bit, CRC-32 or size that disagrees is read
   by a streaming extractor, so it is refused here although Python reads the entry.
+- A local header with ZIP64 sizes and bit 3 clear is refused; before this change such an entry was
+  read, from the directory's sizes. A package or workbook re-zipped by a writer that forces ZIP64 on
+  small entries no longer validates.
 - The kit's own writer (`archive.mjs`) writes the same flags, CRC-32 and sizes in both headers, so a
   package it produced still validates.
-- Cost: one local header read per entry, and one native CRC-32 pass per body read.
+- Cost: one local header read per entry, and one CRC-32 pass per body read (native where Node has it).
 - Not covered, named so it is not taken as fixed: the data descriptor is not read.
 
 ## Trigger to revisit
