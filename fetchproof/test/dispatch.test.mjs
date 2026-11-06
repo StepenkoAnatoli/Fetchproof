@@ -435,8 +435,87 @@ test('retrying a failing poll does not outlast the deadline', async () => {
     }),
     (err) => { assert.equal(err.status, 502); return true; },
   );
-  // As with a run still in progress: the poll after the sleep that crosses the deadline is the last.
-  assert.equal(doFetch.calls.length, 2, 'retries went on after the deadline had passed');
+  // No poll starts after the deadline (ADR-0201): the wait after the failure ends at it, and the
+  // failure is what the watch reports.
+  assert.equal(doFetch.calls.length, 1, 'a poll started after the deadline had passed');
+});
+
+// Found 2026-11-04 (independent audit, F06): the deadline was checked only once a poll had
+// answered. A request that never answered held the watch past --timeout for as long as it hung,
+// and a completed run it released late was returned as if in time. These run on the real clock:
+// what is under test is a timer cutting off an await, which a fake clock cannot show.
+
+/** What `promise` came to within `ms`: `{ value }`, `{ error }`, or 'still pending'. */
+async function within(ms, promise) {
+  let timer;
+  const pending = new Promise((resolve) => { timer = setTimeout(() => resolve('still pending'), ms); });
+  try {
+    return await Promise.race([promise.then((value) => ({ value }), (error) => ({ error })), pending]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test('a poll still unanswered at the deadline is cut off, and the watch ends in TIMEOUT naming the run (audit F06)', async () => {
+  const completed = { status: 'completed', conclusion: 'success' };
+  const runUrl = 'https://github.com/example-org/example-project/actions/runs/7';
+  // Each is held until released, whatever the signal does: a fetch or a body that ignores it is cut off too.
+  const variants = [
+    ['no response headers', (released) => released.then(() => jsonResponse(200, completed))],
+    ['a body that never finishes', (released) => ({ ok: true, status: 200, json: () => released.then(() => completed) })],
+    ['the body of a 403 that never finishes', (released) => ({ ok: false, status: 403, headers: new Headers(), text: () => released.then(() => '') })],
+  ];
+  for (const [what, second] of variants) {
+    let release;
+    const released = new Promise((resolve) => { release = resolve; });
+    const doFetch = stubFetch([jsonResponse(200, { status: 'queued', html_url: runUrl }), () => second(released)]);
+    const outcome = await within(2000, waitForRun({ repository: REPO, runId: 7, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 50 }));
+    release();
+    assert.ok(outcome.error, `${what}: the watch was ${outcome === 'still pending' ? 'still pending 2 s after its 50 ms deadline' : 'answered'}`);
+    assert.equal(outcome.error.code, 'TIMEOUT', `${what}: ${outcome.error.message}`);
+    assert.match(outcome.error.message, /run 7/);
+    assert.match(outcome.error.message, /queued/, `${what}: the last status read is not named`);
+    assert.match(outcome.error.remedy, /--run-id 7/, `${what}: no way back to the run`);
+    assert.ok(outcome.error.remedy.includes(runUrl), `${what}: the remedy does not name the run's page`);
+    assert.equal(doFetch.calls[1].init.signal?.aborted, true, `${what}: the request's signal was not aborted, so a real fetch would go on`);
+    assert.equal(doFetch.calls.length, 2, `${what}: a poll started after the deadline`);
+  }
+});
+
+test('the wait before the next poll ends at the deadline, and no poll starts after it (audit F06)', async () => {
+  let clock = 0;
+  const slept = [];
+  const doFetch = stubFetch([jsonResponse(200, { status: 'in_progress' })]);
+  await assert.rejects(
+    () => waitForRun({
+      repository: REPO, runId: 1, token: TOKEN, fetch: doFetch,
+      intervalMs: 10_000, timeoutMs: 25_000, sleep: async (ms) => { slept.push(ms); clock += ms; }, now: () => clock,
+    }),
+    (err) => { assert.equal(err.code, 'TIMEOUT'); assert.match(err.message, /still in_progress/); return true; },
+  );
+  assert.deepEqual(slept, [10_000, 10_000, 5_000], 'a wait ran past the deadline');
+  assert.equal(doFetch.calls.length, 3, 'a poll started after the deadline');
+});
+
+test('an answer that comes inside the deadline is taken, however late in it (audit F06)', async () => {
+  const doFetch = stubFetch([async () => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return jsonResponse(200, { status: 'completed', conclusion: 'success' });
+  }]);
+  const outcome = await within(2000, waitForRun({ repository: REPO, runId: 1, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 1000 }));
+  assert.equal(outcome.value?.conclusion, 'success', `a poll answered at 150 ms of a 1 s watch was not taken: ${outcome.error?.message ?? outcome}`);
+});
+
+test('a watch longer than a timer can hold is not cut off at its start (audit F06)', async () => {
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  const doFetch = stubFetch([() => released.then(() => jsonResponse(200, { status: 'completed', conclusion: 'success' }))]);
+  // 2^31 ms is one more than a setTimeout holds; given it, a timer fires after 1 ms.
+  const watching = waitForRun({ repository: REPO, runId: 1, token: TOKEN, fetch: doFetch, timeoutMs: 2 ** 31 });
+  const early = await within(200, watching);
+  release();
+  assert.equal(early, 'still pending', `the watch ended at once, its deadline past what a timer holds: ${early.error?.message}`);
+  assert.equal((await watching).conclusion, 'success');
 });
 
 // ---------------------------------------------------------------- the artifact

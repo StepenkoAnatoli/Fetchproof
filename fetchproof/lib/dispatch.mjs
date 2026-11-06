@@ -138,14 +138,30 @@ function splitRepository(repository) {
   return parts;
 }
 
-async function readError(response) {
+/**
+ * `promise`, or a rejection with `signal`'s reason once it aborts - whichever comes first.
+ * Without a signal, the promise itself. The promise is not cancelled, only no longer waited
+ * for: the signal also goes to `fetch`, which cancels a real request, and this covers a fetch
+ * or a body that does not honour it (independent audit 2026-11-04, F06).
+ */
+function unlessAborted(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) abort();
+  });
+}
+
+async function readError(response, signal) {
   let body = '';
-  try { body = (await response.text()).slice(0, 400); } catch { /* a body we cannot read is not a body */ }
+  try { body = (await unlessAborted(response.text(), signal)).slice(0, 400); } catch { /* a body we cannot read is not a body */ }
   return redact(body);
 }
 
-async function rateLimitError(response) {
-  const body = await readError(response);
+async function rateLimitError(response, signal) {
+  const body = await readError(response, signal);
   const remaining = response.headers?.get?.('x-ratelimit-remaining');
   const retry = response.headers?.get?.('retry-after');
   if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body)) return null;
@@ -276,10 +292,12 @@ function stringifyInputs(inputs) {
  * as UNKNOWN, with no status and no remedy (found 2026-09-30, break-test). The parser's
  * first line is kept: it usually shows the doctype or the cache's own error text.
  */
-async function readJsonBody(response, what) {
+async function readJsonBody(response, what, signal) {
   try {
-    return await response.json();
+    return await unlessAborted(response.json(), signal);
   } catch (err) {
+    // A body cut off by the caller's deadline is not a body that is not JSON: the caller names it.
+    if (signal?.aborted) throw err;
     throw new DispatchError('BAD_BODY', `${what}: HTTP ${response.status} returned a body that is not JSON (${String(err.message).split('\n')[0]})`, {
       status: response.status,
       remedy: 'a JSON API answering with HTML is usually a proxy or a maintenance page - retry, then check api.github.com',
@@ -289,19 +307,22 @@ async function readJsonBody(response, what) {
 
 async function callApi(doFetch, url, init, { api = GITHUB_API, remedy = 'check connectivity, then retry' } = {}) {
   try {
-    return await doFetch(url, init);
+    return await unlessAborted(doFetch(url, init), init.signal);
   } catch (err) {
+    // Nor is a request cut off by it a network failure, which a watch would retry.
+    if (init.signal?.aborted) throw err;
     throw new DispatchError('NETWORK', `could not reach ${api}: ${redact(fetchFailure(err))}`, { remedy });
   }
 }
 
-export async function getRun({ repository, runId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API }) {
+/** `signal`, when given, cuts the request and the reading of its body short once it aborts. */
+export async function getRun({ repository, runId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API, signal }) {
   const [owner, name] = splitRepository(repository);
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/runs/${runId}`,
-    { headers: headers(token) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
+    { headers: headers(token), ...(signal && { signal }) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
   if (!response.ok) {
     if (response.status === 403) {
-      const limited = await rateLimitError(response);
+      const limited = await rateLimitError(response, signal);
       if (limited) throw limited;
     }
     // A refusal names its own way out; the caller's generic "pick it up again" would send
@@ -312,7 +333,7 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
           : null;
     throw new DispatchError('HTTP', `could not read run ${runId}: HTTP ${response.status}`, { status: response.status, remedy });
   }
-  return readJsonBody(response, `could not read run ${runId}`);
+  return readJsonBody(response, `could not read run ${runId}`, signal);
 }
 
 /**
@@ -327,8 +348,21 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
  * lasts up to 30 minutes, and every failed poll used to be fatal: one dropped connection ended
  * it with RUN_FAILED while the run went on unwatched (found 2026-10-01, break-test). A refusal
  * a retry cannot change - 401, 403, 404 - still ends it at once, and no retry outlasts the deadline.
+ *
+ * The deadline bounds the polls as well as the waits between them (ADR-0201). It used to be
+ * checked only once a poll had answered, so a request that never answered - no headers, or a
+ * body that never finished - held the watch past `--timeout` for as long as it hung, and a
+ * completed run it released late was returned as if in time (independent audit 2026-11-04,
+ * F06). Now one signal, aborted at the deadline, goes to each poll's fetch and cuts off what
+ * is still unanswered then, ending the watch with TIMEOUT; a wait ends at the deadline at the
+ * latest, and no poll starts after it. A failure being retried when it comes is reported as
+ * itself, as before.
  */
 export const MAX_POLL_RETRIES = 5;
+
+// A setTimeout holds at most 2^31-1 ms, about 24.8 days: a longer delay fires after 1 ms, with
+// a warning (AbortSignal.timeout does the same). A longer watch re-arms its timer instead.
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function transientPoll(err) {
   if (!(err instanceof DispatchError)) return false;
@@ -348,29 +382,50 @@ export async function waitForRun({
   onRetry = () => {},
 } = {}) {
   const deadline = now() + timeoutMs;
+  const watch = new AbortController();
+  let timer;
+  const arm = (ms) => {
+    timer = setTimeout(() => (ms > MAX_TIMER_MS ? arm(ms - MAX_TIMER_MS) : watch.abort()), Math.min(ms, MAX_TIMER_MS));
+  };
+  arm(timeoutMs);
   let last = null;
+  let seen = null;
+  let failed = null;
   let failures = 0;
-  for (;;) {
-    let run;
-    try {
-      run = await getRun({ repository, runId, token, fetch: doFetch, api });
-    } catch (err) {
-      failures += 1;
-      if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw err;
-      onRetry(err, failures);
-      await sleep(intervalMs);
-      continue;
+  const seconds = Math.round(timeoutMs / 1000);
+  // Not a failure of the run: the caller stopped watching, and the run keeps going.
+  const timedOut = (message) => new DispatchError('TIMEOUT', message, {
+    remedy: `the run ${seen ? 'is still going' : 'is not known to have failed'}; check ${seen?.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
+  });
+  try {
+    for (;;) {
+      if (watch.signal.aborted || now() >= deadline) {
+        throw failed ?? timedOut(seen ? `run ${runId} was still ${seen.status} after ${seconds}s` : `run ${runId} was not read within ${seconds}s`);
+      }
+      let run;
+      try {
+        run = await getRun({ repository, runId, token, fetch: doFetch, api, signal: watch.signal });
+      } catch (err) {
+        if (watch.signal.aborted) {
+          throw timedOut(`the status poll for run ${runId} had no answer when the watch ended after ${seconds}s${seen ? `; it was ${seen.status} at the poll before` : ''}`);
+        }
+        failures += 1;
+        if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw err;
+        failed = err;
+        onRetry(err, failures);
+      }
+      if (run) {
+        failures = 0;
+        failed = null;
+        seen = run;
+        if (run.status !== last) { last = run.status; onStatus(run); }
+        // An answer in hand is taken: a poll the deadline did not cut off answered in time.
+        if (run.status === 'completed') return run;
+      }
+      if (now() < deadline) await sleep(Math.min(intervalMs, deadline - now()));
     }
-    failures = 0;
-    if (run.status !== last) { last = run.status; onStatus(run); }
-    if (run.status === 'completed') return run;
-    if (now() >= deadline) {
-      throw new DispatchError('TIMEOUT', `run ${runId} was still ${run.status} after ${Math.round(timeoutMs / 1000)}s`, {
-        // Not a failure of the run: the caller stopped watching, and the run keeps going.
-        remedy: `the run is still going; check ${run.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
-      });
-    }
-    await sleep(intervalMs);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

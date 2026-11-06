@@ -5,6 +5,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the remote watch ends at its deadline, even with a poll in flight** (independent audit 2026-11-04,
+  F06). `waitForRun` checked its deadline only once a poll had answered: a request that never answered - no
+  headers, or a body that never finished - held `collect-remote` past `--timeout` for as long as it hung, and a
+  completed run it released late was returned as if in time. One signal per watch, aborted at the deadline,
+  now goes to each poll's fetch and body reads and cuts off what is still unanswered then: the watch ends with
+  TIMEOUT (exit 4), naming the run, the status it last had and `--run-id`. A wait ends at the deadline at the
+  latest, and no poll starts after it; a failure being retried at the deadline is still reported as itself
+  (ADR-0201). Four tests, and one now expects no poll after the deadline.
 - **Fixed: a ZIP whose local header disagrees with its directory, or whose bytes miss their CRC-32, is
   refused** (independent audit 2026-11-04, F05). The artifact reader took each entry's name, method, sizes and
   CRC-32 from the central directory alone: a package whose local header named `README-ALTER.md` where the
