@@ -243,6 +243,73 @@ test('corpus-shape: a row whose arity does not match its header is reported, not
   assert.ok(runCheck('corpus-shape', corpus).some((f) => f.rule === 'table-arity'));
 });
 
+// Independent audit 2026-11-04, FP-011 (B-2): readCorpus read a missing EVIDENCE.md, or a
+// directory in its place, as an empty table. corpus-shape said "the corpus parses cleanly",
+// citations said "0 evidence rows, each with a cached page", and the only failures were the
+// dangling citations, which sent the reader to edit citations rather than restore the table.
+const lostTable = (dir, rule) => {
+  const corpus = snapshot(dir);
+  return ['corpus-shape', 'citations'].map((name) => {
+    const findings = runCheck(name, corpus);
+    const named = failures(findings).filter((f) => f.rule === rule);
+    assert.equal(named.length, 1, `${name} did not name the lost table once: ${JSON.stringify(findings)}`);
+    assert.equal(findings.some((f) => f.severity === 'pass'), false, `${name} passed over the lost table: ${JSON.stringify(findings)}`);
+    return named[0].detail;
+  });
+};
+
+test('corpus-shape and citations: a deleted EVIDENCE.md is named as the cause, and neither check passes over it', () => {
+  const dir = makePassingProject();
+  fs.rmSync(resolve(dir, PATHS.evidence));
+  for (const detail of lostTable(dir, 'evidence-missing')) {
+    assert.ok(detail.includes(`${PATHS.evidence} does not exist`), detail);
+  }
+  const verdict = runPreflight(dir);
+  assert.equal(verdict.pass, false);
+  // The citations that now point at nothing are still named: they are true.
+  assert.ok(verdict.failures.some((f) => f.rule === 'dangling-citation'), JSON.stringify(verdict.failures.map((f) => f.rule)));
+});
+
+test('corpus-shape and citations: a directory where EVIDENCE.md belongs is named as unreadable, not read as an empty table', () => {
+  const dir = makePassingProject();
+  fs.rmSync(resolve(dir, PATHS.evidence));
+  fs.mkdirSync(resolve(dir, PATHS.evidence));
+  for (const detail of lostTable(dir, 'evidence-missing')) {
+    assert.ok(detail.includes(`${PATHS.evidence} is not a readable file`), detail);
+  }
+});
+
+test('corpus-shape and citations: an EVIDENCE.md that holds no evidence table is named, not read as zero rows', () => {
+  const prose = makePassingProject();
+  writeText(resolve(prose, PATHS.evidence), `# Evidence
+
+The rows were here.
+`);
+  // Kept only as a fenced example, the table is shown as code, so it is not the table (F01).
+  const fenced = makePassingProject();
+  corrupt(fenced, PATHS.evidence, (text) => {
+    const header = text.indexOf('| ID |');
+    return `${text.slice(0, header)}~~~
+${text.slice(header)}~~~
+`;
+  });
+  for (const dir of [prose, fenced]) {
+    for (const detail of lostTable(dir, 'evidence-unparsed')) {
+      assert.ok(detail.includes(`${PATHS.evidence} holds no evidence table`), detail);
+    }
+  }
+});
+
+test('preflight: a corpus of known-unknowns only does not pass with its EVIDENCE.md gone', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => text.replace('| CLOSED | E-01: 10 requests per minute, 1,000 credits |', '| KNOWN-UNKNOWN | day one: read the limits page |'));
+  assert.equal(runPreflight(dir).pass, true, 'the known-unknown corpus fails with its table, so this proves nothing');
+  fs.rmSync(resolve(dir, PATHS.evidence));
+  const verdict = runPreflight(dir);
+  assert.equal(verdict.pass, false, 'a corpus passed with its evidence table gone');
+  assert.deepEqual(verdict.failures.map((f) => `${f.check}/${f.rule}`), ['citations/evidence-missing', 'corpus-shape/evidence-missing']);
+});
+
 // Found 2026-10-03 (output-reliability audit, G2): `U_99` was dropped by readCorpus and
 // runChecks reported nothing - a blocking question vanished on a typo.
 test('hygiene: a row whose ID does not match its table fails, naming the table, the ID and the line - once', () => {

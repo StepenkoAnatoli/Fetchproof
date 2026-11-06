@@ -5,6 +5,13 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a lost evidence table is named, and no check passes over it** (independent audit 2026-11-04, FP-011,
+  alias B-2). `readCorpus` read a missing `research/EVIDENCE.md`, a directory in its place, or a file holding no
+  evidence table as an empty table, with no problem recorded: `corpus-shape` said "the corpus parses cleanly",
+  `citations` said "0 evidence rows, each with a cached page", the only failures were the citations that now
+  dangled, and a corpus whose unknowns were all KNOWN-UNKNOWN passed. `citations` now returns one
+  `evidence-missing` or `evidence-unparsed` fail and nothing else, and `corpus-shape` names the same beside
+  `raw-missing`, in every gated project; the dangling citations are still named (ADR-0199). Four tests.
 - **Fixed: the browser route refuses a proxy it cannot speak to, instead of sending it the credential in
   clear** (independent audit 2026-11-04, F02). The guard proxy writes its requests and CONNECT lines to the
   upstream in plain HTTP, and `parseUpstream` read an `https://` proxy URL as such a proxy on port 443: behind

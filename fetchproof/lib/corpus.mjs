@@ -755,7 +755,9 @@ export function readCorpus(root) {
     intentHeading: /^#{1,6}\s+Build intent\s*$/mi.test(discoveryText ?? ''),
     discovery: { present: discoveryText !== null, text: discoveryText ?? '', table: unknownsTable },
     // Whether the evidence table travelled at all: the file, and a header row naming its columns.
-    evidenceFile: { present: evidenceText !== null, found: evidenceTable.found },
+    // `unreadable`: something stands at the path that could not be read as a file - a directory
+    // in its place read as an absent file (independent audit 2026-11-04, FP-011; ADR-0199).
+    evidenceFile: { present: evidenceText !== null, found: evidenceTable.found, unreadable: evidenceText === null && exists(at(PATHS.evidence)) },
     map: {
       present: mapText !== null, text: mapText ?? '', table: subtopicTable,
       topic: sectionOf(mapText, 'Topic').split(/\r?\n/).filter(Boolean).join(' ').trim(),
