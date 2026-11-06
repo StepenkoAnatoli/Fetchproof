@@ -5,6 +5,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the browser route refuses a proxy it cannot speak to, instead of sending it the credential in
+  clear** (independent audit 2026-11-04, F02). The guard proxy writes its requests and CONNECT lines to the
+  upstream in plain HTTP, and `parseUpstream` read an `https://` proxy URL as such a proxy on port 443: behind
+  `HTTPS_PROXY=https://user:pass@proxy:8443` the CONNECT line and its `Proxy-Authorization` header went in clear
+  to a port that expects TLS. Any scheme but `http:` is now refused before the guard listens, so the render
+  answers `GUARD` before a browser is launched and nothing reaches the proxy; the refusal never falls back to a
+  direct connection, its message never contains the credential, and under `NO_PROXY=*` the upstream is not read
+  (ADR-0198). A scheme-less `host:port` is still plain HTTP. Two tests.
 - **Fixed: a ZIP entry name another platform reads as a different name is refused** (independent audit
   2026-11-04, F03). The artifact reader judged a name by its spelling while an extractor writes it by its
   meaning: `project/research//BRIEF.md` validated PASS beside the reviewed brief and extracted onto it,
