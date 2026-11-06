@@ -90,8 +90,55 @@ function commentOpenAfter(text, open) {
   }
 }
 
-const THEMATIC_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
-const LIST_MARKER = /^(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
+// Sticky, tried at an index: a line of n markers is read once, not once per marker (review of #441).
+const LIST_MARKER = /(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/y;
+const SETEXT_UNDERLINE = /^(?:=+|-+)[ \t]*$/;
+
+/**
+ * Where the rest of `line` is a thematic break - three or more of one of `*`, `-` and `_`, with
+ * spaces or tabs between - as `{ from, to }`: from an index between the first and the third-last
+ * of the run that ends the line, it is one. Null when no rest of it is. Found once per line, so
+ * every list marker on it is asked in constant time.
+ */
+function breakSpan(line) {
+  const end = line.trimEnd().length;
+  const mark = line[end - 1];
+  if (mark !== '*' && mark !== '-' && mark !== '_') return null;
+  let count = 0;
+  let from = end;
+  let to = -1;
+  for (let i = end - 1; i >= 0 && (line[i] === mark || line[i] === ' ' || line[i] === '\t'); i -= 1) {
+    if (line[i] !== mark) continue;
+    count += 1;
+    from = i;
+    if (count === 3) to = i;
+  }
+  return to < 0 ? null : { from, to };
+}
+
+/**
+ * Whether the text at `index`, `rel` columns in from the container it falls back to, starts a
+ * block - which a lazy continuation line does not. A footnote definition, `[^label]:`, starts one
+ * on GitHub. A line led by `<`, or by three backticks or tildes, is taken to start one, though it
+ * can be a paragraph's text.
+ */
+function startsBlock(line, index, rel, isBreak) {
+  if (rel >= 4) return false;
+  if (isBreak(index)) return true;
+  LIST_MARKER.lastIndex = index;
+  if (LIST_MARKER.test(line)) return true;
+  return /^(?:>|#{1,6}(?:[ \t]|$)|`{3}|~{3}|<|\[\^[^\]\s]+\]:)/.test(line.slice(index));
+}
+
+/**
+ * Whether `rest` is a table's delimiter row - cells of `-` with an optional `:` at either end,
+ * between pipes or with none (`--|:-:`, `:--`). Below a paragraph line it makes that line a
+ * table's header, and a table, unlike a paragraph, has no lazy continuation line.
+ */
+function delimiterRow(rest) {
+  const row = rest.trimEnd().replace(/^\|/, '').replace(/\|$/, '');
+  return row.split('|').every((cell) => /^[ \t]*:?-+:?[ \t]*$/.test(cell));
+}
 
 /**
  * Which lines of a document GitHub shows as code or hides, read in one pass. The header search
@@ -108,33 +155,59 @@ const LIST_MARKER = /^(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
  * - A list item opens at `-`, `+`, `*`, or 1-9 digits and `.` or `)`, indented 0-3 and followed by
  *   a space, a tab or the line's end, unless the line is a thematic break; its content starts
  *   after 1-4 columns of space (after one, when there are 5 or more or none). A non-blank line
- *   indented less than an item's content ends the item, and a fence in it. An item that is empty,
+ *   indented less than an item's content ends the item, and a fence in it - unless it is a lazy
+ *   continuation line: it continues the item's paragraph and starts no block, so the item goes on.
+ *   A paragraph line above a table's delimiter row (`delimiterRow`) is a table's header, and no
+ *   line continues a table lazily. An item opened on an empty line ends at a blank line whose
+ *   spaces stop short of its content, unless a line has gone into it first. An item that is empty,
  *   or ordered from a number other than 1, does not interrupt a paragraph.
  * - A fence opens at three or more backticks or tildes, indented 0-3; a backtick fence's info
  *   string holds no backtick, so ```code``` on one line is inline code. It closes at a run of its
  *   own character at least as long, indented 0-3, with nothing after it; never closed, it runs to
  *   the end of its container.
  * - A line indented 4 or more opens nothing: it is indented code when no paragraph is open, and
- *   the paragraph's next line when one is.
+ *   the paragraph's next line when one is. A run of `=` or of `-` under a paragraph, indented 0-3,
+ *   makes it a heading and ends it.
  * - An HTML comment opens at `<!--` where a line's content starts and runs to the line holding its
  *   `-->` (`commentOpenAfter`), whatever the indentation of the lines between.
- * Not read, so a table there is taken as shown: a block quote's own blocks; a list item's lazy
- * continuation line, which ends the item here; HTML blocks other than comments; a `<!--` after
- * other text on its line. A `-->` that GitHub escapes - in prose or code inside a comment reopened
- * on a closing line - ends the comment here.
+ * - A byte-order mark at the start of the file is not the first line's content.
+ * Not read, so a table there is taken as shown: a block quote's own blocks; HTML blocks other than
+ * comments; footnote definitions, which GitHub leaves out, with all they hold, when nothing refers
+ * to them; a `<!--` after other text on its line. A `-->` that GitHub escapes - in prose or code
+ * inside a comment reopened on a closing line - ends the comment here. Taken the safe way, ending
+ * an item GitHub may keep: a line led by `<` or by three backticks or tildes is not lazy, and
+ * neither is a line after a paragraph line led by `<`, which can make the paragraph an HTML block,
+ * or after a delimiter row whose header has another number of cells, which makes no table; a table
+ * GitHub shows in such an item can be found hidden.
  */
 export function hiddenLines(lines) {
   const at = new Array(lines.length).fill(null);
+  // The list items a line stands inside: each one's content column, rising with depth, and whether
+  // a line has gone into it yet.
   const items = [];
   let fence = null;
   let comment = null;
   let code = null;
   let paragraph = false;
+  let lazy = false;
+  const top = () => (items.length ? items[items.length - 1].col : 0);
   const popTo = (col) => {
-    while (items.length && col < items[items.length - 1]) { items.pop(); paragraph = false; }
+    while (items.length && col < items[items.length - 1].col) { items.pop(); paragraph = false; }
+  };
+  // The content column of the deepest item a line at `col` stays inside.
+  const baseAt = (col) => {
+    let lo = 0;
+    let hi = items.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (items[mid].col <= col) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo ? items[lo - 1].col : 0;
   };
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+    // GitHub skips a byte-order mark, as this kit's other readers of these files do.
+    const line = i === 0 ? lines[0].replace(/^\uFEFF/, '') : lines[i];
     let { index, col } = skipSpace(line, 0, 0);
     const blank = index === line.length;
     if (comment) {
@@ -144,7 +217,7 @@ export function hiddenLines(lines) {
       continue;
     }
     if (fence) {
-      const base = fence.depth ? items[fence.depth - 1] : 0;
+      const base = fence.depth ? items[fence.depth - 1].col : 0;
       if (blank || col >= base) {
         at[i] = fence.record;
         const closes = /^(`+|~+)[ \t]*$/.exec(line.slice(index));
@@ -154,26 +227,34 @@ export function hiddenLines(lines) {
       popTo(col);
       fence = null;
     }
-    if (blank) { paragraph = false; continue; }
+    if (blank) {
+      paragraph = false;
+      if (items.length && !items[items.length - 1].held && col < top()) items.pop();
+      continue;
+    }
+    const span = breakSpan(line);
+    const isBreak = (from) => span !== null && from >= span.from && from <= span.to;
+    if (paragraph && lazy && col < top() && !startsBlock(line, index, col - baseAt(col), isBreak)) continue;
     popTo(col);
-    let base = items.length ? items[items.length - 1] : 0;
+    if (items.length) items[items.length - 1].held = true;
+    let base = top();
     if (col - base >= 4) {
       if (!paragraph) { code ??= { kind: 'indented', line: i + 1 }; at[i] = code; }
       continue;
     }
     code = null;
     for (;;) {
-      const rest = line.slice(index);
-      if (THEMATIC_BREAK.test(rest.trimEnd())) break;
-      const marker = LIST_MARKER.exec(rest);
+      if (isBreak(index)) break;
+      LIST_MARKER.lastIndex = index;
+      const marker = LIST_MARKER.exec(line);
       if (!marker) break;
       const after = skipSpace(line, index + marker[0].length, col + marker[0].length);
       const empty = after.index === line.length;
       if (paragraph && (empty || (marker[1] !== undefined && Number(marker[1]) !== 1))) break;
       const wide = empty || after.col - (col + marker[0].length) > 4;
-      items.push(wide ? col + marker[0].length + 1 : after.col);
+      items.push({ col: wide ? col + marker[0].length + 1 : after.col, held: !empty });
       paragraph = false;
-      base = items[items.length - 1];
+      base = top();
       ({ index, col } = after);
       if (empty || col - base >= 4) break;
     }
@@ -193,7 +274,9 @@ export function hiddenLines(lines) {
       paragraph = false;
       continue;
     }
-    paragraph = !(THEMATIC_BREAK.test(rest.trimEnd()) || /^#{1,6}(?:[ \t]|$)/.test(rest));
+    const opened = !paragraph;
+    paragraph = !(isBreak(index) || /^#{1,6}(?:[ \t]|$)/.test(rest) || (paragraph && SETEXT_UNDERLINE.test(rest)));
+    if (paragraph) lazy = !rest.startsWith('<') && (opened || (lazy && !delimiterRow(rest)));
   }
   const open = comment ?? (fence && fence.depth === 0 ? fence.record : null);
   return { at, open };

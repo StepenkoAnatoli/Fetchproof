@@ -6,7 +6,7 @@ import { PATHS, HEADERS, resolve, writeText, readText, sha256File, isRegularFile
 import {
   readCorpus, readCaptures, readLedger, parseTable, parseCapture, splitRow, escapeCell, tableRow,
   repairRowArity, captureEntry, rememberCapture, cacheDecision, traceOf, captureOf,
-  claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl,
+  claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl, assertTablesWritable,
 } from '../lib/corpus.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 import { command as keylessCommand } from '../lib/http-transport.mjs';
@@ -524,6 +524,117 @@ test('an archived copy after a list marker, in a reopened comment, in indented c
   assert.deepEqual(parseTable(`<!-->\n<!--->\n${open}\n`, HEADERS.unknowns).rows.map((r) => r.Status), ['OPEN']);
   const archived = `<!--\n${open.replace('| OPEN | |', '| CLOSED | E-01 |')}\n-->\n\n${open}\n`;
   assert.deepEqual(parseTable(archived.replace(/\n/g, '\r\n'), HEADERS.unknowns).rows.map((r) => r.Status), ['OPEN']);
+});
+
+// Found 2026-11-06 by the re-review of #441's reader (findings 2 and 3). An item opened on an empty
+// line was held open across a blank line, and a run of `=` or `-` below a paragraph was read as its
+// next line. GitHub ends both there, so a copy fenced or indented four below them is code, and it
+// was read as the contract.
+test('an archived copy below an empty list item or a setext heading is hidden', () => {
+  const indent = (n, table) => table.split('\n').map((line) => `${' '.repeat(n)}${line}`).join('\n');
+  const cases = [
+    ['a fence below an empty item and a blank line', (table) => `-\n\n  \`\`\`\n${table}\n  \`\`\``],
+    ['a fence below an empty ordered item and a blank line', (table) => `1.\n\n   \`\`\`\n${table}\n   \`\`\``],
+    ['indented code below an empty item and a blank line', (table) => `-\n\n${indent(4, table)}`],
+    ['indented code below a heading underlined with =', (table) => `Archived contract\n=================\n${indent(4, table)}`],
+    ['indented code below a heading underlined with --', (table) => `Archived contract\n--\n${indent(4, table)}`],
+  ];
+  for (const [name, wrap] of cases) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, hideAbove(wrap));
+    const corpus = readCorpus(dir);
+    assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']], `${name}: ${JSON.stringify(corpus.unknowns)}`);
+    assert.equal(runPreflight(dir).pass, false, `${name}: a visible OPEN unknown passed preflight`);
+  }
+
+  // A blank line whose spaces reach the item's content keeps it open: the fence below is the
+  // item's, and the table written at column 0 below that ends both, as GitHub shows it.
+  const kept = makePassingProject();
+  corrupt(kept, PATHS.discovery, (text) => text.replace('| ID |', '-\n  \n  ```\n  an example\n\n| ID |'));
+  assert.deepEqual(readCorpus(kept).unknowns.map((u) => [u.id, u.status]), [['U-1', 'CLOSED']]);
+  assert.equal(runPreflight(kept).pass, true, 'a correct project was blocked');
+});
+
+// Found 2026-11-06 by the re-review of #441's reader (finding 1). A file saved as UTF-8 with a
+// byte-order mark (Windows PowerShell 5's -Encoding utf8 writes one) began its first line with it,
+// so a fence or a comment opened there was not seen: the archived copy in it was read as the
+// contract, and a row was appended inside a comment never closed.
+test('a fence or a comment opened on the first line of a file with a byte-order mark hides what it holds', () => {
+  const archived = (text) => text.slice(text.indexOf('| ID |')).trimEnd();
+  const cases = [
+    ['a comment', (table) => `<!-- archived\n${table}\n-->`],
+    ['a fence', (table) => `\`\`\`markdown\n${table}\n\`\`\``],
+  ];
+  for (const [name, wrap] of cases) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, (text) => `\uFEFF${wrap(archived(text))}\n\n${text.replace('| CLOSED |', '| OPEN |')}`);
+    const corpus = readCorpus(dir);
+    assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']], `${name}: ${JSON.stringify(corpus.unknowns)}`);
+    assert.equal(runPreflight(dir).pass, false, `${name}: a visible OPEN unknown passed preflight`);
+  }
+
+  const dir = makeProject();
+  const file = resolve(dir, PATHS.evidence);
+  const head = `${tableRow(HEADERS.evidence)}\n|${HEADERS.evidence.map(() => '---').join('|')}|`;
+  writeText(file, `\uFEFF<!-- notes\n\n${head}\n${tableRow(['E-01', '2026-01-01', 'P', 'https://example.invalid/', 'a claim', 'research/raw/a.md'])}\n`);
+  const before = readText(file);
+  assert.throws(
+    () => appendRow(dir, PATHS.evidence, HEADERS.evidence, ['E-02', '2026-01-02', 'P', 'https://x.invalid/', 'a claim', 'research/raw/b.md']),
+    (err) => err.code === 'TABLE_HIDDEN' && /ends inside an HTML comment that starts at line 1 /.test(err.message),
+  );
+  assert.equal(readText(file), before, 'the file was written');
+});
+
+// Found 2026-11-06 by the re-review of #441's reader (finding 4). A line indented less than a list
+// item's content ended the item, though GitHub reads it as the next line of the item's paragraph - a
+// lazy continuation line - so a table indented in the item, shown by GitHub, was read as indented
+// code, and a correct contract as having no unknowns. Each shape below was rendered by GitHub's
+// renderer on 2026-11-06.
+test('a lazy continuation line keeps its list item: the table indented in the item is the table', () => {
+  const indent = (text) => text.split('\n').map((line) => (line ? `    ${line}` : line)).join('\n');
+  const inItem = (text) => {
+    const at = text.indexOf('| ID |');
+    return `${text.slice(0, at)}10. The table, kept in this item and reviewed\non 2026-10-01:\n\n${indent(text.slice(at).trimEnd())}\n`;
+  };
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, inItem);
+  corrupt(dir, PATHS.evidence, inItem);
+  const corpus = readCorpus(dir);
+  assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'CLOSED']], JSON.stringify(corpus.unknowns));
+  assert.equal(corpus.evidenceFile.found, true);
+  assert.equal(runPreflight(dir).pass, true, 'a correct project was blocked');
+  assertTablesWritable(dir);
+
+  // A line of `=`, a delimiter row or text holding a pipe is the paragraph's lazy text. A footnote
+  // definition starts a block, and a paragraph a delimiter row made a table - one with no pipe too -
+  // is continued by no lazy line: the item ends there, and the copy indented four is code.
+  const table = indent([tableRow(HEADERS.unknowns), '|---|---|---|---|---|', '| U-1 | q | w | CLOSED | E-01 |'].join('\n'));
+  const read = (above) => parseTable(`${above}\n\n${table}\n`, HEADERS.unknowns);
+  for (const above of ['- The table\n===', '- The table\n:--', '- Run a | b here\nand on']) {
+    assert.deepEqual(read(above).rows.map((r) => r.Status), ['CLOSED'], above);
+  }
+  for (const above of ['- The table\n[^old]: kept below', '- The table\n  :--\nand on', '- The table\n  a | b\n  --|--\nand on']) {
+    assert.equal(read(above).found, false, above);
+  }
+});
+
+// Found 2026-11-06 by the re-review of #441's reader (finding 5): each list marker on a line asked
+// the rest of the line whether it was a thematic break, so a line of n markers took time in n
+// squared - 22.6 s for 80 KB, and a package's files reach the reader through the validator.
+test('the reader takes linear time on a line of list markers and on the lazy lines below it', () => {
+  const evidence = [tableRow(HEADERS.evidence), `|${HEADERS.evidence.map(() => '---').join('|')}|`,
+    tableRow(['E-01', '2026-01-01', 'P', 'https://example.invalid/', 'a claim', 'research/raw/a.md'])].join('\n');
+  const cases = [
+    ['40,000 list markers on one line', `${'- '.repeat(40_000)}x`],
+    ['40,000 lazy lines below 40,000 nested items', `${'- '.repeat(40_000)}x\n${'more text\n'.repeat(40_000)}`],
+  ];
+  for (const [name, above] of cases) {
+    const started = performance.now();
+    const ids = parseTable(`${above}\n\n${evidence}\n`, HEADERS.evidence).rows.map((r) => r.ID);
+    const ms = performance.now() - started;
+    assert.deepEqual(ids, ['E-01'], name);
+    assert(ms < 2_000, `${name}: ${ms.toFixed(0)} ms - the reader is not linear`);
+  }
 });
 
 // A heading in a code block or a comment heads no section (review of #441, 2026-11-06): taken as

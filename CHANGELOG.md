@@ -42,7 +42,14 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   hidden: below a fence or a comment never closed it started a new table inside the block, read by nothing, and
   numbered its row E-01 again on every run (ADR-0204). A collection, phase 0 and a dry run ask the same before
   anything is spent, and `collectOne` again before each fetch; `decompose.mjs` now answers the kit's named
-  refusals with their message and exit 2, where it printed a stack under exit 1. Ten tests.
+  refusals with their message and exit 2, where it printed a stack under exit 1. The re-review of the fix found five
+  more departures from GitHub's reading, each since checked on GitHub's renderer: with a byte-order mark before it,
+  a fence or a comment opened on the first line was not seen; an empty list item stayed open across a blank line,
+  and a heading's `===` or `--` was read as paragraph text, so a copy indented four below either was read; a list
+  item's lazy continuation line ended the item, so a table indented in it, which GitHub shows, was read as code;
+  and a line of 40,000 list markers took 18-23 s to read. Auto-collect now refuses a request into a project whose
+  evidence or sources table is hidden before it reserves anything: it had charged the pages and paused the queue.
+  Fifteen tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

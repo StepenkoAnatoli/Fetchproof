@@ -1321,6 +1321,32 @@ test('auto-collect refuses to resume a partial request after its unknown is clos
   assertEqual(readAutoCollect(w.m.env).spent.pages, 1, 'the closed unknown spent additional pages');
 });
 
+// Found 2026-11-06 by the re-review of #441's writer (finding 6). With the project's evidence table
+// hidden, research.mjs refused with TABLE_HIDDEN and wrote no accounting, and auto-collect read the
+// exit as an accounting failure: the reserved pages were charged, the queue paused, and the request
+// went back as failed. It is refused before anything is reserved, run or written.
+test('auto-collect refuses a request into a project whose evidence table is hidden, before it reserves, runs or writes', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  const evidence = path.join(w.builder, 'research', 'EVIDENCE.md');
+  writeText(evidence, readText(evidence).replace('| ID |', '<!-- notes\n\n| ID |'));
+  git(w.builder, w.m.env, 'add', 'research/EVIDENCE.md');
+  git(w.builder, w.m.env, '-c', 'core.hooksPath=', 'commit', '-q', '--no-verify', '-m', 'hide the evidence table');
+  git(w.builder, w.m.env, 'push', '-q');
+  builderPushes(w, 'burst-limit', GOOD);
+  const discovery = path.join(w.collector, 'research', 'DISCOVERY.md');
+  const contract = readText(discovery);
+  const status = await loop(w).cycle();
+  const row = status.requests.find((r) => r.id === 'burst-limit');
+  assertEqual(row.status, 'refused', JSON.stringify(row));
+  assert(/research\/EVIDENCE\.md: the file ends inside an HTML comment/.test(row.detail), row.detail);
+  assertEqual(calls(w).length, 0, 'research.mjs ran');
+  assertEqual(readAutoCollect(w.m.env).spent.pages, 0, 'pages were charged');
+  assertEqual(status.paused, '');
+  assertEqual(readText(discovery), contract, 'the request was written into the contract');
+  assert(!fs.existsSync(path.join(w.collector, 'research', 'requests', 'burst-limit.plan.json')), 'the request plan was written');
+});
+
 test('partial delivery retries before pause checks and does not spend another page', async () => {
   const w = world({ STANDIN_MODE: 'stopped' });
   saveAutoCollect({ mode: 'auto' }, w.m.env);

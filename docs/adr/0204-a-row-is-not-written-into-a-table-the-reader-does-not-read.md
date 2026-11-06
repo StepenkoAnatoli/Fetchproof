@@ -6,8 +6,10 @@
   `assertTablesWritable`, `headerAt` factored out of `parseTable`), `fetchproof/lib/collect.mjs`
   (`collectOne`), `fetchproof/lib/research-run.mjs` and `fetchproof/lib/decompose.mjs` (the checks
   before anything is spent), `fetchproof/lib/core.mjs` (`NAMED_RUN_REFUSALS`),
-  `fetchproof/bin/decompose.mjs` (its answer to a named refusal)
-- **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1
+  `fetchproof/bin/decompose.mjs` (its answer to a named refusal), `fetchproof/lib/auto-collect.mjs`
+  (`collect`)
+- **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1, and the re-review of
+  its fix (2026-11-06), finding 6
 - **Extends:** ADR-0203 (which lines GitHub shows as code or hides), ADR-0122 (a collection that
   cannot be recorded is refused before the money)
 - **Freeze (ADR-0117):** a bug fix. Since F01 the writer appended where no reader reads, and issued
@@ -39,9 +41,10 @@ citation to it means"). `requests.mjs` appends an OPEN unknown to `DISCOVERY.md`
    out, holds nothing a new table would orphan, and the new table is read.
 3. **Before anything is spent,** `runResearch` and `decompose` ask the same of
    `research/EVIDENCE.md` and `research/SOURCES.md` (`assertTablesWritable`), beside
-   `assertAppendable`, dry runs too; and `collectOne` asks again under the lock, before its fetch,
-   as `appendFetch` asks again of the ledger, so a file changed during a run is refused before the
-   next page is paid for. A refusal by the writer alone comes after the fetch: the capture and its
+   `assertAppendable`, dry runs too; auto-collect's `collect` asks before it reserves a request's
+   pages, applies the request or runs research; and `collectOne` asks again under the lock, before
+   its fetch, as `appendFetch` asks again of the ledger, so a file changed during a run is refused
+   before the next page is paid for. A refusal by the writer alone comes after the fetch: the capture and its
    ledger entry stay on disk with no row, and the next run takes the capture as a cache hit and
    never writes the row.
 4. **`TABLE_HIDDEN` is a named run refusal:** `research.mjs` answers it with its message and exit 2,
@@ -71,8 +74,12 @@ citation to it means"). `requests.mjs` appends an OPEN unknown to `DISCOVERY.md`
 ## Consequences
 
 - A collection into a file whose table is hidden stops before it spends, with the line to fix.
-- A request appended by `requests.mjs` into a hidden `DISCOVERY.md` is refused by the writer before
-  the request's plan is written; auto-collect's refusal path already answers a thrown append.
+- A request auto-collect applies is refused - a `refused` result, committed and pushed - before it
+  reserves pages, writes the request into `DISCOVERY.md` or runs research, when the evidence or
+  sources table is hidden; and by the writer, before the request's plan is written, when the
+  unknowns table in `DISCOVERY.md` is. `research.mjs` refused the first too, but only after
+  auto-collect had reserved the pages, and with no accounting to settle them by: the pages were
+  charged, the queue paused, and the request went back as failed (the re-review's finding 6).
 - A second, visible table with the same header is still not read (the F01 residual, unchanged).
 - `decompose.mjs` exits 2 with the message on every named refusal, where it printed a stack.
 
