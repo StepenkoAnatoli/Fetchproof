@@ -412,15 +412,22 @@ export async function waitForRun({
   // An error that ends the watch ends only the watch: the run goes on, and the command that was run
   // dispatches another. So a remedy of the error's own - wait out a limit, a new token, a permission,
   // a proxy, any of which may say to retry - is followed by the way back to this run, unless it names
-  // it already or the run's number is what is in doubt (a 404); one with none is left to the caller.
-  // A 403 ended the watch with "wait ... before retrying" and no run number (re-review of #442's
-  // follow-up, 2026-11-06).
-  const wayBack = (err) => (err instanceof DispatchError && err.remedy && err.status !== 404 && !err.remedy.includes('--run-id')
-    ? new DispatchError(err.code, err.message, {
+  // it already or the run's number is what is in doubt (a 404 before any poll read the run); one
+  // with none is left to the caller. A 403 ended the watch with "wait ... before retrying" and no run
+  // number (re-review of #442's follow-up, 2026-11-06). A 404 after a poll read the run is about a
+  // number that is right - the token lost sight of the run, or it was deleted - and "check the
+  // number" with no way back sent the operator to the command that dispatches another (second pass).
+  const wayBack = (err) => {
+    if (!(err instanceof DispatchError) || !err.remedy || err.remedy.includes('--run-id')) return err;
+    if (err.status === 404 && !seen) return err;
+    const own = err.status === 404
+      ? `run ${runId} was read at an earlier poll, so its number is right: the token may have lost access to ${repository}, or the run was deleted - check ${seen.html_url ?? `run ${runId}`}`
+      : err.remedy;
+    return new DispatchError(err.code, err.message, {
       status: err.status,
-      remedy: `${err.remedy}; the run may be fine - pick it up again with --run-id ${runId} rather than dispatching another`,
-    })
-    : err);
+      remedy: `${own}; the run may be fine - pick it up again with --run-id ${runId} rather than dispatching another`,
+    });
+  };
   try {
     for (;;) {
       if (watch.signal.aborted || now() >= deadline) {
@@ -592,6 +599,25 @@ export function usableOutDir(dir, { create = true } = {}) {
     });
   }
   return absolute;
+}
+
+// The errors that are the artifact's own: another download from the same run meets them again (no
+// corpus artifact or several, a name that is not a file name, too large, expired), and
+// re-collecting is their way.
+const ARTIFACT_OWN = new Set(['NO_ARTIFACT', 'ARTIFACT_NAME', 'TOO_LARGE', 'EXPIRED']);
+
+/**
+ * `downloadRemedy(err, wayBack)` -> the remedy `collect-remote` prints for an error that ended the
+ * download from a run that finished well: the error's own, then `wayBack` - how to pick the run up
+ * again - unless the error is the artifact's own or its remedy names `--run-id` already; `wayBack`
+ * alone for an error with none. A remedy of its own - "retry" after a proxy's HTML page or a
+ * dropped download, a folder to fix - read as running `collect-remote` again, which dispatches and
+ * pays for another run (re-review of #442, second pass, 2026-11-06). The watch's errors carry
+ * their way back from `waitForRun`; the MCP server's caller holds the run's number already.
+ */
+export function downloadRemedy(err, wayBack) {
+  if (!err?.remedy) return wayBack;
+  return ARTIFACT_OWN.has(err.code) || err.remedy.includes('--run-id') ? err.remedy : `${err.remedy}; ${wayBack}`;
 }
 
 /**

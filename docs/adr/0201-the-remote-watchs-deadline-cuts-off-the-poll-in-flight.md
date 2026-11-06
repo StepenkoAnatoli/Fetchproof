@@ -3,7 +3,8 @@
 - **Date:** 2026-11-06
 - **Status:** accepted
 - **Area:** `fetchproof/lib/dispatch.mjs` (`waitForRun`; `getRun`'s new `signal`; the new
-  `unlessAborted`; `callApi`, `readJsonBody`, `readError` and `forbiddenError`, which pass it on)
+  `unlessAborted`; `callApi`, `readJsonBody`, `readError` and `forbiddenError`, which pass it on; the
+  new `downloadRemedy`), `fetchproof/bin/collect-remote.mjs` (its download stage)
 - **Prompted by:** the independent audit of `532c696` (Codex, 2026-11-04), finding F06 (Medium,
   confirmed)
 - **Freeze (ADR-0117):** a bug fix. `--timeout` already says how long the watch waits; this makes the
@@ -70,10 +71,22 @@ crosses the deadline is the last", as a test put it).
    limit's wait, a new token, the "Actions" permission, a proxy's HTML page, any of which may say to
    retry - is followed by "the run may be fine - pick it up again with --run-id <n> rather than
    dispatching another", unless it names `--run-id` already (a dropped connection's does) or the run's
-   number is what is in doubt (a 404). An error with no remedy is left to the caller: `collect-remote`
-   gives its own way back, and dropped it whenever an error named a remedy, so a 403 whose body was
-   lost ended the watch with "wait at least one minute before retrying" and no run number (re-review of
-   #442's follow-up, 2026-11-06). The code, message, status and exit are unchanged.
+   number is what is in doubt (a 404 before any poll read the run). An error with no remedy is left to
+   the caller: `collect-remote` gives its own way back, and dropped it whenever an error named a
+   remedy, so a 403 whose body was lost ended the watch with "wait at least one minute before
+   retrying" and no run number (re-review of #442's follow-up, 2026-11-06). A 404 after a poll read
+   the run is about a number that is right - the token lost sight of the run, or it was deleted - and
+   its remedy says so, with the run's page, before the way back: "check the number the dispatch
+   printed", with none, sent the operator to the command that dispatches another (re-review of #442,
+   second pass, 2026-11-06). The code, message, status and exit are unchanged.
+8. **So is an error that ends the download from a run that finished well**, in `collect-remote`,
+   through `downloadRemedy(err, wayBack)`: the error's own remedy, then the way back, unless the error
+   is the artifact's own - no corpus artifact or several, a name that is not a file name, too large,
+   expired: another download meets it again, and re-collecting is its way - or the remedy names
+   `--run-id` already. "Retry, then check api.github.com" after a proxy's HTML page for the artifact
+   list, "check connectivity, then retry" after a dropped download, and a folder to fix, each sent the
+   operator to the command that dispatches another run (re-review of #442, second pass, 2026-11-06).
+   The MCP server's `fetch_corpus` is unchanged: its caller holds the run's number.
 
 ## Rejected alternatives
 
@@ -116,6 +129,13 @@ crosses the deadline is the last", as a test put it).
 - **`getRun`'s 403 remedy reworded to name the run.** `getRun` is also the MCP server's one read of a
   run, where retrying is calling the tool again, and right; and a 403 is one of several errors that end
   the watch with a remedy that does not name the run.
+- **Every 404 left without the way back** (the first fix). After a poll read the run its number is
+  right, and "check the number" left the operator only the command that dispatches another;
+  `--run-id` reads the run again without a second one.
+- **The download's way back added in `fetchCorpus`**, as `waitForRun` adds the watch's. `fetchCorpus`
+  is also the MCP server's, whose caller picks the run up by calling `fetch_corpus` with the number it
+  holds, and `--run-id` is `collect-remote`'s flag; the rule is the command's, and as a function in the
+  library a test reaches it with the errors a stubbed download throws.
 
 ## Consequences
 
@@ -125,7 +145,9 @@ crosses the deadline is the last", as a test put it).
 - A watch whose deadline falls in a wait ends at the deadline, not up to one interval past it, and
   makes one poll fewer than before at the boundary.
 - A watch that ends in an error with a remedy of its own names `--run-id` after it, unless the remedy
-  does already or the error is a 404, and `collect-remote` prints it so, with the same exit.
+  does already or the error is a 404 before any poll read the run, and `collect-remote` prints it so,
+  with the same exit. An error that ends the download is followed by `collect-remote`'s way back too,
+  unless the artifact itself is the problem.
 - Cost: one timer per watch, and one abort listener per await of a poll, removed when it settles.
 - Not covered, named so it is not taken as fixed: the requests outside the watch have no deadline of
   their own; the MCP server's dispatch and its read of a run are not the watch, and are unchanged but for

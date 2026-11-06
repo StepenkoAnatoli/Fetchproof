@@ -4,7 +4,10 @@
 - **Status:** accepted
 - **Area:** `fetchproof/lib/artifact-zip.mjs` (the new `inspectLocalHeaders`, `readEntry`, `openZip`,
   `readCentralDirectory`'s `nameBytes`), `fetchproof/lib/artifact-validator.mjs` (the reads of
-  `manifest.json` and `manifest.sha256`)
+  `manifest.json` and `manifest.sha256`), `fetchproof/lib/render.mjs` (`printable`, which escapes what
+  `renderProblems` prints of a package's problems, and the new `printableFile`),
+  `fetchproof/lib/mcp.mjs` (`fetch_corpus`'s text), `fetchproof/bin/collect-remote.mjs` (`die`, the
+  saved file's line)
 - **Prompted by:** the independent audit of `532c696` (Codex, 2026-11-04), finding F05 (Medium,
   confirmed; the audit's assertions F05a and F05b)
 - **Extends:** ADR-0032 (every structural fault is decided before anything is inflated), ADR-0197
@@ -64,6 +67,26 @@ every read, a manifest with a wrong one would have been that case.
    FAIL with its code, as in the payload loop. Any other error still reaches the outer catch.
 5. **The code is `ZIP-READ`**, the one the reader already gives a container that does not read as
    written (a missing local header, a body of the wrong length).
+6. **What a command prints from a package is escaped by Unicode property.** The wrapper's reason is
+   printed with its remedy by `artifact` and `collect-remote` (`renderProblems`), with every other
+   problem, and `printable` escapes in each code, message and remedy every control (`Cc`), the line
+   and paragraph separators (`Zl`, `Zp`), every format character (`Cf`), a surrogate that pairs with
+   nothing (`Cs`) and every `Default_Ignorable_Code_Point`, as `\xNN`, `\uNNNN` or, past U+FFFF,
+   `\u{NNNNN}`: text a package wrote must not begin a line, drive the terminal or hide in it. A list
+   of BMP ranges let the tag characters (U+E0000-E007F), the variation selectors and the Hangul
+   fillers print raw (re-review of #442, second pass, 2026-11-06).
+7. **So is that text wherever else it reaches a reader, escaped where it is printed.** A refusal
+   `collect-remote` prints (`die`) has its error and its remedy each redacted, then escaped; the text
+   the MCP server's `fetch_corpus` gives the agent - a package's diagnostics, an error, the name of
+   the saved file's link - is escaped field by field, in the shape it had
+   (`CODE: message - fix: remedy`). An error can quote what the network sent: an artifact named with
+   U+2028 wrote a verdict line of its own through either, and a manifest key holding a line feed
+   wrote the server's own PASS sentence on a line of its own. `structuredContent` and `--json` carry
+   the text as it came, as data a JSON parser reads, not lines. The saved file is printed by
+   `printableFile`: its folder as the operator gave it, its name - the artifact's - through `redact`,
+   then escaped. Escaped whole, a folder spelled with a joiner (Persian's U+200C, an emoji sequence's
+   U+200D) printed as one that does not exist, and on Windows the escape's backslash named another
+   folder (re-review of #442, second pass, 2026-11-06).
 
 ## Rejected alternatives
 
@@ -106,6 +129,26 @@ every read, a manifest with a wrong one would have been that case.
   as for any package that does not validate, and the MCP server reports it the same way.
 - **The ADR's sentence corrected, the message left** (the review's lesser fix). The operator would still
   be told, after a paid run, to regenerate a package when downloading it again is the cheap first step.
+- **A list of the characters known to hide or reorder text** (the first two fixes). Each missed some:
+  the first escaped C0 and DEL alone; the second listed BMP ranges and let the tag characters, the
+  variation selectors and the Hangul fillers through. A property names the class, and Node's tables
+  keep it current.
+- **An emoji printed whole**, its variation selector and the joiners of a sequence left raw beside it.
+  Telling an emoji's selector from one hidden after a letter takes the emoji sequence rules into a
+  function that only escapes; in a diagnostic line, `\ufe0f` costs a glance, while a selector left raw
+  elsewhere makes two names look alike.
+- **Every space but U+0020, and every private-use character, escaped too.** They draw as something -
+  a space, a font's glyph, a box - so they neither hide text nor begin a line.
+- **The text escaped where it is made**: `fetchCorpus`'s refusals that quote the artifact's name, and
+  each server's message read into an error. Every source would need it, and one missed prints raw;
+  escaped where it is printed, all of it passes one function. The cost is a consequence below: a
+  refusal that quotes the operator's own path escapes a joiner in it.
+- **The MCP server's diagnostics put through `renderProblems`.** Its layout is a terminal's, a `fix:`
+  line under each problem; the agent reads one problem a line, and its text would change shape for
+  nothing more escaped.
+- **The saved file's path printed raw, or escaped whole.** Raw, the artifact's name, which is the
+  network's text, can begin a line; escaped whole, as the first fix did, a folder spelled with a
+  joiner prints as one that does not exist.
 
 ## Consequences
 
@@ -128,7 +171,14 @@ every read, a manifest with a wrong one would have been that case.
 - The kit's own writer (`archive.mjs`) writes the same flags, CRC-32 and sizes in both headers, so a
   package it produced still validates.
 - Cost: one local header read per entry, and one CRC-32 pass per body read (native where Node has it).
-- Not covered, named so it is not taken as fixed: the data descriptor is not read.
+- What `artifact` and `collect-remote` print from a package shows an emoji's variation selector, and
+  the joiners some scripts write between letters, as escapes.
+- A refusal that quotes the operator's own path - an `--out` that is not a folder - shows a joiner or
+  a format character in it as an escape, so the path it prints is not the one to type; the saved
+  file's line prints its folder as given.
+- Not covered, named so it is not taken as fixed: the data descriptor is not read;
+  `collect-remote --json` and the MCP server's `structuredContent` carry a package's problems as they
+  came, neither escaped nor redacted, as before.
 
 ## Trigger to revisit
 

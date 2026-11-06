@@ -5,11 +5,12 @@
 // sent, that a token never appears in an error, that a 204 is diagnosed rather than
 // swallowed. The live path is verified separately, by running it.
 
-import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink } from './harness.mjs';
+import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink, KIT_ROOT } from './harness.mjs';
 import { tempBase } from '../lib/core.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
   tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir, MAX_ARTIFACT_BYTES,
+  downloadRemedy,
 } from '../lib/dispatch.mjs';
 import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
@@ -488,10 +489,19 @@ test("an error that ends the watch is followed by the way back to the run, unles
   const late = await watch([htmlPage], { timeoutMs: 1_000, sleep: async () => { clock += 2_000; }, now: () => clock });
   assert.equal(late?.code, 'BAD_BODY', late?.message);
   assert.match(late.remedy, wayBack, late.remedy);
-  // A 404's number is what is in doubt, and a dropped connection's remedy names the way back already.
-  const missing = await watch([queued, jsonResponse(404, {}, { headers: new Headers() })]);
-  assert.equal(missing?.status, 404, missing?.message);
-  assert.doesNotMatch(missing.remedy, /--run-id/, missing.remedy);
+  // A 404 before any poll read the run leaves its number in doubt. After one, the number is right -
+  // the token lost sight of the run, or it was deleted - and the way back is named (second pass).
+  const unknown = await watch([jsonResponse(404, {}, { headers: new Headers() })]);
+  assert.equal(unknown?.status, 404, unknown?.message);
+  assert.match(unknown.remedy, /check the number the dispatch printed$/, unknown.remedy);
+  assert.doesNotMatch(unknown.remedy, /--run-id/, unknown.remedy);
+  const gone = await watch([queued, jsonResponse(404, {}, { headers: new Headers() })]);
+  assert.equal(gone?.status, 404, gone?.message);
+  assert.equal(gone.message, 'could not read run 7: HTTP 404');
+  assert.match(gone.remedy, /^run 7 was read at an earlier poll, so its number is right: /, gone.remedy);
+  assert.doesNotMatch(gone.remedy, /check the number/, gone.remedy);
+  assert.match(gone.remedy, wayBack, gone.remedy);
+  // A dropped connection's remedy names the way back already.
   const unreachable = await watch([queued, dropped]);
   assert.equal(unreachable?.code, 'NETWORK', unreachable?.message);
   assert.equal(unreachable.remedy.split('--run-id').length - 1, 1, unreachable.remedy);
@@ -855,6 +865,44 @@ test('a wrapper whose package fails its CRC-32 is reported as that, with a downl
     assert.equal(result.file, path.join(dir, 'fetchproof-corpus-v1-ok.zip'), "the wrapper is kept, under the artifact's name");
     assert.deepEqual(fs.readFileSync(result.file), bytes);
   } finally { cleanup(dir); }
+});
+
+test("a download's error names the way back to its run, unless another download would meet it too (re-review of #442, second pass)", async () => {
+  // collect-remote printed a download's own remedy alone - "retry" after a proxy's HTML page or a
+  // dropped download, a folder to fix - and running it again dispatches and pays for another run.
+  const way = 'pick it up again: --run-id 3';
+  const listed = jsonResponse(200, { artifacts: [{ id: 1, name: 'fetchproof-corpus-v1-ok', expired: false }] });
+  const fail = (responses, outDir) => fetchCorpus({ repository: REPO, runId: 3, token: TOKEN, outDir, fetch: stubFetch(responses) })
+    .then(() => assert.fail('the download did not fail'), (err) => err);
+  const dir = tempDir('fp-way-back-');
+  try {
+    const blocker = path.join(dir, 'a-file');
+    fs.writeFileSync(blocker, '');
+    const oversize = jsonResponse(200, {}, { headers: new Headers({ 'content-length': String(MAX_ARTIFACT_BYTES + 1) }) });
+    const cases = [
+      ['an HTML page for the list', [htmlPage], dir, 'BAD_BODY', true],
+      ['a dropped download', [listed, dropped], dir, 'NETWORK', true],
+      ['a folder that cannot be made', [listed], path.join(blocker, 'sub'), 'OUT_DIR', true],
+      ['no corpus artifact', [jsonResponse(200, { artifacts: [] })], dir, 'NO_ARTIFACT', false],
+      ['an expired artifact', [listed, jsonResponse(410, {})], dir, 'EXPIRED', false],
+      ['an artifact too large', [listed, oversize], dir, 'TOO_LARGE', false],
+    ];
+    for (const [what, responses, outDir, code, joined] of cases) {
+      const error = await fail(responses, outDir);
+      assert.equal(error.code, code, `${what}: ${error.message}`);
+      assert.ok(error.remedy, `${what}: no remedy of its own`);
+      assert.equal(downloadRemedy(error, way), joined ? `${error.remedy}; ${way}` : error.remedy, what);
+    }
+    // A remedy that names the way back already, and an error with none.
+    const unreachable = await fail([dropped], dir);
+    assert.match(unreachable.remedy, /--run-id 3$/);
+    assert.equal(downloadRemedy(unreachable, way), unreachable.remedy);
+    assert.equal(downloadRemedy(new DispatchError('HTTP', 'could not list artifacts for run 3: HTTP 502', { status: 502 }), way), way);
+  } finally { cleanup(dir); }
+  // collect-remote reaches a download only over the network: what is pinned offline is that its
+  // download stage takes its remedy from here.
+  const source = fs.readFileSync(path.join(KIT_ROOT, 'bin', 'collect-remote.mjs'), 'utf8');
+  assert.match(source, /got = await fetchCorpus\([^]*?remedy: downloadRemedy\(e, pickUpAgain\(\)\)/);
 });
 
 function require_read(bytes) {

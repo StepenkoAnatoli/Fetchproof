@@ -1,7 +1,7 @@
 // How a person reads a package's problems, in the two commands that print them.
 
-import { test, describe, assert, fs, path, KIT_ROOT } from './harness.mjs';
-import { printable, renderProblems } from '../lib/render.mjs';
+import { test, describe, assert, fs, path, KIT_ROOT, tempDir, cleanup } from './harness.mjs';
+import { printable, printableFile, renderProblems } from '../lib/render.mjs';
 import { redact } from '../lib/dispatch.mjs';
 
 describe('render');
@@ -56,8 +56,53 @@ test("no character a reader may take for a line end, or that hides or reorders t
   assert.equal(lines.length, 3, text);
   assert.ok(!lines.some((line) => line.startsWith('PASS')), "a line of the package's own making");
   assert.doesNotMatch(text, /^PASS/m);
-  // Text in any script prints as it is.
+  // Text in any script prints as it is, but for the characters Unicode lets a renderer draw as
+  // nothing: the zero-width non-joiner Persian writes inside words shows as an escape (ADR-0200).
   assert.equal(printable('caf\u00e9 \u2014 \u65e5\u672c \u0430'), 'caf\u00e9 \u2014 \u65e5\u672c \u0430');
+  assert.equal(printable('\u0645\u06cc\u200c\u0634\u0648\u062f'), '\u0645\u06cc\\u200c\u0634\u0648\u062f');
+});
+
+test('no character drawn as nothing prints raw, past U+FFFF or a lone surrogate either (re-review of #442, second pass)', () => {
+  // A list of BMP ranges let these through: the tag characters spell ASCII no one sees (U+E0041 is
+  // an "A"), the variation selectors, the Hangul fillers and the grapheme joiner draw as nothing,
+  // U+FFF9-FFFB hide the text they bracket where a renderer honours them, and a surrogate that
+  // pairs with nothing is no character at all.
+  const odd = [0x34f, 0x115f, 0x1160, 0x180e, 0x3164, 0xfe00, 0xfe0f, 0xffa0, 0xfff9, 0xfffb, 0x1d173, 0xe0001, 0xe0041, 0xe007f, 0xe0100, 0xe01ef, 0xd800, 0xdfff];
+  for (const code of odd) {
+    const character = String.fromCodePoint(code);
+    assert.ok(!printable(`a${character}b`).includes(character), `U+${code.toString(16).padStart(4, '0')} printed raw`);
+  }
+  assert.equal(printable('PASS\u{e0041}\ufe0f\u3164'), 'PASS\\u{e0041}\\ufe0f\\u3164');
+  assert.equal(printable('a\ud800b\udc00'), 'a\\ud800b\\udc00');
+  // A pair is one character, and prints as it is.
+  assert.equal(printable('\u{1f600} \u{20000}'), '\u{1f600} \u{20000}');
+  // Every character of those classes, enumerated rather than listed: a list is how these got through.
+  const hidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
+  let count = 0;
+  for (let code = 0; code <= 0x10ffff; code += 1) {
+    const character = String.fromCodePoint(code);
+    if (!hidden.test(character)) continue;
+    count += 1;
+    if (printable(character).includes(character)) assert.fail(`U+${code.toString(16).padStart(4, '0')} printed raw`);
+  }
+  assert.ok(count > 4000, `${count} characters in the classes`);
+});
+
+test("a saved file's folder prints as the operator gave it, and only its name is escaped (re-review of #442, second pass)", () => {
+  // collect-remote escaped the whole path, so a folder spelled with a joiner - Persian writes U+200C
+  // inside words, an emoji sequence joins with U+200D - printed as one that does not exist.
+  const dir = tempDir('fp-saved-');
+  try {
+    const folder = path.join(dir, '\u067e\u0631\u0648\u0698\u0647\u200c\u0647\u0627', 'team \u{1f469}\u200d\u{1f4bb}');
+    fs.mkdirSync(folder, { recursive: true });
+    const file = path.join(folder, 'fetchproof-corpus-v1-run7.zip');
+    fs.writeFileSync(file, '');
+    assert.equal(printableFile(file), file);
+    assert.ok(fs.existsSync(printableFile(file)), 'the printed path does not exist');
+    // The name is the artifact's: cleaned, then escaped; the folder is left to the caller's redaction.
+    assert.equal(printableFile(path.join(folder, 'fetchproof-corpus-v1-a\u2028PASS.zip')), path.join(folder, 'fetchproof-corpus-v1-a\\u2028PASS.zip'));
+    assert.equal(printableFile(path.join(folder, 'a\u0085b.zip'), { clean: (name) => name.toUpperCase() }), path.join(folder, 'A\\x85B.ZIP'));
+  } finally { cleanup(dir); }
 });
 
 test('collect-remote and artifact print the problems of a package through that one renderer (re-review of #442)', () => {
@@ -67,7 +112,7 @@ test('collect-remote and artifact print the problems of a package through that o
   // its messages unescaped; create printed its own, with no remedy (re-review of the follow-up).
   const calls = {
     'artifact.mjs': [/renderProblems\(result\.errors\)/, /renderProblems\(written\.validation\.errors\)/],
-    'collect-remote.mjs': [/renderProblems\(result\.errors, \{ clean: redact \}\)/, /saved \$\{printable\(redact\(file\)\)\}/],
+    'collect-remote.mjs': [/renderProblems\(result\.errors, \{ clean: redact \}\)/, /saved \$\{printableFile\(file, \{ clean: redact \}\)\}/],
   };
   for (const [script, expected] of Object.entries(calls)) {
     const source = fs.readFileSync(path.join(KIT_ROOT, 'bin', script), 'utf8');
