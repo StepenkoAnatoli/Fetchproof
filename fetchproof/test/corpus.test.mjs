@@ -430,17 +430,19 @@ test('the table-split scan skips fences and comments, runs past deeper headings,
   assert.match(named[0].detail, /separator/, named[0].detail);
 });
 
+// The contract's table, kept by `wrap` above a visible copy of it whose U-1 is OPEN.
+const hideAbove = (wrap) => (text) => {
+  const at = text.indexOf('| ID |');
+  const table = text.slice(at);
+  return `${text.slice(0, at)}${wrap(table.trimEnd())}\n\n${table.replace('| CLOSED |', '| OPEN |')}`;
+};
+
 // Found 2026-11-04 by an independent audit (F01). Only the stray-row scan below the table knew
 // fences and comments; the header search took the first table with the header, wherever it
 // stood. An archived CLOSED copy of the unknowns table, commented out or kept as a fenced
 // example ABOVE the live table, was read as the contract: the visible OPEN unknown was never
 // read, and preflight printed PASS.
 test('a contract table in an HTML comment or a code fence is not the table: the visible one is read, and its OPEN unknown blocks', () => {
-  const hideAbove = (wrap) => (text) => {
-    const at = text.indexOf('| ID |');
-    const table = text.slice(at);
-    return `${text.slice(0, at)}${wrap(table.trimEnd())}\n\n${table.replace('| CLOSED |', '| OPEN |')}`;
-  };
   const cases = [
     ['an HTML comment', (table) => `<!-- Archived table, kept for the reviewer\n${table}\n-->`],
     ['a fenced example', (table) => `\`\`\`markdown\n${table}\n\`\`\``],
@@ -465,6 +467,75 @@ test('a contract table in an HTML comment or a code fence is not the table: the 
   assert.deepEqual(readCorpus(inline).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
   const unclosed = `\`\`\`\n${tableRow(HEADERS.unknowns)}\n|---|---|---|---|---|\n| U-1 | q | w | CLOSED | E-01 |\n`;
   assert.equal(parseTable(unclosed, HEADERS.unknowns).found, false, 'a table inside a fence that is never closed is code');
+});
+
+// Found 2026-11-06 by the review of #441. The reader was fed trimmed lines, so an indented example
+// of a fence or a comment - code on GitHub, which opens nothing - hid every table below it: a
+// correct contract was read as having no unknowns and an evidence table as lost; and with the
+// comment example's `-->` indented below the live table, the OPEN table was passed over for an
+// archived CLOSED copy further down.
+test('an indented example of a fence or a comment opens nothing: the table below it is the table', () => {
+  for (const example of ['    ```\n    code\n', '    <!--\n    note\n', '\t```\n\tcode\n']) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, (text) => text.replace('| ID |', `A fence is written like this:\n\n${example}\n| ID |`));
+    corrupt(dir, PATHS.evidence, (text) => text.replace('| ID |', `${example}\n| ID |`));
+    const corpus = readCorpus(dir);
+    assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'CLOSED']], JSON.stringify(example));
+    assert.equal(corpus.evidenceFile.found, true, JSON.stringify(example));
+    assert.equal(runPreflight(dir).pass, true, `${JSON.stringify(example)}: a correct project was blocked`);
+  }
+
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => {
+    const at = text.indexOf('| ID |');
+    const table = text.slice(at).trimEnd();
+    return `${text.slice(0, at)}An example:\n\n    <!--\n\n${table.replace('| CLOSED |', '| OPEN |')}\n\n    -->\n\n${table}\n`;
+  });
+  assert.deepEqual(readCorpus(dir).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
+  assert.equal(runPreflight(dir).pass, false, 'the visible OPEN unknown passed preflight');
+});
+
+// Found 2026-11-06 by the review of #441: more ways of keeping an archived CLOSED copy that GitHub
+// hides or shows as code were read as the contract, and the visible OPEN unknown passed - an opener
+// after a list marker, a `<!--` after the `-->` that reopens the comment, a fence's line indented
+// four (its content, not its closer), and a copy indented as code.
+test('an archived copy after a list marker, in a reopened comment, in indented code or below a fence line indented four is hidden', () => {
+  const indent = (n, table) => table.split('\n').map((line) => `${' '.repeat(n)}${line}`).join('\n');
+  const cases = [
+    ['a fence in a list item', (table) => `- Archived copy:\n  \`\`\`\n${indent(2, table)}\n  \`\`\``],
+    ['a comment after a list marker', (table) => `- <!-- archived copy\n${indent(2, table)}\n  -->`],
+    ['a fence after an ordered list marker', (table) => `1. \`\`\`\n${indent(3, table)}\n   \`\`\``],
+    ['a fence after a list marker and a tab', (table) => `-\t\`\`\`\n${indent(4, table)}\n    \`\`\``],
+    ['a fence whose line indented four is its content', (table) => `\`\`\`markdown\n    \`\`\`\n${table}\n\`\`\``],
+    ['a comment reopened after the one it closed', (table) => `<!-- archived below --> <!--\n${table}\n\n<!-- end of archive -->`],
+    ['a comment reopened on its closing line', (table) => `<!--\nold notes\n--> <!--\n${table}\n\n<!-- end -->`],
+    ['indented code', (table) => indent(4, table)],
+  ];
+  for (const [name, wrap] of cases) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, hideAbove(wrap));
+    const corpus = readCorpus(dir);
+    assert.deepEqual(corpus.unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']], `${name}: ${JSON.stringify(corpus.unknowns)}`);
+    assert.equal(runPreflight(dir).pass, false, `${name}: a visible OPEN unknown passed preflight`);
+  }
+
+  // A comment that closes as it opens hides nothing, and CRLF line ends change nothing.
+  const open = [tableRow(HEADERS.unknowns), '|---|---|---|---|---|', '| U-1 | q | w | OPEN | |'].join('\n');
+  assert.deepEqual(parseTable(`<!-->\n<!--->\n${open}\n`, HEADERS.unknowns).rows.map((r) => r.Status), ['OPEN']);
+  const archived = `<!--\n${open.replace('| OPEN | |', '| CLOSED | E-01 |')}\n-->\n\n${open}\n`;
+  assert.deepEqual(parseTable(archived.replace(/\n/g, '\r\n'), HEADERS.unknowns).rows.map((r) => r.Status), ['OPEN']);
+});
+
+// A heading in a code block or a comment heads no section (review of #441, 2026-11-06): taken as
+// one, a `# Example` in a fence above the table ran the stray-row scan past the table's own
+// section, and a pipe-bearing line in the next section was named a row written below the table.
+test('a heading in a code block or a comment does not set the section the stray-row scan runs to', () => {
+  const table = [tableRow(HEADERS.unknowns), '|---|---|---|---|---|', '| U-1 | q | w | CLOSED | E-01 |'].join('\n');
+  for (const example of ['```\n# Example\n```', '<!--\n# Example\n-->', '    # Example']) {
+    const got = parseTable(`# Discovery\n\n## Unknowns\n\n${example}\n\n${table}\n\n## Notes\n\n| a note | with a pipe |\n`, HEADERS.unknowns);
+    assert.deepEqual(got.rows.map((r) => r.ID), ['U-1'], example);
+    assert.deepEqual(got.problems, [], `${example}: ${JSON.stringify(got.problems)}`);
+  }
 });
 
 // The writers ask the reader where the table is, so they must write where it reads (F01): a row

@@ -29,12 +29,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   ending in a dot or a space, a device name and an 8.3 short-name shape; duplicates, collisions and the
   never-packaged paths are compared by one key that folds case and Unicode form, and the never-packaged paths
   are matched as folders too. The producer refuses the same names before it writes (ADR-0197). Thirteen tests.
-- **Fixed: a table in an HTML comment or a code fence is no longer read as the contract** (independent audit
-  2026-11-04, F01). The header search took the first table with the header wherever it stood, so an archived
-  CLOSED copy of the unknowns table, commented out or kept as a fenced example above the live one, was read in its
-  place: a visible OPEN unknown passed preflight and the portable state derived `buildAuthorized: true`. The
-  header search and the stray-row scan now share one rule for what GitHub shows as code or hides, with fences
-  closed as GitHub closes them, and `appendRow` writes into the table the reader reads. Two tests.
+- **Fixed: a table in an HTML comment or a code block is no longer read as the contract** (independent audit
+  2026-11-04, F01; review of #441, 2026-11-06). The header search took the first table with the header wherever
+  it stood, so an archived CLOSED copy of the unknowns table, commented out or kept as a fenced example above the
+  live one, was read in its place: a visible OPEN unknown passed preflight and the portable state derived
+  `buildAuthorized: true`. The header search, the stray-row scan and the heading above a table now share one
+  reading of what GitHub shows as code or hides, `hiddenLines`: CommonMark's rules in columns, inside list items
+  too - fences opened and closed as GitHub does, indented code, and comments to their `-->`, reopened by a `<!--`
+  after it (ADR-0203). Read at first from trimmed lines, an indented example of a fence or a comment hid every
+  table below it, and an archived copy after a list marker or in a reopened comment was still read. `appendRow`
+  writes into the table the reader reads. Five tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

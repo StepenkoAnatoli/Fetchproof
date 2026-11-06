@@ -53,30 +53,150 @@ function isSeparator(line) {
   return /^\|?[\s:|-]+\|[\s:|-]*$/.test(line.trim()) && line.includes('-');
 }
 
+/** Past the spaces and tabs at `index`, and the column reached: a tab runs to the next multiple of 4. */
+function skipSpace(line, index, col) {
+  let i = index;
+  let c = col;
+  while (line[i] === ' ' || line[i] === '\t') {
+    c = line[i] === '\t' ? c + 4 - (c % 4) : c + 1;
+    i += 1;
+  }
+  return { index: i, col: c };
+}
+
 /**
- * Fed a document's trimmed lines in order, says whether GitHub shows each one as code or hides
- * it: a line of a fenced code block (its fences included), or of an HTML comment. The header
- * search and the stray-row scan ask the same one, so a table is judged by one rule wherever it
- * stands (independent audit 2026-11-04, F01). A fence closes on a run of its own character at
- * least as long as the one that opened it, with nothing after it; a backtick fence's info string
- * holds no backtick, so ```code``` on one line is inline code; a fence never closed runs to the
- * end of the document; inside a comment a fence opens nothing. Indentation is not weighed.
+ * Whether an HTML comment is still open after `text`, given whether one was open before it. A
+ * `<!--` after the `-->` that closed one reopens it, and GitHub keeps such a comment open to the
+ * next `-->`, though CommonMark ended the HTML block at that line; `<!-->` and `<!--->` close as
+ * they open, as HTML reads them.
  */
-function blockContext() {
-  let fence = null;
-  let comment = false;
-  return (text) => {
-    if (fence) {
-      const closes = /^(`+|~+)\s*$/.exec(text);
-      if (closes && closes[1][0] === fence[0] && closes[1].length >= fence.length) fence = null;
-      return true;
+function commentOpenAfter(text, open) {
+  let at = 0;
+  let inside = open;
+  for (;;) {
+    if (inside) {
+      const end = text.indexOf('-->', at);
+      if (end < 0) return true;
+      at = end + 3;
+      inside = false;
+    } else {
+      const start = text.indexOf('<!--', at);
+      if (start < 0) return false;
+      at = start + 4;
+      if (text[at] === '>') at += 1;
+      else if (text.startsWith('->', at)) at += 2;
+      else inside = true;
     }
-    if (comment) { if (text.includes('-->')) comment = false; return true; }
-    const opens = /^(`{3,}|~{3,})(.*)$/.exec(text);
-    if (opens && !(opens[1][0] === '`' && opens[2].includes('`'))) { fence = opens[1]; return true; }
-    if (text.startsWith('<!--')) { if (!text.includes('-->')) comment = true; return true; }
-    return false;
+  }
+}
+
+const THEMATIC_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const LIST_MARKER = /^(?:[-+*]|(\d{1,9})[.)])(?=[ \t]|$)/;
+
+/**
+ * Which lines of a document GitHub shows as code or hides, read in one pass. The header search
+ * and the stray-row scan ask the same answer, so a table is judged by one rule wherever it stands
+ * (independent audit 2026-11-04, F01). `at[i]` is null for a line that can be a table's, else
+ * `{ kind, line }`: 'fence', 'comment' or 'indented' (an indented code block), and the 1-based
+ * line that opened it. `open` is that record when a fence or a comment runs unclosed to the end
+ * of the document - not a fence inside a list item, which a table written below at column 0 ends.
+ *
+ * CommonMark's rules, in columns, each line measured from the content column of the list items it
+ * stays inside (review of #441, 2026-11-06: the lines were trimmed first, so an indented example
+ * of a fence or a comment hid every table below it, and an opener after a list marker was not
+ * seen):
+ * - A list item opens at `-`, `+`, `*`, or 1-9 digits and `.` or `)`, indented 0-3 and followed by
+ *   a space, a tab or the line's end, unless the line is a thematic break; its content starts
+ *   after 1-4 columns of space (after one, when there are 5 or more or none). A non-blank line
+ *   indented less than an item's content ends the item, and a fence in it. An item that is empty,
+ *   or ordered from a number other than 1, does not interrupt a paragraph.
+ * - A fence opens at three or more backticks or tildes, indented 0-3; a backtick fence's info
+ *   string holds no backtick, so ```code``` on one line is inline code. It closes at a run of its
+ *   own character at least as long, indented 0-3, with nothing after it; never closed, it runs to
+ *   the end of its container.
+ * - A line indented 4 or more opens nothing: it is indented code when no paragraph is open, and
+ *   the paragraph's next line when one is.
+ * - An HTML comment opens at `<!--` where a line's content starts and runs to the line holding its
+ *   `-->` (`commentOpenAfter`), whatever the indentation of the lines between.
+ * Not read, so a table there is taken as shown: a block quote's own blocks; a list item's lazy
+ * continuation line, which ends the item here; HTML blocks other than comments; a `<!--` after
+ * other text on its line. A `-->` that GitHub escapes - in prose or code inside a comment reopened
+ * on a closing line - ends the comment here.
+ */
+export function hiddenLines(lines) {
+  const at = new Array(lines.length).fill(null);
+  const items = [];
+  let fence = null;
+  let comment = null;
+  let code = null;
+  let paragraph = false;
+  const popTo = (col) => {
+    while (items.length && col < items[items.length - 1]) { items.pop(); paragraph = false; }
   };
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    let { index, col } = skipSpace(line, 0, 0);
+    const blank = index === line.length;
+    if (comment) {
+      at[i] = comment;
+      if (!blank) popTo(col);
+      if (!commentOpenAfter(line, true)) { comment = null; paragraph = false; code = null; }
+      continue;
+    }
+    if (fence) {
+      const base = fence.depth ? items[fence.depth - 1] : 0;
+      if (blank || col >= base) {
+        at[i] = fence.record;
+        const closes = /^(`+|~+)[ \t]*$/.exec(line.slice(index));
+        if (col - base <= 3 && closes && closes[1][0] === fence.char && closes[1].length >= fence.length) fence = null;
+        continue;
+      }
+      popTo(col);
+      fence = null;
+    }
+    if (blank) { paragraph = false; continue; }
+    popTo(col);
+    let base = items.length ? items[items.length - 1] : 0;
+    if (col - base >= 4) {
+      if (!paragraph) { code ??= { kind: 'indented', line: i + 1 }; at[i] = code; }
+      continue;
+    }
+    code = null;
+    for (;;) {
+      const rest = line.slice(index);
+      if (THEMATIC_BREAK.test(rest.trimEnd())) break;
+      const marker = LIST_MARKER.exec(rest);
+      if (!marker) break;
+      const after = skipSpace(line, index + marker[0].length, col + marker[0].length);
+      const empty = after.index === line.length;
+      if (paragraph && (empty || (marker[1] !== undefined && Number(marker[1]) !== 1))) break;
+      const wide = empty || after.col - (col + marker[0].length) > 4;
+      items.push(wide ? col + marker[0].length + 1 : after.col);
+      paragraph = false;
+      base = items[items.length - 1];
+      ({ index, col } = after);
+      if (empty || col - base >= 4) break;
+    }
+    if (index === line.length) continue;
+    if (col - base >= 4) { code = { kind: 'indented', line: i + 1 }; at[i] = code; continue; }
+    const rest = line.slice(index);
+    const opens = /^(`{3,}|~{3,})(.*)$/.exec(rest);
+    if (opens && !(opens[1][0] === '`' && opens[2].includes('`'))) {
+      fence = { char: opens[1][0], length: opens[1].length, depth: items.length, record: { kind: 'fence', line: i + 1 } };
+      at[i] = fence.record;
+      paragraph = false;
+      continue;
+    }
+    if (rest.startsWith('<!--')) {
+      at[i] = { kind: 'comment', line: i + 1 };
+      if (commentOpenAfter(rest, false)) comment = at[i];
+      paragraph = false;
+      continue;
+    }
+    paragraph = !(THEMATIC_BREAK.test(rest.trimEnd()) || /^#{1,6}(?:[ \t]|$)/.test(rest));
+  }
+  const open = comment ?? (fence && fence.depth === 0 ? fence.record : null);
+  return { at, open };
 }
 
 /**
@@ -108,22 +228,23 @@ export function repairRowArity(cells, width, free = width - 1) {
 const FREE_TEXT_COLUMNS = ['finding', 'unknown', 'why it matters', 'title'];
 
 /**
- * Parse the first markdown table whose header starts with `header[0]`, of those GitHub renders
- * as a table. Returns `{ header, rows, problems, found, line }`; `line` is the header's 1-based
- * line, and every row carries its own.
+ * Parse the first markdown table whose header starts with `header[0]`, or holds exactly its
+ * columns, outside the code blocks and HTML comments `hiddenLines` finds - which GitHub shows as
+ * code or hides; what that reading leaves out is named there. Returns `{ header, rows, problems,
+ * found, line }`; `line` is the header's 1-based line, and every row carries its own.
  */
 export function parseTable(text, header) {
   const out = { header: [...header], rows: [], problems: [], found: false, line: 0 };
   if (!text) return out;
   const lines = String(text).split(/\r?\n/);
   const want = new Set(header.map((name) => name.trim().toLowerCase()));
-  // A table in a fence or an HTML comment is shown as code or hidden, so it is not the table. An
-  // archived CLOSED copy of the unknowns table commented out above the live one was read in its
+  // A table in a code block or an HTML comment is shown as code or hidden, so it is not the table.
+  // An archived CLOSED copy of the unknowns table commented out above the live one was read in its
   // place, and the live table's OPEN unknown passed the gate (independent audit 2026-11-04, F01).
-  const hidden = blockContext();
+  const hidden = hiddenLines(lines).at;
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) {
-    if (hidden(lines[i].trim())) continue;
+    if (hidden[i]) continue;
     if (!lines[i].trim().startsWith('|')) continue;
     if (!isSeparator(lines[i + 1] ?? '')) continue;
     const cells = splitRow(lines[i]);
@@ -181,12 +302,15 @@ export function parseTable(text, header) {
   // which printed PASS (gap audit, rank 1). The row stays out of the table, as it is rendered,
   // and is RECORDED. The scan runs to the end of the table's section: a heading of the same or
   // a higher level than the one above the table (a deeper `###` note does not end the section,
-  // and `#tag` prose is not a heading). A fenced code block or an HTML comment is skipped, as
-  // GitHub renders a row there as code or hides it; a lone separator is not a row; a header
+  // and `#tag` prose is not a heading). A code block or an HTML comment is skipped, as GitHub
+  // renders a row there as code or hides it (`hiddenLines`); a lone separator is not a row; a header
   // followed by its separator starts another table and is not a stray row, and a header whose
   // separator is malformed is named as that, once (breaker review, 2026-10-04).
+  // A heading in a code block or a comment heads no section: taken as one, `# example` in a fence
+  // above the table ran the scan past the table's own section (2026-11-06).
   let level = 7;
   for (let k = start - 1; k >= 0; k -= 1) {
+    if (hidden[k]) continue;
     const heading = /^(#{1,6})\s/.exec(lines[k]);
     if (heading) { level = heading[1].length; break; }
   }
@@ -213,12 +337,11 @@ export function parseTable(text, header) {
     while (j > end && rowShaped(lines[j].trim())) j -= 1;
     return j === end;
   };
-  const hiddenBelow = blockContext();
   let i = out.rows.length ? out.rows[out.rows.length - 1].line : start + 2;
   for (; i < lines.length; i += 1) {
     const line = lines[i];
     const text = line.trim();
-    if (hiddenBelow(text)) continue;
+    if (hidden[i]) continue;
     const heading = /^(#{1,6})\s/.exec(line);
     if (heading && heading[1].length <= level) break;
     // A row without its leading pipe is row-shaped here too: below a blank line it was dropped
