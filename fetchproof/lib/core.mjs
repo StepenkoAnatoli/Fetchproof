@@ -605,6 +605,9 @@ export const NAMED_RUN_REFUSALS = Object.freeze(new Set([
   // refused before any credit is spent. It was thrown with this code and answered with a
   // stack and an object dump under exit 1 (2026-10-02, break-test pass 3).
   'CLI_INCOMPATIBLE',
+  // appendRow, and the checks before a collection: a row would be written where no reader
+  // reads it, inside a fence or a comment (ADR-0204).
+  'TABLE_HIDDEN',
 ]));
 
 /** Append one line, creating the file and its directory when absent. */

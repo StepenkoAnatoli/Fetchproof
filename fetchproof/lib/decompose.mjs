@@ -11,7 +11,7 @@ import path from 'node:path';
 import {
   PATHS, HEADERS, resolve, exists, readText, writeText, today, hostOf, uniq, listFiles, keepBackup,
 } from './core.mjs';
-import { readCorpus, cacheDecision, tableRow, appendJsonLine, parseCapture, parseTable, sectionOf } from './corpus.mjs';
+import { readCorpus, cacheDecision, tableRow, appendJsonLine, parseCapture, parseTable, sectionOf, assertTablesWritable } from './corpus.mjs';
 import { seedRows, UNIVERSAL_DIMENSIONS } from './dimensions.mjs';
 import { collectOne, DEFAULT_SOURCE_TYPE } from './collect.mjs';
 import { assertAppendable } from './provenance.mjs';
@@ -472,6 +472,8 @@ export function decompose(root, {
   // searches and one fetch before `collectOne` threw (outside audit, 2026-10-03). The dry run
   // is refused the same way.
   assertAppendable(root);
+  // And a row it would record where no reader reads it (ADR-0204), as runResearch refuses it.
+  assertTablesWritable(root);
   const corpus = readCorpus(root);
 
   let material = [];

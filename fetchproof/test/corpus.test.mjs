@@ -554,6 +554,65 @@ test('appendRow writes into the table the reader reads, not into an archived cop
   }
 });
 
+// Found 2026-11-06 by the review of #441 (finding 1, ADR-0204). With a fence or a comment never
+// closed above the table, the reader found no table, and appendRow started one at the end of the
+// file - inside the same block, read by nothing - numbering its row E-01 again on every run; once
+// the block was closed, every citation of the new E-01 resolved to the old one, another page.
+test('appendRow refuses, writing nothing, where its row would be hidden: a block never closed, or a hidden table with rows', () => {
+  const fence = '```';
+  const head = `${tableRow(HEADERS.evidence)}\n|${HEADERS.evidence.map(() => '---').join('|')}|`;
+  const row = tableRow(['E-01', '2026-01-01', 'P', 'https://example.invalid/', 'a claim', 'research/raw/a.md']);
+  const indent = (text) => text.split('\n').map((line) => `    ${line}`).join('\n');
+  const cases = [
+    ['a fence never closed above the table', `${fence}\nnode fetchproof/bin/research.mjs\n\n${head}\n${row}\n`,
+      /ends inside a fenced code block that starts at line 3 and is never closed/],
+    ['a comment never closed above the table', `<!-- notes\n\n${head}\n${row}\n`, /ends inside an HTML comment that starts at line 3 /],
+    ['a fence never closed, and no table yet', `${fence}\nnode fetchproof/bin/research.mjs\n`, /ends inside a fenced code block that starts at line 3 /],
+    ['the table and its rows in a closed comment', `<!--\n${head}\n${row}\n-->\n`, /its table stands inside an HTML comment that starts at line 3,/],
+    ['the table indented as code', `${indent(`${head}\n${row}`)}\n`, /its table stands inside an indented code block that starts at line 3,/],
+  ];
+  for (const [name, body, says] of cases) {
+    const dir = makeProject();
+    const file = resolve(dir, PATHS.evidence);
+    writeText(file, `# Evidence\n\n${body}`);
+    const before = readText(file);
+    assert.throws(
+      () => appendRow(dir, PATHS.evidence, HEADERS.evidence, ['E-02', '2026-01-02', 'P', 'https://x.invalid/', 'a claim', 'research/raw/b.md']),
+      (err) => err.code === 'TABLE_HIDDEN' && err.message.startsWith(`refusing to write to ${PATHS.evidence}: `) && says.test(err.message),
+      name,
+    );
+    assert.equal(readText(file), before, `${name}: the file was written`);
+  }
+
+  // upsertRow appends a new source through appendRow, and is refused the same way.
+  const dir = makeProject();
+  const file = resolve(dir, PATHS.sources);
+  const sources = `${tableRow(HEADERS.sources)}\n|${HEADERS.sources.map(() => '---').join('|')}|\n${tableRow(['https://example.invalid/', 'P', 'T', '2026-01-01', 'U-1'])}`;
+  writeText(file, `# Sources\n\n<!--\n${sources}\n-->\n`);
+  const before = readText(file);
+  assert.throws(() => upsertRow(dir, PATHS.sources, HEADERS.sources, ['https://x.invalid/', 'S', 'X', '2026-01-02', 'U-2']), (err) => err.code === 'TABLE_HIDDEN');
+  assert.equal(readText(file), before);
+});
+
+// The refusal is no wider than the harm (ADR-0204): a header kept as a commented-out example holds
+// no rows a new table would leave behind, and a block left open BELOW a table the reader reads is
+// not where the row goes.
+test('appendRow still writes beside a hidden header with no rows, and into a read table above a block never closed', () => {
+  const head = `${tableRow(HEADERS.evidence)}\n|${HEADERS.evidence.map(() => '---').join('|')}|`;
+  const cells = (id) => [id, '2026-01-02', 'P', `https://x.invalid/${id}`, 'a claim', 'research/raw/a.md'];
+  const ids = (dir) => parseTable(readText(resolve(dir, PATHS.evidence)), HEADERS.evidence).rows.map((r) => r.ID);
+
+  const example = makeProject();
+  writeText(resolve(example, PATHS.evidence), `# Evidence\n\n<!-- the table's header, for reference\n${head}\n-->\n`);
+  appendRow(example, PATHS.evidence, HEADERS.evidence, cells('E-01'));
+  assert.deepEqual(ids(example), ['E-01']);
+
+  const above = makeProject();
+  writeText(resolve(above, PATHS.evidence), `# Evidence\n\n${head}\n${tableRow(cells('E-01'))}\n\n${'```'}\nnotes, never closed\n`);
+  appendRow(above, PATHS.evidence, HEADERS.evidence, cells('E-02'));
+  assert.deepEqual(ids(above), ['E-01', 'E-02']);
+});
+
 // #331: GFM makes a row's outer pipes optional, so `E-03 | ... |` renders as the third row on
 // GitHub. The kit ended the table there, and named every later row as standing after a blank
 // line the file did not have - 24 times, and never the one line at fault.

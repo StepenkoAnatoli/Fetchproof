@@ -128,6 +128,24 @@ test('applying a request adds an OPEN contract row, the plan entries, and a boun
   assert(/U-9 is not a row/.test(threw), threw);
 });
 
+// ADR-0204: with the contract's table below a comment never closed, the new OPEN row would be
+// written inside it, read by nothing, and its plan run for an unknown no check sees. The append
+// is refused before the plan is touched or the request's own plan written.
+test('a request into a contract whose table is hidden is refused, and nothing is written', () => {
+  const project = makeProject(undefined, { topic: 'Hidden contract', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace('| ID |', '<!-- notes\n\n| ID |'));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'hidden', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN');
+  assert(/research\/DISCOVERY\.md: the file ends inside an HTML comment/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'hidden.plan.json')), false);
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);

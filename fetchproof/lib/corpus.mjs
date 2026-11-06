@@ -228,6 +228,24 @@ export function repairRowArity(cells, width, free = width - 1) {
 const FREE_TEXT_COLUMNS = ['finding', 'unknown', 'why it matters', 'title'];
 
 /**
+ * The cells of line `i` when it heads a table with `header`'s columns - a row of pipes over a
+ * separator - else null. The reader's header search and the writer's refusal (`tableHidden`) ask
+ * it alike. A header is recognised by its COLUMN SET, not by its first cell alone. Matching on
+ * the first cell missed any table whose columns had been reordered - the reader then silently
+ * found no table at all, and the writer, asking the same question, inserted its row above the
+ * document's title.
+ */
+function headerAt(lines, i, header) {
+  if (!lines[i].trim().startsWith('|') || !isSeparator(lines[i + 1] ?? '')) return null;
+  const cells = splitRow(lines[i]);
+  const names = cells.map((name) => name.trim().toLowerCase());
+  const want = new Set(header.map((name) => name.trim().toLowerCase()));
+  const sameLead = names[0] === header[0].trim().toLowerCase();
+  const sameSet = names.length === want.size && names.every((name) => want.has(name)) && new Set(names).size === names.length;
+  return sameLead || sameSet ? cells : null;
+}
+
+/**
  * Parse the first markdown table whose header starts with `header[0]`, or holds exactly its
  * columns, outside the code blocks and HTML comments `hiddenLines` finds - which GitHub shows as
  * code or hides; what that reading leaves out is named there. Returns `{ header, rows, problems,
@@ -237,7 +255,6 @@ export function parseTable(text, header) {
   const out = { header: [...header], rows: [], problems: [], found: false, line: 0 };
   if (!text) return out;
   const lines = String(text).split(/\r?\n/);
-  const want = new Set(header.map((name) => name.trim().toLowerCase()));
   // A table in a code block or an HTML comment is shown as code or hidden, so it is not the table.
   // An archived CLOSED copy of the unknowns table commented out above the live one was read in its
   // place, and the live table's OPEN unknown passed the gate (independent audit 2026-11-04, F01).
@@ -245,17 +262,8 @@ export function parseTable(text, header) {
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) {
     if (hidden[i]) continue;
-    if (!lines[i].trim().startsWith('|')) continue;
-    if (!isSeparator(lines[i + 1] ?? '')) continue;
-    const cells = splitRow(lines[i]);
-    // A header is recognised by its COLUMN SET, not by its first cell alone. Matching on
-    // the first cell missed any table whose columns had been reordered - the reader then
-    // silently found no table at all, and the writer, asking the same question, inserted
-    // its row above the document's title.
-    const names = cells.map((name) => name.trim().toLowerCase());
-    const sameLead = names[0] === header[0].trim().toLowerCase();
-    const sameSet = names.length === want.size && names.every((name) => want.has(name)) && new Set(names).size === names.length;
-    if (!sameLead && !sameSet) continue;
+    const cells = headerAt(lines, i, header);
+    if (!cells) continue;
     start = i;
     out.header = cells;
     out.found = true;
@@ -1098,13 +1106,74 @@ export function headerOf(text, canonical) {
   return table.found ? table.header : null;
 }
 
-/** Append one row to an artifact's table, creating the table when it is absent. */
+const HIDDEN_BY = { fence: 'a fenced code block', comment: 'an HTML comment', indented: 'an indented code block' };
+
+/**
+ * Why a row for a table with `header` cannot be written where the reader would read it, or null
+ * when it can (review of #441, 2026-11-06, finding 1; ADR-0204). With a table the reader reads,
+ * the row goes below its last row. With none, the writer starts a table at the end of the file,
+ * which is hidden as well when the file ends inside a fence or a comment never closed (`open`
+ * true); and a table with this header standing hidden, with rows below it, would be left behind
+ * by the new one, which numbers its own from the first id again. A hidden header with no rows -
+ * an example, commented out - holds nothing a new table would leave behind. Returns the hiding
+ * block's record from `hiddenLines` (`kind`, the `line` that opened it) with `open`.
+ */
+export function tableHidden(text, header) {
+  if (!text) return null;
+  const lines = String(text).split(/\r?\n/);
+  const { at, open } = hiddenLines(lines);
+  let held = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!headerAt(lines, i, header)) continue;
+    if (!at[i]) return null;
+    // Its first row: the line below the separator, in the same block, holding a cell divider.
+    const row = lines[i + 2] ?? '';
+    if (!held && at[i + 2] === at[i] && !isSeparator(row) && /(^|[^\\])\|/.test(row)) held = at[i];
+  }
+  if (open) return { ...open, open: true };
+  return held ? { ...held, open: false } : null;
+}
+
+function tableHiddenError(rel, hidden) {
+  const block = `${HIDDEN_BY[hidden.kind]} that starts at line ${hidden.line}`;
+  const err = new Error(hidden.open
+    ? `refusing to write to ${rel}: the file ends inside ${block} and is never closed, so a table in it is `
+      + 'not read, and a row written at its end would be hidden too. Close the block where it should end, then run again.'
+    : `refusing to write to ${rel}: its table stands inside ${block}, which GitHub shows as code or hides, so `
+      + 'no check reads its rows, and a new table would leave them behind and number its own from the first id '
+      + 'again. Move the table out of the block, then run again.');
+  err.code = 'TABLE_HIDDEN';
+  return err;
+}
+
+/**
+ * Refuses, before a collection spends anything, when a row it records would be written where no
+ * reader reads it (`tableHidden`, ADR-0204): its evidence and sources tables. The writer refuses
+ * too, but only after the fetch, and the capture it leaves with no row is a cache hit the next
+ * run never writes a row for.
+ */
+export function assertTablesWritable(root) {
+  for (const [rel, header] of [[PATHS.evidence, HEADERS.evidence], [PATHS.sources, HEADERS.sources]]) {
+    const hidden = tableHidden(readText(resolve(root, rel), ''), header);
+    if (hidden) throw tableHiddenError(rel, hidden);
+  }
+}
+
+/**
+ * Append one row to an artifact's table, creating the table when it is absent - and refusing,
+ * with nothing written, where the row would be hidden from every reader (`tableHidden`).
+ */
 export function appendRow(root, rel, header, cells) {
   const file = resolve(root, rel);
   const text = readText(file, '');
   const onDisk = headerOf(text, header);
   const line = tableRow(alignToHeader(header, cells, onDisk));
   if (!onDisk) {
+    // Started below a fence or a comment never closed, the table was written inside it, read by
+    // nothing, and its row numbered from the first id again on every run - E-01 cited by the
+    // builder, then resolved to another page once the block was closed (review of #441).
+    const hidden = tableHidden(text, header);
+    if (hidden) throw tableHiddenError(rel, hidden);
     const head = `${tableRow(header)}\n|${header.map(() => '---').join('|')}|\n`;
     writeText(file, `${text.trimEnd()}\n\n${head}${line}\n`.replace(/^\n+/, ''));
     return line;

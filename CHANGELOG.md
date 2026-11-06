@@ -38,7 +38,11 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   too - fences opened and closed as GitHub does, indented code, and comments to their `-->`, reopened by a `<!--`
   after it (ADR-0203). Read at first from trimmed lines, an indented example of a fence or a comment hid every
   table below it, and an archived copy after a list marker or in a reopened comment was still read. `appendRow`
-  writes into the table the reader reads. Five tests.
+  writes into the table the reader reads, and refuses (`TABLE_HIDDEN`), writing nothing, where its row would be
+  hidden: below a fence or a comment never closed it started a new table inside the block, read by nothing, and
+  numbered its row E-01 again on every run (ADR-0204). A collection, phase 0 and a dry run ask the same before
+  anything is spent, and `collectOne` again before each fetch; `decompose.mjs` now answers the kit's named
+  refusals with their message and exit 2, where it printed a stack under exit 1. Ten tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same
