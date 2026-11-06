@@ -13,6 +13,7 @@ import { validateArtifact, authorizationProblems, SUPPORTED_FORMAT_MAJOR } from 
 import { legacyBriefInputsHash } from '../lib/artifact-state.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { ZIP_LIMITS, openZip, checkEntryName } from '../lib/artifact-zip.mjs';
+import { crc32 } from '../lib/archive.mjs';
 import {
   rawZip, seal, basePackage, collectedProject, approvedProject, writeFixture,
 } from './artifact-fixtures.mjs';
@@ -708,7 +709,9 @@ test('a body is checked against its CRC-32 on a Node without zlib.crc32, which 2
     if (native) Object.defineProperty(zlib, 'crc32', native);
   }
   assert.deepEqual(read, ['stored body', body]);
-  const sum = `0x${zlib.crc32(Buffer.from(body)).toString(16).padStart(8, '0')}`;
+  // The writer's sum, pinned to the published vectors (audit.test.mjs): zlib.crc32 is the very
+  // function 22.0 and 22.1 lack, and a test that computed with it threw there (re-review of #442).
+  const sum = `0x${crc32(Buffer.from(body)).toString(16).padStart(8, '0')}`;
   assert.equal(refusal?.code, 'ZIP-READ', String(refusal));
   assert.ok(refusal.message.includes(`the directory declares 0x12345678, its bytes give ${sum}`), refusal.message);
 });

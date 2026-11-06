@@ -154,17 +154,30 @@ function unlessAborted(promise, signal) {
   });
 }
 
+// null for a body that could not be read: it said nothing, which is not saying "no rate limit".
 async function readError(response, signal) {
-  let body = '';
-  try { body = (await unlessAborted(response.text(), signal)).slice(0, 400); } catch { /* a body we cannot read is not a body */ }
-  return redact(body);
+  try { return redact((await unlessAborted(response.text(), signal)).slice(0, 400)); } catch { return null; }
 }
 
-async function rateLimitError(response, signal) {
+/**
+ * The error for a 403, which is a rate limit or a refusal: `refusal` when the response names no
+ * limit. GitHub may name one only in the body - a secondary limit sends no rate-limit header - so
+ * with the headers silent and the body unread (cut off at the watch's deadline, or lost), which of
+ * the two it is is not known, and the remedy names both, the wait first. It named the token's
+ * permission alone, to a token that had read the run one poll before (re-review of #442). `lead`
+ * begins that message.
+ */
+async function forbiddenError(response, { lead, refusal, signal }) {
   const body = await readError(response, signal);
   const remaining = response.headers?.get?.('x-ratelimit-remaining');
   const retry = response.headers?.get?.('retry-after');
-  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body)) return null;
+  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body ?? '')) {
+    if (body !== null) return refusal;
+    return new DispatchError(refusal.code, `${lead}: HTTP 403, a rate limit or a refusal - its body, which says which, could not be read`, {
+      status: 403,
+      remedy: `wait at least one minute before retrying; if it is refused again, ${refusal.remedy}`,
+    });
+  }
   const waits = [];
   if (retry != null && /^\d+$/.test(retry)) waits.push(`wait at least ${retry} seconds (Retry-After) before retrying`);
   const reset = response.headers?.get?.('x-ratelimit-reset');
@@ -252,15 +265,16 @@ export async function dispatchCollection({
     });
   }
   if (response.status === 403) {
-    const limited = await rateLimitError(response);
-    if (limited) throw limited;
-    throw new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
-      status: 403,
-      remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
+    throw await forbiddenError(response, {
+      lead: 'dispatch failed',
+      refusal: new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
+        status: 403,
+        remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
+      }),
     });
   }
   if (!response.ok) {
-    throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${await readError(response)}`, { status: response.status });
+    throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${(await readError(response)) ?? ''}`, { status: response.status });
   }
 
   const body = await readJsonBody(response, 'dispatch');
@@ -321,17 +335,14 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/runs/${runId}`,
     { headers: headers(token), ...(signal && { signal }) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
   if (!response.ok) {
-    if (response.status === 403) {
-      const limited = await rateLimitError(response, signal);
-      if (limited) throw limited;
-    }
     // A refusal names its own way out; the caller's generic "pick it up again" would send
     // somebody back to a run number that does not exist, with a token that cannot see it.
     const remedy = response.status === 404 ? `no run ${runId} on ${repository}, or the token cannot see it - check the number the dispatch printed`
       : response.status === 401 ? 'the token was refused - it is expired or mistyped; create a new one'
         : response.status === 403 ? 'the token may not read this repository\'s runs - it needs "Actions" set to read and write'
           : null;
-    throw new DispatchError('HTTP', `could not read run ${runId}: HTTP ${response.status}`, { status: response.status, remedy });
+    const refusal = new DispatchError('HTTP', `could not read run ${runId}: HTTP ${response.status}`, { status: response.status, remedy });
+    throw response.status === 403 ? await forbiddenError(response, { lead: `could not read run ${runId}`, refusal, signal }) : refusal;
   }
   return readJsonBody(response, `could not read run ${runId}`, signal);
 }
@@ -398,10 +409,22 @@ export async function waitForRun({
   const timedOut = (message, first = null) => new DispatchError('TIMEOUT', message, {
     remedy: `${first ? `${first}; ` : ''}the run ${seen ? 'is still going' : 'is not known to have failed'}; check ${seen?.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
   });
+  // An error that ends the watch ends only the watch: the run goes on, and the command that was run
+  // dispatches another. So a remedy of the error's own - wait out a limit, a new token, a permission,
+  // a proxy, any of which may say to retry - is followed by the way back to this run, unless it names
+  // it already or the run's number is what is in doubt (a 404); one with none is left to the caller.
+  // A 403 ended the watch with "wait ... before retrying" and no run number (re-review of #442's
+  // follow-up, 2026-11-06).
+  const wayBack = (err) => (err instanceof DispatchError && err.remedy && err.status !== 404 && !err.remedy.includes('--run-id')
+    ? new DispatchError(err.code, err.message, {
+      status: err.status,
+      remedy: `${err.remedy}; the run may be fine - pick it up again with --run-id ${runId} rather than dispatching another`,
+    })
+    : err);
   try {
     for (;;) {
       if (watch.signal.aborted || now() >= deadline) {
-        throw failed ?? timedOut(seen ? `run ${runId} was still ${seen.status} after ${seconds}s` : `run ${runId} was not read within ${seconds}s`);
+        throw failed ? wayBack(failed) : timedOut(seen ? `run ${runId} was still ${seen.status} after ${seconds}s` : `run ${runId} was not read within ${seconds}s`);
       }
       let run;
       try {
@@ -410,15 +433,16 @@ export async function waitForRun({
         if (watch.signal.aborted) {
           const before = seen ? `; it was ${seen.status} at the poll before` : '';
           // A refusal whose status came in time is an answer, though its body was cut off: a 403
-          // is read for a rate limit first. Its own remedy comes first - "a longer --timeout"
-          // alone sent a token without "Actions" back to the same refusal (review of #442).
+          // is read for a rate limit first, and with its body unread names both causes. Its own
+          // remedy comes first - "a longer --timeout" alone sent a token without "Actions" back to
+          // the same refusal (review of #442).
           if (err instanceof DispatchError && err.status) {
             throw timedOut(`the status poll for run ${runId} answered HTTP ${err.status}, but its body was still being read when the watch ended after ${seconds}s${before}`, err.remedy);
           }
           throw timedOut(`the status poll for run ${runId} had no answer when the watch ended after ${seconds}s${before}`);
         }
         failures += 1;
-        if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw err;
+        if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw wayBack(err);
         failed = err;
         onRetry(err, failures);
       }

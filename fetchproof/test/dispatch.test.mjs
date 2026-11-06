@@ -242,6 +242,37 @@ test('rate-limited 403 responses name the wait instead of token permissions', as
   }
 });
 
+test('a 403 whose body could not be read names both causes, the wait first, not the permission alone (re-review of #442)', async () => {
+  // GitHub names a secondary rate limit only in the body, so a body that was lost says nothing
+  // either way. One read and empty is a refusal, and a header still names a limit.
+  const lost = (headers = {}) => () => ({ ok: false, status: 403, headers: new Headers(headers), text: async () => { throw new TypeError('terminated'); } });
+  for (const [what, call, code, lead, permission] of [
+    ['dispatch', (fetch) => dispatchCollection({ repository: REPO, token: TOKEN, fetch }), 'FORBIDDEN', /^dispatch failed: HTTP 403, /, /permission "Actions" set to read and write$/],
+    ['getRun', (fetch) => getRun({ repository: REPO, runId: 7, token: TOKEN, fetch }), 'HTTP', /^could not read run 7: HTTP 403, /, /may not read this repository's runs - it needs "Actions" set to read and write$/],
+  ]) {
+    await assert.rejects(() => call(stubFetch([lost()])), (error) => {
+      assert.equal(error.code, code, what);
+      assert.equal(error.status, 403, what);
+      assert.match(error.message, lead, what);
+      assert.match(error.message, /a rate limit or a refusal - its body, which says which, could not be read$/, what);
+      assert.match(error.remedy, /^wait at least one minute before retrying; if it is refused again, /, what);
+      assert.match(error.remedy, permission, what);
+      return true;
+    });
+    await assert.rejects(() => call(stubFetch([{ ok: false, status: 403, headers: new Headers(), text: async () => '' }])), (error) => {
+      assert.equal(error.code, code, `${what}: a body read and empty`);
+      assert.match(error.remedy, permission, `${what}: a body read and empty`);
+      assert.doesNotMatch(error.remedy, /wait/, `${what}: a body read and empty is a refusal`);
+      return true;
+    });
+    await assert.rejects(() => call(stubFetch([lost({ 'retry-after': '30' })])), (error) => {
+      assert.equal(error.code, 'RATE_LIMITED', `${what}: a header names the limit, whatever the body`);
+      assert.match(error.remedy, /30 seconds/, what);
+      return true;
+    });
+  }
+});
+
 test('no error message ever carries the token, whatever the server said', async () => {
   // The server echoing the credential back is the case a hand-written message forgets.
   const leaky = stubFetch([jsonResponse(500, { message: `bad credentials for ${TOKEN}` })]);
@@ -425,6 +456,47 @@ test('a poll refused for the token or the run is not retried', async () => {
   }
 });
 
+test("an error that ends the watch is followed by the way back to the run, unless it names it or the run's number is in doubt (re-review of #442's follow-up)", async () => {
+  // The run goes on when the watch ends, and the command that was run dispatches another, so
+  // retrying it pays for a second run. A 403 ended the watch with "wait ... before retrying" and no
+  // run number; a 401's new token and a proxy's HTML page sent the operator back the same way.
+  const queued = jsonResponse(200, { status: 'queued' });
+  const cases = [
+    ['a 403 whose body was lost', { ok: false, status: 403, headers: new Headers(), text: async () => { throw new TypeError('terminated'); } },
+      'HTTP', 403, /^wait at least one minute before retrying; if it is refused again, the token may not read/],
+    ['a rate-limited 403', jsonResponse(403, { message: 'API rate limit exceeded' }, { headers: new Headers({ 'x-ratelimit-remaining': '0' }) }),
+      'RATE_LIMITED', 403, /^wait at least one minute before retrying; back off further/],
+    ['a 403 refusal', jsonResponse(403, { message: 'Resource not accessible by integration' }, { headers: new Headers() }),
+      'HTTP', 403, /^the token may not read this repository's runs/],
+    ['a 401', jsonResponse(401, {}, { headers: new Headers() }), 'HTTP', 401, /^the token was refused - it is expired or mistyped; create a new one/],
+    ['an HTML body on every retry', htmlPage, 'BAD_BODY', 200, /^a JSON API answering with HTML is usually a proxy or a maintenance page - retry/],
+  ];
+  const watch = (responses, options = {}) => waitForRun({
+    repository: REPO, runId: 7, token: TOKEN, fetch: stubFetch(responses), intervalMs: 0, sleep: async () => {}, ...options,
+  }).then(() => null, (err) => err);
+  const wayBack = /; the run may be fine - pick it up again with --run-id 7 rather than dispatching another$/;
+  for (const [what, second, code, status, first] of cases) {
+    const error = await watch([queued, second]);
+    assert.ok(error, `${what}: the watch did not end`);
+    assert.equal(error.code, code, `${what}: ${error.message}`);
+    assert.equal(error.status, status, what);
+    assert.match(error.remedy, first, `${what}: its own remedy is not first - ${error.remedy}`);
+    assert.match(error.remedy, wayBack, `${what}: no way back to the run - ${error.remedy}`);
+  }
+  // A failed poll the deadline overtakes is what the watch reports (ADR-0201), with the way back too.
+  let clock = 0;
+  const late = await watch([htmlPage], { timeoutMs: 1_000, sleep: async () => { clock += 2_000; }, now: () => clock });
+  assert.equal(late?.code, 'BAD_BODY', late?.message);
+  assert.match(late.remedy, wayBack, late.remedy);
+  // A 404's number is what is in doubt, and a dropped connection's remedy names the way back already.
+  const missing = await watch([queued, jsonResponse(404, {}, { headers: new Headers() })]);
+  assert.equal(missing?.status, 404, missing?.message);
+  assert.doesNotMatch(missing.remedy, /--run-id/, missing.remedy);
+  const unreachable = await watch([queued, dropped]);
+  assert.equal(unreachable?.code, 'NETWORK', unreachable?.message);
+  assert.equal(unreachable.remedy.split('--run-id').length - 1, 1, unreachable.remedy);
+});
+
 test('retrying a failing poll does not outlast the deadline', async () => {
   let clock = 0;
   const doFetch = stubFetch([jsonResponse(502, {})]);
@@ -461,14 +533,16 @@ test('a poll still unanswered at the deadline is cut off, and the watch ends in 
   const runUrl = 'https://github.com/example-org/example-project/actions/runs/7';
   // Each is held until released, whatever the signal does: a fetch or a body that ignores it is
   // cut off too. A refusal whose status came is an answer, though its body was cut off, and its
-  // own remedy comes first (review of #442, 2026-11-06).
+  // own remedy comes first (review of #442, 2026-11-06). With no rate-limit header, the body that
+  // would name a secondary limit is the one cut off, so that remedy is the wait, then the token's
+  // permission - not the permission alone, to a token that read the run the poll before (re-review).
   const noAnswer = { message: /had no answer/ };
   const refused = (remedy) => ({ message: /answered HTTP 403, but its body was still being read/, remedy });
   const variants = [
     ['no response headers', (released) => released.then(() => jsonResponse(200, completed)), noAnswer],
     ['a body that never finishes', (released) => ({ ok: true, status: 200, json: () => released.then(() => completed) }), noAnswer],
     ['the body of a 403 that never finishes', (released) => ({ ok: false, status: 403, headers: new Headers(), text: () => released.then(() => '') }),
-      refused(/^the token may not read this repository's runs - it needs "Actions" set to read and write; the run is still going/)],
+      refused(/^wait at least one minute before retrying; if it is refused again, the token may not read this repository's runs - it needs "Actions" set to read and write; the run is still going/)],
     ['the body of a rate-limited 403 that never finishes',
       (released) => ({ ok: false, status: 403, headers: new Headers({ 'x-ratelimit-remaining': '0' }), text: () => released.then(() => '') }),
       refused(/^wait at least one minute before retrying/)],

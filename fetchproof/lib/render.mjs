@@ -57,6 +57,44 @@ export function renderGateWarnings(verdict) {
   return lines.join('\n');
 }
 
+// What `printable` escapes: the C0 and C1 controls and DEL; the characters a reader may take for a
+// line end besides C0's (U+0085, U+2028, U+2029); and the invisible ones that hide or reorder text -
+// the soft hyphen, the Arabic letter mark, the zero-width and directional marks, the bidirectional
+// embeddings, overrides and isolates, the word joiner and invisible operators, the byte-order mark.
+const UNPRINTABLE = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g;
+
+/**
+ * Text read from a package, with each character `UNPRINTABLE` names as `\xNN` (`\uNNNN` above
+ * U+00FF), so it cannot begin a line or drive the terminal. It escaped C0 and DEL alone, and a reader
+ * that splits lines on U+0085, U+2028 or U+2029 - Python's `splitlines`, a JavaScript `^` under the
+ * `m` flag - read a line the package wrote, one saying PASS among them (re-review of #442's
+ * follow-up, 2026-11-06).
+ */
+export function printable(value) {
+  return String(value).replace(UNPRINTABLE, (character) => {
+    const code = character.charCodeAt(0);
+    return code > 0xff ? `\\u${code.toString(16).padStart(4, '0')}` : `\\x${code.toString(16).padStart(2, '0')}`;
+  });
+}
+
+/**
+ * A package result's problems as a person reads them: the count, then each code and message, with
+ * the remedy an error names as a `fix:` line under it; '' when there are none. `artifact.mjs`
+ * (`validate` and `create`) and `collect-remote` print them so: collect-remote printed no remedy,
+ * and its messages unescaped (re-review of #442, 2026-11-06). `clean` is asked of each field before
+ * it is escaped: collect-remote passes `redact`, which an escape defeats - in `\x09ghp_...` no word
+ * boundary comes before the token - so redacting the rendered text printed a credential that
+ * followed a control character (re-review of the follow-up).
+ */
+export function renderProblems(errors, { clean = (text) => text } = {}) {
+  if (!errors.length) return '';
+  const shown = (value) => printable(clean(value));
+  return [`${errors.length} problem(s)`, ...errors.flatMap((e) => [
+    `  ${shown(e.code)}  ${shown(e.message)}`,
+    ...(e.remedy ? [`      fix: ${shown(e.remedy)}`] : []),
+  ])].join('\n');
+}
+
 export function heading(text) {
   return `\n${text}\n${'-'.repeat(text.length)}`;
 }
