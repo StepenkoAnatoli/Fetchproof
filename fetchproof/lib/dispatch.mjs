@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeBytes, tempBase } from './core.mjs';
 import { fetchFailure } from './runtime.mjs';
-import { openZip, ZIP_LIMITS } from './artifact-zip.mjs';
+import { openZip, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
 import { validateArtifact, MANIFEST_PATH } from './artifact-validator.mjs';
 
 /** The version whose dispatch response carries the run id. Changing this is a decision. */
@@ -393,9 +393,10 @@ export async function waitForRun({
   let failed = null;
   let failures = 0;
   const seconds = Math.round(timeoutMs / 1000);
-  // Not a failure of the run: the caller stopped watching, and the run keeps going.
-  const timedOut = (message) => new DispatchError('TIMEOUT', message, {
-    remedy: `the run ${seen ? 'is still going' : 'is not known to have failed'}; check ${seen?.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
+  // Not a failure of the run: the caller stopped watching, and the run keeps going. `first`
+  // is a remedy that comes before the watch's own: the cut-off poll's, when it had one.
+  const timedOut = (message, first = null) => new DispatchError('TIMEOUT', message, {
+    remedy: `${first ? `${first}; ` : ''}the run ${seen ? 'is still going' : 'is not known to have failed'}; check ${seen?.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
   });
   try {
     for (;;) {
@@ -407,7 +408,14 @@ export async function waitForRun({
         run = await getRun({ repository, runId, token, fetch: doFetch, api, signal: watch.signal });
       } catch (err) {
         if (watch.signal.aborted) {
-          throw timedOut(`the status poll for run ${runId} had no answer when the watch ended after ${seconds}s${seen ? `; it was ${seen.status} at the poll before` : ''}`);
+          const before = seen ? `; it was ${seen.status} at the poll before` : '';
+          // A refusal whose status came in time is an answer, though its body was cut off: a 403
+          // is read for a rate limit first. Its own remedy comes first - "a longer --timeout"
+          // alone sent a token without "Actions" back to the same refusal (review of #442).
+          if (err instanceof DispatchError && err.status) {
+            throw timedOut(`the status poll for run ${runId} answered HTTP ${err.status}, but its body was still being read when the watch ended after ${seconds}s${before}`, err.remedy);
+          }
+          throw timedOut(`the status poll for run ${runId} had no answer when the watch ended after ${seconds}s${before}`);
         }
         failures += 1;
         if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw err;
@@ -513,12 +521,13 @@ export function unwrapArtifact(bytes) {
   const inner = zip.names.filter((n) => n.endsWith('.zip'));
   if (inner.length !== 1 || inner[0].includes('/')) return { bytes, unwrapped: false };
   // An inner package that cannot be read is handed on as it came, as a wrapper that cannot be
-  // opened is: judging such bytes is the validator's job, and a ZIP-READ thrown from here went
-  // past it (found 2026-10-01, break-test).
+  // opened is - a ZIP-READ thrown from here went past the validator (found 2026-10-01,
+  // break-test) - and with the reason it did not read, `unreadable`. The validator, given the
+  // wrapper, can only say that it holds no manifest (review of #442, 2026-11-06).
   try {
     return { bytes: zip.read(inner[0]), unwrapped: true, name: inner[0] };
-  } catch {
-    return { bytes, unwrapped: false };
+  } catch (err) {
+    return { bytes, unwrapped: false, unreadable: { entry: inner[0], code: err instanceof ZipError ? err.code : 'ZIP-READ', message: err.message } };
   }
 }
 
@@ -606,7 +615,7 @@ export async function fetchCorpus({
   }
   const dir = folder(false);
   const bytes = await downloadArtifact({ repository, artifactId: wanted[0].id, token, fetch: doFetch, api });
-  const { bytes: pkg, unwrapped, name } = unwrapArtifact(bytes);
+  const { bytes: pkg, unwrapped, name, unreadable } = unwrapArtifact(bytes);
 
   // A name from the API is data, never a path (found 2026-10-01, break-test): joined as it
   // came, `fetchproof-corpus-v1-/../../../pwned` wrote the package outside --out. A wrapper's
@@ -633,5 +642,17 @@ export async function fetchCorpus({
   // package already at this name (Arena break test 10, 2026-09-28).
   writeBytes(file, pkg);
 
-  return { file, artifact: wanted[0], validation: validateArtifact({ file, expectedClientRef }) };
+  const validation = validateArtifact({ file, expectedClientRef });
+  if (!unreadable) return { file, artifact: wanted[0], validation };
+  // The wrapper is judged, and FAILs, but for the wrong reason: "manifest.json is not in the
+  // package", whose remedy is to regenerate a package the damage may not be in. Why the package
+  // inside did not read is the finding, and a download is the cheap thing to repeat (review of
+  // #442, 2026-11-06).
+  const problem = {
+    code: unreadable.code,
+    message: `the package inside GitHub's wrapper does not read: ${unreadable.message}`,
+    path: unreadable.entry,
+    remedy: `download it again with --run-id ${runId}; if it fails the same way, the stored artifact is damaged - re-collect`,
+  };
+  return { file, artifact: wanted[0], validation: { ...validation, errors: [problem, ...validation.errors.filter((e) => e.code !== 'MANIFEST-MISSING')] } };
 }

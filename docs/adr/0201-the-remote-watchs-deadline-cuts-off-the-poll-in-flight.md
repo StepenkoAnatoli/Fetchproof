@@ -42,7 +42,12 @@ crosses the deadline is the last", as a test put it).
    had at the poll before (when one answered), with the remedy the timeout already gave: the run's
    page, and `--run-id <n>` with a longer `--timeout`. `callApi` and `readJsonBody` rethrow an abort as
    it is, so a cut-off request is never NETWORK or BAD_BODY, which the watch would retry and
-   `collect-remote` would report as RUN_FAILED (exit 2) for a run that may be fine.
+   `collect-remote` would report as RUN_FAILED (exit 2) for a run that may be fine. A refusal whose
+   status came in time, cut off while its body was read - a 403, whose text is read for a rate limit -
+   answered: its TIMEOUT says the poll answered HTTP 403 and its body was still being read, and the
+   refusal's own remedy comes before the timeout's (the token's "Actions" permission, or the rate
+   limit's wait). It first said "had no answer", and the remedy named only a longer `--timeout`, which
+   sends a token without the permission back to the same refusal (review of #442, 2026-11-06).
 4. **A wait ends at the deadline at the latest, and no poll starts at or after it.** A wait is the
    smaller of the interval and the time left. When the deadline comes after a poll that answered, the
    watch ends with the TIMEOUT it gave before ("run N was still S after Ns"); when it comes while a
@@ -77,8 +82,13 @@ crosses the deadline is the last", as a test put it).
   blindly (a duplicate paid run); and a budget for them is a new limit under the freeze. Named below
   as not covered.
 - **A clock seam for the timer** (an injected `setTimeout`, so the tests could drive it from the fake
-  clock). A parameter added only for tests; the tests run real deadlines of 50 ms instead, because
-  what is under test is a timer cutting off an await.
+  clock). A parameter added only for tests; the tests run real deadlines of 500 ms instead, because
+  what is under test is a timer cutting off an await. They first ran 50 ms, and a stall of 60 ms in
+  the first poll ended the watch before the poll under test (review of #442).
+- **A 403 whose body was cut off reported as the refusal** (HTTP or RATE_LIMITED), not TIMEOUT. Which
+  of the two it is can rest on the body that was not read - GitHub may name a rate limit only there -
+  and the watch did end at its deadline. TIMEOUT keeps exit 4 and decision 3; the refusal's remedy is
+  given first.
 
 ## Consequences
 

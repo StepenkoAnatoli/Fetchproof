@@ -12,7 +12,9 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   now goes to each poll's fetch and body reads and cuts off what is still unanswered then: the watch ends with
   TIMEOUT (exit 4), naming the run, the status it last had and `--run-id`. A wait ends at the deadline at the
   latest, and no poll starts after it; a failure being retried at the deadline is still reported as itself
-  (ADR-0201). Four tests, and one now expects no poll after the deadline.
+  (ADR-0201). A 403 whose body is cut off there answered in time: its TIMEOUT says so, with the refusal's own
+  remedy first - the token's "Actions" permission, or the rate limit's wait. Four tests, and one now expects
+  no poll after the deadline.
 - **Fixed: a ZIP whose local header disagrees with its directory, or whose bytes miss their CRC-32, is
   refused** (independent audit 2026-11-04, F05). The artifact reader took each entry's name, method, sizes and
   CRC-32 from the central directory alone: a package whose local header named `README-ALTER.md` where the
@@ -23,7 +25,10 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   inflated, and a local header giving its sizes as ZIP64 is refused as ZIP64, as the directory's already
   were (such an entry was read before); each body's CRC-32 is checked when it is read, from a table on a
   Node without `zlib.crc32` (22.0 and 22.1); a `manifest.json` or `manifest.sha256` that does not read is
-  FAIL, not BLOCKED. All `ZIP-READ` (ADR-0200). Seven tests.
+  FAIL, not BLOCKED. A GitHub wrapper whose package does not read - a CRC-32 now among the reasons - is
+  reported with that reason and a remedy to download again (`--run-id`), where the validator could only say
+  the wrapper holds no `manifest.json` and to regenerate it. All `ZIP-READ` (ADR-0200). Eight tests, and an
+  older one now expects the reason.
 - **Fixed: a quote of repeated fragments is judged in bounded time** (independent audit 2026-11-04, F04).
   `anchorFound` searched where a quote's fragments lie by recursion over every chain of their occurrences, so a
   quote repeating one phrase over a page that repeats it, ending in a fragment the page lacks, took time

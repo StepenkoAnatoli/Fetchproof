@@ -459,26 +459,38 @@ async function within(ms, promise) {
 test('a poll still unanswered at the deadline is cut off, and the watch ends in TIMEOUT naming the run (audit F06)', async () => {
   const completed = { status: 'completed', conclusion: 'success' };
   const runUrl = 'https://github.com/example-org/example-project/actions/runs/7';
-  // Each is held until released, whatever the signal does: a fetch or a body that ignores it is cut off too.
+  // Each is held until released, whatever the signal does: a fetch or a body that ignores it is
+  // cut off too. A refusal whose status came is an answer, though its body was cut off, and its
+  // own remedy comes first (review of #442, 2026-11-06).
+  const noAnswer = { message: /had no answer/ };
+  const refused = (remedy) => ({ message: /answered HTTP 403, but its body was still being read/, remedy });
   const variants = [
-    ['no response headers', (released) => released.then(() => jsonResponse(200, completed))],
-    ['a body that never finishes', (released) => ({ ok: true, status: 200, json: () => released.then(() => completed) })],
-    ['the body of a 403 that never finishes', (released) => ({ ok: false, status: 403, headers: new Headers(), text: () => released.then(() => '') })],
+    ['no response headers', (released) => released.then(() => jsonResponse(200, completed)), noAnswer],
+    ['a body that never finishes', (released) => ({ ok: true, status: 200, json: () => released.then(() => completed) }), noAnswer],
+    ['the body of a 403 that never finishes', (released) => ({ ok: false, status: 403, headers: new Headers(), text: () => released.then(() => '') }),
+      refused(/^the token may not read this repository's runs - it needs "Actions" set to read and write; the run is still going/)],
+    ['the body of a rate-limited 403 that never finishes',
+      (released) => ({ ok: false, status: 403, headers: new Headers({ 'x-ratelimit-remaining': '0' }), text: () => released.then(() => '') }),
+      refused(/^wait at least one minute before retrying/)],
   ];
-  for (const [what, second] of variants) {
+  for (const [what, second, expected] of variants) {
     let release;
     const released = new Promise((resolve) => { release = resolve; });
     const doFetch = stubFetch([jsonResponse(200, { status: 'queued', html_url: runUrl }), () => second(released)]);
-    const outcome = await within(2000, waitForRun({ repository: REPO, runId: 7, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 50 }));
+    // 500 ms, so the first poll and a 1 ms wait fit inside the deadline on a loaded machine: at
+    // 50 ms, a stall of 60 ms in the first poll ended the watch before the second (review of #442).
+    const outcome = await within(5000, waitForRun({ repository: REPO, runId: 7, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 500 }));
     release();
-    assert.ok(outcome.error, `${what}: the watch was ${outcome === 'still pending' ? 'still pending 2 s after its 50 ms deadline' : 'answered'}`);
+    assert.ok(outcome.error, `${what}: the watch was ${outcome === 'still pending' ? 'still pending 5 s after its 500 ms deadline' : 'answered'}`);
     assert.equal(outcome.error.code, 'TIMEOUT', `${what}: ${outcome.error.message}`);
+    assert.equal(doFetch.calls.length, 2, `${what}: ${doFetch.calls.length} polls, not one answered and one cut off - ${outcome.error.message}`);
     assert.match(outcome.error.message, /run 7/);
+    assert.match(outcome.error.message, expected.message, what);
     assert.match(outcome.error.message, /queued/, `${what}: the last status read is not named`);
+    if (expected.remedy) assert.match(outcome.error.remedy, expected.remedy, `${what}: the refusal's own remedy is not first`);
     assert.match(outcome.error.remedy, /--run-id 7/, `${what}: no way back to the run`);
     assert.ok(outcome.error.remedy.includes(runUrl), `${what}: the remedy does not name the run's page`);
     assert.equal(doFetch.calls[1].init.signal?.aborted, true, `${what}: the request's signal was not aborted, so a real fetch would go on`);
-    assert.equal(doFetch.calls.length, 2, `${what}: a poll started after the deadline`);
   }
 });
 
@@ -720,6 +732,7 @@ test('a wrapper whose inner package cannot be decompressed is judged by the vali
   const r = unwrapArtifact(bytes);
   assert.equal(r.unwrapped, false);
   assert.equal(r.bytes, bytes, 'the bytes are handed on as they came');
+  assert.match(r.unreadable?.message ?? '', /could not be decompressed/, 'and with the reason they did not read');
 
   const dir = tempDir('fp-corrupt-');
   try {
@@ -728,7 +741,45 @@ test('a wrapper whose inner package cannot be decompressed is judged by the vali
       { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
     ]) });
     assert.notEqual(result.validation.status, 'PASS', 'a package that cannot be read must not validate');
-    assert.ok(result.validation.errors.length > 0, 'and the validator must say why');
+    // The reason, not "manifest.json is not in the package" (review of #442, 2026-11-06).
+    assert.deepEqual(result.validation.errors.map((e) => e.code), ['ZIP-READ'], JSON.stringify(result.validation.errors));
+    assert.match(result.validation.errors[0].message, /^the package inside GitHub's wrapper does not read: entry "package\.zip" could not be decompressed/);
+  } finally { cleanup(dir); }
+});
+
+// Found 2026-11-06 (review of #442): a wrapper whose one package fails its CRC-32, its two
+// headers agreeing so the wrapper opens, was handed on as it came, and the validator could only
+// say "manifest.json is not in the package ... regenerate it". The reason is reported now, with
+// the download to repeat.
+test('a wrapper whose package fails its CRC-32 is reported as that, with a download to repeat, not as a missing manifest', async () => {
+  const entry = 'fetchproof-corpus-v1-ok.zip';
+  const bytes = rawZip([{ name: entry, data: 'the package, as the runner packed it' }]);
+  const eocd = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const wrong = (bytes.readUInt32LE(14) ^ 1) >>> 0;
+  bytes.writeUInt32LE(wrong, 14);                                   // the local header's CRC-32,
+  bytes.writeUInt32LE(wrong, bytes.readUInt32LE(eocd + 16) + 16);   // and the directory's: they agree
+  assert.deepEqual(importedOpenZip(bytes).problems, [], 'the fixture must open: only its body disagrees');
+  const r = unwrapArtifact(bytes);
+  assert.equal(r.unwrapped, false);
+  assert.equal(r.bytes, bytes, 'the bytes are handed on as they came');
+  assert.deepEqual({ ...r.unreadable, message: undefined }, { entry, code: 'ZIP-READ', message: undefined });
+  assert.match(r.unreadable.message, /does not match its CRC-32/);
+
+  const dir = tempDir('fp-badcrc-');
+  try {
+    const result = await fetchCorpus({ repository: REPO, runId: 3, token: TOKEN, outDir: dir, fetch: stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 1, name: 'fetchproof-corpus-v1-ok', expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
+    ]) });
+    assert.equal(result.validation.status, 'FAIL');
+    assert.equal(result.validation.buildAuthorized, false);
+    assert.deepEqual(result.validation.errors.map((e) => e.code), ['ZIP-READ'], JSON.stringify(result.validation.errors));
+    const [problem] = result.validation.errors;
+    assert.match(problem.message, /^the package inside GitHub's wrapper does not read: entry "fetchproof-corpus-v1-ok\.zip" does not match its CRC-32/);
+    assert.equal(problem.path, entry);
+    assert.match(problem.remedy, /^download it again with --run-id 3; /);
+    assert.equal(result.file, path.join(dir, 'fetchproof-corpus-v1-ok.zip'), "the wrapper is kept, under the artifact's name");
+    assert.deepEqual(fs.readFileSync(result.file), bytes);
   } finally { cleanup(dir); }
 });
 

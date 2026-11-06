@@ -100,15 +100,25 @@ every read, a manifest with a wrong one would have been that case.
 - **A local header's ZIP64 extra field read, and its sizes compared with the directory's.** That
   reads part of ZIP64 in the local header while the directory's ZIP64 is refused outright: the
   half-read this module refuses. The kit's own writer never writes ZIP64.
+- **A wrapper whose package does not read thrown out of `fetchCorpus`, under a code of its own.** A
+  ZIP-READ thrown from there went past the validator once (break-test, 2026-10-01), and a new code is a
+  new word every caller must learn; as a FAIL with the reader's code, `collect-remote` exits 1 for it
+  as for any package that does not validate, and the MCP server reports it the same way.
+- **The ADR's sentence corrected, the message left** (the review's lesser fix). The operator would still
+  be told, after a paid run, to regenerate a package when downloading it again is the cheap first step.
 
 ## Consequences
 
 - A package whose two headers disagree on those fields, or whose body does not match its CRC-32, is
   FAIL `ZIP-READ` and `buildAuthorized: false`. A manifest or digest that does not read is FAIL, not
   BLOCKED.
-- The same holds for every ZIP this module opens: the GitHub artifact wrapper (`unwrapArtifact` hands
-  a wrapper that does not read to the validator as it came, which then names the fault) and
-  `fi-validate`'s workbook (`WB-PACKAGE-UNTRUSTED`).
+- The same holds for every ZIP this module opens: the GitHub artifact wrapper and `fi-validate`'s
+  workbook (`WB-PACKAGE-UNTRUSTED`). A wrapper whose package does not read is still written and judged
+  as it came, and `fetchCorpus` reports why: the reader's `ZIP-READ`, naming the entry, with a remedy to
+  download again with `--run-id`, in place of the `MANIFEST-MISSING` the validator gives the wrapper,
+  whose remedy is to regenerate the package. This sentence first said the validator "then names the
+  fault", which was untrue, and a CRC-32 failure was newly among the reasons (review of #442,
+  2026-11-06).
 - Stricter than Python's `zipfile` on purpose: it checks a local header's signature and compares its
   name with the directory's, and nothing else. A local method, encryption bit, UTF-8 bit, CRC-32 or size that disagrees is read
   by a streaming extractor, so it is refused here although Python reads the entry.
