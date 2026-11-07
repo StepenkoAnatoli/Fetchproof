@@ -5,11 +5,12 @@
 // sent, that a token never appears in an error, that a 204 is diagnosed rather than
 // swallowed. The live path is verified separately, by running it.
 
-import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink } from './harness.mjs';
+import { test, describe, assert, tempDir, cleanup, fs, path, requireSymlink, KIT_ROOT } from './harness.mjs';
 import { tempBase } from '../lib/core.mjs';
 import {
   dispatchCollection, waitForRun, getRun, listArtifacts, downloadArtifact, unwrapArtifact, queriesInput,
   tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS, fetchCorpus, usableOutDir, MAX_ARTIFACT_BYTES,
+  downloadRemedy,
 } from '../lib/dispatch.mjs';
 import { rawZip } from './artifact-fixtures.mjs';
 import { openZip as importedOpenZip } from '../lib/artifact-zip.mjs';
@@ -242,6 +243,37 @@ test('rate-limited 403 responses name the wait instead of token permissions', as
   }
 });
 
+test('a 403 whose body could not be read names both causes, the wait first, not the permission alone (re-review of #442)', async () => {
+  // GitHub names a secondary rate limit only in the body, so a body that was lost says nothing
+  // either way. One read and empty is a refusal, and a header still names a limit.
+  const lost = (headers = {}) => () => ({ ok: false, status: 403, headers: new Headers(headers), text: async () => { throw new TypeError('terminated'); } });
+  for (const [what, call, code, lead, permission] of [
+    ['dispatch', (fetch) => dispatchCollection({ repository: REPO, token: TOKEN, fetch }), 'FORBIDDEN', /^dispatch failed: HTTP 403, /, /permission "Actions" set to read and write$/],
+    ['getRun', (fetch) => getRun({ repository: REPO, runId: 7, token: TOKEN, fetch }), 'HTTP', /^could not read run 7: HTTP 403, /, /may not read this repository's runs - it needs "Actions" set to read and write$/],
+  ]) {
+    await assert.rejects(() => call(stubFetch([lost()])), (error) => {
+      assert.equal(error.code, code, what);
+      assert.equal(error.status, 403, what);
+      assert.match(error.message, lead, what);
+      assert.match(error.message, /a rate limit or a refusal - its body, which says which, could not be read$/, what);
+      assert.match(error.remedy, /^wait at least one minute before retrying; if it is refused again, /, what);
+      assert.match(error.remedy, permission, what);
+      return true;
+    });
+    await assert.rejects(() => call(stubFetch([{ ok: false, status: 403, headers: new Headers(), text: async () => '' }])), (error) => {
+      assert.equal(error.code, code, `${what}: a body read and empty`);
+      assert.match(error.remedy, permission, `${what}: a body read and empty`);
+      assert.doesNotMatch(error.remedy, /wait/, `${what}: a body read and empty is a refusal`);
+      return true;
+    });
+    await assert.rejects(() => call(stubFetch([lost({ 'retry-after': '30' })])), (error) => {
+      assert.equal(error.code, 'RATE_LIMITED', `${what}: a header names the limit, whatever the body`);
+      assert.match(error.remedy, /30 seconds/, what);
+      return true;
+    });
+  }
+});
+
 test('no error message ever carries the token, whatever the server said', async () => {
   // The server echoing the credential back is the case a hand-written message forgets.
   const leaky = stubFetch([jsonResponse(500, { message: `bad credentials for ${TOKEN}` })]);
@@ -425,6 +457,56 @@ test('a poll refused for the token or the run is not retried', async () => {
   }
 });
 
+test("an error that ends the watch is followed by the way back to the run, unless it names it or the run's number is in doubt (re-review of #442's follow-up)", async () => {
+  // The run goes on when the watch ends, and the command that was run dispatches another, so
+  // retrying it pays for a second run. A 403 ended the watch with "wait ... before retrying" and no
+  // run number; a 401's new token and a proxy's HTML page sent the operator back the same way.
+  const queued = jsonResponse(200, { status: 'queued' });
+  const cases = [
+    ['a 403 whose body was lost', { ok: false, status: 403, headers: new Headers(), text: async () => { throw new TypeError('terminated'); } },
+      'HTTP', 403, /^wait at least one minute before retrying; if it is refused again, the token may not read/],
+    ['a rate-limited 403', jsonResponse(403, { message: 'API rate limit exceeded' }, { headers: new Headers({ 'x-ratelimit-remaining': '0' }) }),
+      'RATE_LIMITED', 403, /^wait at least one minute before retrying; back off further/],
+    ['a 403 refusal', jsonResponse(403, { message: 'Resource not accessible by integration' }, { headers: new Headers() }),
+      'HTTP', 403, /^the token may not read this repository's runs/],
+    ['a 401', jsonResponse(401, {}, { headers: new Headers() }), 'HTTP', 401, /^the token was refused - it is expired or mistyped; create a new one/],
+    ['an HTML body on every retry', htmlPage, 'BAD_BODY', 200, /^a JSON API answering with HTML is usually a proxy or a maintenance page - retry/],
+  ];
+  const watch = (responses, options = {}) => waitForRun({
+    repository: REPO, runId: 7, token: TOKEN, fetch: stubFetch(responses), intervalMs: 0, sleep: async () => {}, ...options,
+  }).then(() => null, (err) => err);
+  const wayBack = /; the run may be fine - pick it up again with --run-id 7 rather than dispatching another$/;
+  for (const [what, second, code, status, first] of cases) {
+    const error = await watch([queued, second]);
+    assert.ok(error, `${what}: the watch did not end`);
+    assert.equal(error.code, code, `${what}: ${error.message}`);
+    assert.equal(error.status, status, what);
+    assert.match(error.remedy, first, `${what}: its own remedy is not first - ${error.remedy}`);
+    assert.match(error.remedy, wayBack, `${what}: no way back to the run - ${error.remedy}`);
+  }
+  // A failed poll the deadline overtakes is what the watch reports (ADR-0201), with the way back too.
+  let clock = 0;
+  const late = await watch([htmlPage], { timeoutMs: 1_000, sleep: async () => { clock += 2_000; }, now: () => clock });
+  assert.equal(late?.code, 'BAD_BODY', late?.message);
+  assert.match(late.remedy, wayBack, late.remedy);
+  // A 404 before any poll read the run leaves its number in doubt. After one, the number is right -
+  // the token lost sight of the run, or it was deleted - and the way back is named (second pass).
+  const unknown = await watch([jsonResponse(404, {}, { headers: new Headers() })]);
+  assert.equal(unknown?.status, 404, unknown?.message);
+  assert.match(unknown.remedy, /check the number the dispatch printed$/, unknown.remedy);
+  assert.doesNotMatch(unknown.remedy, /--run-id/, unknown.remedy);
+  const gone = await watch([queued, jsonResponse(404, {}, { headers: new Headers() })]);
+  assert.equal(gone?.status, 404, gone?.message);
+  assert.equal(gone.message, 'could not read run 7: HTTP 404');
+  assert.match(gone.remedy, /^run 7 was read at an earlier poll, so its number is right: /, gone.remedy);
+  assert.doesNotMatch(gone.remedy, /check the number/, gone.remedy);
+  assert.match(gone.remedy, wayBack, gone.remedy);
+  // A dropped connection's remedy names the way back already.
+  const unreachable = await watch([queued, dropped]);
+  assert.equal(unreachable?.code, 'NETWORK', unreachable?.message);
+  assert.equal(unreachable.remedy.split('--run-id').length - 1, 1, unreachable.remedy);
+});
+
 test('retrying a failing poll does not outlast the deadline', async () => {
   let clock = 0;
   const doFetch = stubFetch([jsonResponse(502, {})]);
@@ -435,8 +517,101 @@ test('retrying a failing poll does not outlast the deadline', async () => {
     }),
     (err) => { assert.equal(err.status, 502); return true; },
   );
-  // As with a run still in progress: the poll after the sleep that crosses the deadline is the last.
-  assert.equal(doFetch.calls.length, 2, 'retries went on after the deadline had passed');
+  // No poll starts after the deadline (ADR-0201): the wait after the failure ends at it, and the
+  // failure is what the watch reports.
+  assert.equal(doFetch.calls.length, 1, 'a poll started after the deadline had passed');
+});
+
+// Found 2026-11-04 (independent audit, F06): the deadline was checked only once a poll had
+// answered. A request that never answered held the watch past --timeout for as long as it hung,
+// and a completed run it released late was returned as if in time. These run on the real clock:
+// what is under test is a timer cutting off an await, which a fake clock cannot show.
+
+/** What `promise` came to within `ms`: `{ value }`, `{ error }`, or 'still pending'. */
+async function within(ms, promise) {
+  let timer;
+  const pending = new Promise((resolve) => { timer = setTimeout(() => resolve('still pending'), ms); });
+  try {
+    return await Promise.race([promise.then((value) => ({ value }), (error) => ({ error })), pending]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test('a poll still unanswered at the deadline is cut off, and the watch ends in TIMEOUT naming the run (audit F06)', async () => {
+  const completed = { status: 'completed', conclusion: 'success' };
+  const runUrl = 'https://github.com/example-org/example-project/actions/runs/7';
+  // Each is held until released, whatever the signal does: a fetch or a body that ignores it is
+  // cut off too. A refusal whose status came is an answer, though its body was cut off, and its
+  // own remedy comes first (review of #442, 2026-11-06). With no rate-limit header, the body that
+  // would name a secondary limit is the one cut off, so that remedy is the wait, then the token's
+  // permission - not the permission alone, to a token that read the run the poll before (re-review).
+  const noAnswer = { message: /had no answer/ };
+  const refused = (remedy) => ({ message: /answered HTTP 403, but its body was still being read/, remedy });
+  const variants = [
+    ['no response headers', (released) => released.then(() => jsonResponse(200, completed)), noAnswer],
+    ['a body that never finishes', (released) => ({ ok: true, status: 200, json: () => released.then(() => completed) }), noAnswer],
+    ['the body of a 403 that never finishes', (released) => ({ ok: false, status: 403, headers: new Headers(), text: () => released.then(() => '') }),
+      refused(/^wait at least one minute before retrying; if it is refused again, the token may not read this repository's runs - it needs "Actions" set to read and write; the run is still going/)],
+    ['the body of a rate-limited 403 that never finishes',
+      (released) => ({ ok: false, status: 403, headers: new Headers({ 'x-ratelimit-remaining': '0' }), text: () => released.then(() => '') }),
+      refused(/^wait at least one minute before retrying/)],
+  ];
+  for (const [what, second, expected] of variants) {
+    let release;
+    const released = new Promise((resolve) => { release = resolve; });
+    const doFetch = stubFetch([jsonResponse(200, { status: 'queued', html_url: runUrl }), () => second(released)]);
+    // 500 ms, so the first poll and a 1 ms wait fit inside the deadline on a loaded machine: at
+    // 50 ms, a stall of 60 ms in the first poll ended the watch before the second (review of #442).
+    const outcome = await within(5000, waitForRun({ repository: REPO, runId: 7, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 500 }));
+    release();
+    assert.ok(outcome.error, `${what}: the watch was ${outcome === 'still pending' ? 'still pending 5 s after its 500 ms deadline' : 'answered'}`);
+    assert.equal(outcome.error.code, 'TIMEOUT', `${what}: ${outcome.error.message}`);
+    assert.equal(doFetch.calls.length, 2, `${what}: ${doFetch.calls.length} polls, not one answered and one cut off - ${outcome.error.message}`);
+    assert.match(outcome.error.message, /run 7/);
+    assert.match(outcome.error.message, expected.message, what);
+    assert.match(outcome.error.message, /queued/, `${what}: the last status read is not named`);
+    if (expected.remedy) assert.match(outcome.error.remedy, expected.remedy, `${what}: the refusal's own remedy is not first`);
+    assert.match(outcome.error.remedy, /--run-id 7/, `${what}: no way back to the run`);
+    assert.ok(outcome.error.remedy.includes(runUrl), `${what}: the remedy does not name the run's page`);
+    assert.equal(doFetch.calls[1].init.signal?.aborted, true, `${what}: the request's signal was not aborted, so a real fetch would go on`);
+  }
+});
+
+test('the wait before the next poll ends at the deadline, and no poll starts after it (audit F06)', async () => {
+  let clock = 0;
+  const slept = [];
+  const doFetch = stubFetch([jsonResponse(200, { status: 'in_progress' })]);
+  await assert.rejects(
+    () => waitForRun({
+      repository: REPO, runId: 1, token: TOKEN, fetch: doFetch,
+      intervalMs: 10_000, timeoutMs: 25_000, sleep: async (ms) => { slept.push(ms); clock += ms; }, now: () => clock,
+    }),
+    (err) => { assert.equal(err.code, 'TIMEOUT'); assert.match(err.message, /still in_progress/); return true; },
+  );
+  assert.deepEqual(slept, [10_000, 10_000, 5_000], 'a wait ran past the deadline');
+  assert.equal(doFetch.calls.length, 3, 'a poll started after the deadline');
+});
+
+test('an answer that comes inside the deadline is taken, however late in it (audit F06)', async () => {
+  const doFetch = stubFetch([async () => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return jsonResponse(200, { status: 'completed', conclusion: 'success' });
+  }]);
+  const outcome = await within(2000, waitForRun({ repository: REPO, runId: 1, token: TOKEN, fetch: doFetch, intervalMs: 1, timeoutMs: 1000 }));
+  assert.equal(outcome.value?.conclusion, 'success', `a poll answered at 150 ms of a 1 s watch was not taken: ${outcome.error?.message ?? outcome}`);
+});
+
+test('a watch longer than a timer can hold is not cut off at its start (audit F06)', async () => {
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  const doFetch = stubFetch([() => released.then(() => jsonResponse(200, { status: 'completed', conclusion: 'success' }))]);
+  // 2^31 ms is one more than a setTimeout holds; given it, a timer fires after 1 ms.
+  const watching = waitForRun({ repository: REPO, runId: 1, token: TOKEN, fetch: doFetch, timeoutMs: 2 ** 31 });
+  const early = await within(200, watching);
+  release();
+  assert.equal(early, 'still pending', `the watch ended at once, its deadline past what a timer holds: ${early.error?.message}`);
+  assert.equal((await watching).conclusion, 'success');
 });
 
 // ---------------------------------------------------------------- the artifact
@@ -641,6 +816,7 @@ test('a wrapper whose inner package cannot be decompressed is judged by the vali
   const r = unwrapArtifact(bytes);
   assert.equal(r.unwrapped, false);
   assert.equal(r.bytes, bytes, 'the bytes are handed on as they came');
+  assert.match(r.unreadable?.message ?? '', /could not be decompressed/, 'and with the reason they did not read');
 
   const dir = tempDir('fp-corrupt-');
   try {
@@ -649,8 +825,84 @@ test('a wrapper whose inner package cannot be decompressed is judged by the vali
       { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
     ]) });
     assert.notEqual(result.validation.status, 'PASS', 'a package that cannot be read must not validate');
-    assert.ok(result.validation.errors.length > 0, 'and the validator must say why');
+    // The reason, not "manifest.json is not in the package" (review of #442, 2026-11-06).
+    assert.deepEqual(result.validation.errors.map((e) => e.code), ['ZIP-READ'], JSON.stringify(result.validation.errors));
+    assert.match(result.validation.errors[0].message, /^the package inside GitHub's wrapper does not read: entry "package\.zip" could not be decompressed/);
   } finally { cleanup(dir); }
+});
+
+// Found 2026-11-06 (review of #442): a wrapper whose one package fails its CRC-32, its two
+// headers agreeing so the wrapper opens, was handed on as it came, and the validator could only
+// say "manifest.json is not in the package ... regenerate it". The reason is reported now, with
+// the download to repeat.
+test('a wrapper whose package fails its CRC-32 is reported as that, with a download to repeat, not as a missing manifest', async () => {
+  const entry = 'fetchproof-corpus-v1-ok.zip';
+  const bytes = rawZip([{ name: entry, data: 'the package, as the runner packed it' }]);
+  const eocd = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const wrong = (bytes.readUInt32LE(14) ^ 1) >>> 0;
+  bytes.writeUInt32LE(wrong, 14);                                   // the local header's CRC-32,
+  bytes.writeUInt32LE(wrong, bytes.readUInt32LE(eocd + 16) + 16);   // and the directory's: they agree
+  assert.deepEqual(importedOpenZip(bytes).problems, [], 'the fixture must open: only its body disagrees');
+  const r = unwrapArtifact(bytes);
+  assert.equal(r.unwrapped, false);
+  assert.equal(r.bytes, bytes, 'the bytes are handed on as they came');
+  assert.deepEqual({ ...r.unreadable, message: undefined }, { entry, code: 'ZIP-READ', message: undefined });
+  assert.match(r.unreadable.message, /does not match its CRC-32/);
+
+  const dir = tempDir('fp-badcrc-');
+  try {
+    const result = await fetchCorpus({ repository: REPO, runId: 3, token: TOKEN, outDir: dir, fetch: stubFetch([
+      jsonResponse(200, { artifacts: [{ id: 1, name: 'fetchproof-corpus-v1-ok', expired: false }] }),
+      { ok: true, status: 200, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) },
+    ]) });
+    assert.equal(result.validation.status, 'FAIL');
+    assert.equal(result.validation.buildAuthorized, false);
+    assert.deepEqual(result.validation.errors.map((e) => e.code), ['ZIP-READ'], JSON.stringify(result.validation.errors));
+    const [problem] = result.validation.errors;
+    assert.match(problem.message, /^the package inside GitHub's wrapper does not read: entry "fetchproof-corpus-v1-ok\.zip" does not match its CRC-32/);
+    assert.equal(problem.path, entry);
+    assert.match(problem.remedy, /^download it again with --run-id 3; /);
+    assert.equal(result.file, path.join(dir, 'fetchproof-corpus-v1-ok.zip'), "the wrapper is kept, under the artifact's name");
+    assert.deepEqual(fs.readFileSync(result.file), bytes);
+  } finally { cleanup(dir); }
+});
+
+test("a download's error names the way back to its run, unless another download would meet it too (re-review of #442, second pass)", async () => {
+  // collect-remote printed a download's own remedy alone - "retry" after a proxy's HTML page or a
+  // dropped download, a folder to fix - and running it again dispatches and pays for another run.
+  const way = 'pick it up again: --run-id 3';
+  const listed = jsonResponse(200, { artifacts: [{ id: 1, name: 'fetchproof-corpus-v1-ok', expired: false }] });
+  const fail = (responses, outDir) => fetchCorpus({ repository: REPO, runId: 3, token: TOKEN, outDir, fetch: stubFetch(responses) })
+    .then(() => assert.fail('the download did not fail'), (err) => err);
+  const dir = tempDir('fp-way-back-');
+  try {
+    const blocker = path.join(dir, 'a-file');
+    fs.writeFileSync(blocker, '');
+    const oversize = jsonResponse(200, {}, { headers: new Headers({ 'content-length': String(MAX_ARTIFACT_BYTES + 1) }) });
+    const cases = [
+      ['an HTML page for the list', [htmlPage], dir, 'BAD_BODY', true],
+      ['a dropped download', [listed, dropped], dir, 'NETWORK', true],
+      ['a folder that cannot be made', [listed], path.join(blocker, 'sub'), 'OUT_DIR', true],
+      ['no corpus artifact', [jsonResponse(200, { artifacts: [] })], dir, 'NO_ARTIFACT', false],
+      ['an expired artifact', [listed, jsonResponse(410, {})], dir, 'EXPIRED', false],
+      ['an artifact too large', [listed, oversize], dir, 'TOO_LARGE', false],
+    ];
+    for (const [what, responses, outDir, code, joined] of cases) {
+      const error = await fail(responses, outDir);
+      assert.equal(error.code, code, `${what}: ${error.message}`);
+      assert.ok(error.remedy, `${what}: no remedy of its own`);
+      assert.equal(downloadRemedy(error, way), joined ? `${error.remedy}; ${way}` : error.remedy, what);
+    }
+    // A remedy that names the way back already, and an error with none.
+    const unreachable = await fail([dropped], dir);
+    assert.match(unreachable.remedy, /--run-id 3$/);
+    assert.equal(downloadRemedy(unreachable, way), unreachable.remedy);
+    assert.equal(downloadRemedy(new DispatchError('HTTP', 'could not list artifacts for run 3: HTTP 502', { status: 502 }), way), way);
+  } finally { cleanup(dir); }
+  // collect-remote reaches a download only over the network: what is pinned offline is that its
+  // download stage takes its remedy from here.
+  const source = fs.readFileSync(path.join(KIT_ROOT, 'bin', 'collect-remote.mjs'), 'utf8');
+  assert.match(source, /got = await fetchCorpus\([^]*?remedy: downloadRemedy\(e, pickUpAgain\(\)\)/);
 });
 
 function require_read(bytes) {

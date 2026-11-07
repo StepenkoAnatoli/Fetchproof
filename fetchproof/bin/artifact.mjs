@@ -21,6 +21,7 @@ import { requireRuntime } from '../lib/runtime.mjs';
 import { validateArtifact } from '../lib/artifact-validator.mjs';
 import { writeArtifact, packageName, checkClientRef, GITHUB_API_VERSION } from '../lib/artifact.mjs';
 import { evidenceAt } from '../lib/corpus.mjs';
+import { printable, renderProblems } from '../lib/render.mjs';
 
 const HELP = `artifact - the portable Fetchproof package.
 
@@ -131,20 +132,12 @@ function printResult(result, { json = false, quiet = false } = {}) {
     process.stdout.write(`${canonicalJson(result)}\n`);
     return;
   }
-  const display = (value) => String(value).replace(/[\x00-\x1f\x7f]/g,
-    (character) => `\\x${character.charCodeAt(0).toString(16).padStart(2, '0')}`);
-  const line = `${display(result.status)}  build ${result.buildAuthorized ? 'AUTHORIZED' : 'NOT authorized'}  state=${display(result.state ?? '(unknown)')}`;
+  const line = `${printable(result.status)}  build ${result.buildAuthorized ? 'AUTHORIZED' : 'NOT authorized'}  state=${printable(result.state ?? '(unknown)')}`;
   if (!quiet) {
-    process.stdout.write(`\npackage  ${display(result.packageId ?? '(unreadable)')}\n`);
-    if (result.clientRef) process.stdout.write(`client   ${display(result.clientRef)}\n`);
-    if (result.workflowRunId) process.stdout.write(`run      ${display(result.workflowRunId)}\n`);
-    if (result.errors.length) {
-      process.stdout.write(`\n${result.errors.length} problem(s)\n`);
-      for (const e of result.errors) {
-        process.stdout.write(`  ${display(e.code)}  ${display(e.message)}\n`);
-        if (e.remedy) process.stdout.write(`      fix: ${display(e.remedy)}\n`);
-      }
-    }
+    process.stdout.write(`\npackage  ${printable(result.packageId ?? '(unreadable)')}\n`);
+    if (result.clientRef) process.stdout.write(`client   ${printable(result.clientRef)}\n`);
+    if (result.workflowRunId) process.stdout.write(`run      ${printable(result.workflowRunId)}\n`);
+    if (result.errors.length) process.stdout.write(`\n${renderProblems(result.errors)}\n`);
     if (result.status === 'PASS' && !result.buildAuthorized) {
       process.stdout.write('\nThis package is VALID and does NOT authorize building.\n'
         + 'A collected corpus is evidence, not an approved brief. Read README-FIRST.md.\n');
@@ -226,8 +219,7 @@ if (command === 'create') {
 
   // The producer's only claim of correctness, and it is made by the consumer's code.
   if (written.validation.status !== 'PASS') {
-    process.stderr.write('\nthe package this run just wrote does NOT validate:\n');
-    for (const e of written.validation.errors) process.stderr.write(`  ${e.code}  ${e.message}\n`);
+    process.stderr.write(`\nthe package this run just wrote does NOT validate:\n${renderProblems(written.validation.errors)}\n`);
     await exitAfterFlush(EXIT[written.validation.status] ?? EXIT.BLOCKED);
   }
   process.stdout.write('re-validated after writing: PASS\n');

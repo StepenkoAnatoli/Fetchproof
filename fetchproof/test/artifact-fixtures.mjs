@@ -36,6 +36,13 @@ import { tempDir, makePassingProject } from './harness.mjs';
  *   `deflate`      compress, so a ratio can be made suspicious
  *   `deflated`     raw deflate bytes stored as they are, so a bomb need not be inflated
  *                  in the test to be built (pair it with `declareSize`)
+ *   `descriptor`   write the CRC-32 and sizes in a data descriptor after the body, with
+ *                  bit 3 set in both headers and zeros in the local one, as a streaming
+ *                  writer does
+ *   `zip64Local`   give the local header's sizes as ZIP64 does - 0xFFFFFFFF in both size
+ *                  fields, the real ones in a ZIP64 extra field (0x0001) - with 32-bit sizes
+ *                  in the directory, as Python's zipfile writes with `force_zip64` (a
+ *                  `descriptor` beside it stays in its 32-bit form; the reader reads none)
  */
 export function rawZip(entries) {
   const locals = [];
@@ -50,20 +57,36 @@ export function rawZip(entries) {
     const method = deflate || entry.deflated ? 8 : 0;
     const uncompressed = entry.declareSize ?? data.length;
     const crc = crc32(data);
+    const flags = entry.descriptor === true ? 0x8 : 0;
+    const zip64 = entry.zip64Local === true;
+    const extra = Buffer.alloc(zip64 ? 20 : 0);
+    if (zip64) {
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(16, 2);
+      extra.writeBigUInt64LE(BigInt(uncompressed), 4);
+      extra.writeBigUInt64LE(BigInt(stored.length), 12);
+    }
+    const trailer = Buffer.alloc(flags ? 16 : 0);
+    if (flags) {
+      trailer.writeUInt32LE(0x08074b50, 0);
+      trailer.writeUInt32LE(crc, 4);
+      trailer.writeUInt32LE(stored.length, 8);
+      trailer.writeUInt32LE(uncompressed, 12);
+    }
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(zip64 ? 45 : 20, 4);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(method, 8);
     local.writeUInt16LE(0, 10);
     local.writeUInt16LE(0, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(stored.length, 18);
-    local.writeUInt32LE(uncompressed, 22);
+    local.writeUInt32LE(flags ? 0 : crc, 14);
+    local.writeUInt32LE(zip64 ? 0xffffffff : flags ? 0 : stored.length, 18);
+    local.writeUInt32LE(zip64 ? 0xffffffff : flags ? 0 : uncompressed, 22);
     local.writeUInt16LE(name.length, 26);
-    local.writeUInt16LE(0, 28);
-    locals.push(local, name, stored);
+    local.writeUInt16LE(extra.length, 28);
+    locals.push(local, name, extra, stored, trailer);
 
     const head = Buffer.alloc(46);
     head.writeUInt32LE(0x02014b50, 0);
@@ -71,7 +94,7 @@ export function rawZip(entries) {
     // Unix-made entry carries a mode the reader will read.
     head.writeUInt16LE(entry.unixMode === undefined ? 20 : (3 << 8) | 20, 4);
     head.writeUInt16LE(20, 6);
-    head.writeUInt16LE(0, 8);
+    head.writeUInt16LE(flags, 8);
     head.writeUInt16LE(method, 10);
     head.writeUInt16LE(0, 12);
     head.writeUInt16LE(0, 14);
@@ -87,7 +110,7 @@ export function rawZip(entries) {
     head.writeUInt32LE(offset, 42);
     central.push(head, name);
 
-    offset += local.length + name.length + stored.length;
+    offset += local.length + name.length + extra.length + stored.length + trailer.length;
   }
 
   const localBytes = Buffer.concat(locals);
