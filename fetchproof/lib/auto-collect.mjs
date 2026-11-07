@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { readJson, today, urlKey, writeJson } from './core.mjs';
 import { collectionPolicy } from './machine.mjs';
-import { readLedger } from './corpus.mjs';
+import { assertTablesWritable, readLedger } from './corpus.mjs';
 import {
   REQUESTS_DIR, REQUEST_LIMITS, listRequests, requestProblemsResolved, requestPages, contractUnknownStatus, applyRequest, writeResult,
   readAutoCollect, reserveCollection, settleCollection, setPaused, recordTrustedResult, isTrustedResult,
@@ -487,6 +487,10 @@ export function createAutoCollect({
 
     let applied;
     try {
+      // research.mjs refuses a row a hidden table would swallow, but only once the pages are
+      // reserved, and with no accounting to settle them by (review of #441): refused here instead,
+      // before anything is reserved, run or written.
+      assertTablesWritable(target);
       if (resume) {
         const planFile = `${REQUESTS_DIR}/${item.id}.plan.json`;
         const planPath = path.join(target, planFile);

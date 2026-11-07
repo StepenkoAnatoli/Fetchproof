@@ -41,42 +41,845 @@ export function splitRow(line) {
   return cells;
 }
 
+// A cell is written on one line: GitHub ends a line at a carriage return alone too, and a fetched
+// title holding one split the row it was written into (re-review of 88fe19a, 2026-11-07, F1).
 export function escapeCell(value) {
-  return String(value ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim();
+  return String(value ?? '').replace(/\r\n?|\n/g, ' ').replace(/\|/g, '\\|').trim();
 }
 
 export function tableRow(cells) {
   return `| ${cells.map(escapeCell).join(' | ')} |`;
 }
 
-function isSeparator(line) {
-  return /^\|?[\s:|-]+\|[\s:|-]*$/.test(line.trim()) && line.includes('-');
+// A space in cmark-gfm's table scanners (ext_scanners.re) is a space, a tab, a vertical tab or a
+// form feed; a cell runs to the next pipe that no backslash escapes.
+const SPACECHAR = (c) => c === ' ' || c === '\t' || c === '\v' || c === '\f';
+
+function cellEnd(text, at) {
+  if (text[at] !== '|') return 0;
+  let j = at + 1;
+  while (j < text.length && SPACECHAR(text[j])) j += 1;
+  return j - at;
 }
 
 /**
- * Fed a document's trimmed lines in order, says whether GitHub shows each one as code or hides
- * it: a line of a fenced code block (its fences included), or of an HTML comment. The header
- * search and the stray-row scan ask the same one, so a table is judged by one rule wherever it
- * stands (independent audit 2026-11-04, F01). A fence closes on a run of its own character at
- * least as long as the one that opened it, with nothing after it; a backtick fence's info string
- * holds no backtick, so ```code``` on one line is inline code; a fence never closed runs to the
- * end of the document; inside a comment a fence opens nothing. Indentation is not weighed.
+ * How many cells GitHub reads in one line of a table, counted as cmark-gfm's `row_from_string`
+ * counts them: a leading pipe opens the row, and every cell, empty or not, before a pipe counts.
+ * A line of a lone `|` holds none. From 65,536 cells on, GitHub reads no row at all.
  */
-function blockContext() {
-  let fence = null;
-  let comment = false;
-  return (text) => {
-    if (fence) {
-      const closes = /^(`+|~+)\s*$/.exec(text);
-      if (closes && closes[1][0] === fence[0] && closes[1].length >= fence.length) fence = null;
-      return true;
+function rowCells(text) {
+  const n = text.length;
+  let i = cellEnd(text, 0);
+  let count = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n && (text[j] !== '|' || (j > i && text[j - 1] === '\\'))) j += 1;
+    const pipe = cellEnd(text, j);
+    if (j > i || pipe) count += 1;
+    i = j + pipe;
+    if (!pipe) break;
+  }
+  return count;
+}
+
+/**
+ * How many cells a delimiter row holds as GitHub reads one (`scan_table_start`): each is dashes,
+ * with an optional colon at either end, between pipes, the outer ones optional. 0 if it is not one.
+ */
+function delimiterCells(text) {
+  const n = text.length;
+  let i = text[0] === '|' ? 1 : 0;
+  let count = 0;
+  for (;;) {
+    let j = i;
+    while (j < n && SPACECHAR(text[j])) j += 1;
+    if (j === n && count > 0) return count;
+    if (text[j] === ':') j += 1;
+    const dash = j;
+    while (text[j] === '-') j += 1;
+    if (j === dash) return 0;
+    if (text[j] === ':') j += 1;
+    while (j < n && SPACECHAR(text[j])) j += 1;
+    count += 1;
+    if (j === n) return count;
+    if (text[j] !== '|') return 0;
+    i = j + 1;
+  }
+}
+
+// A separator as the kit writes and finds one: pipes, dashes, colons and spaces, a pipe past the
+// first character, a dash somewhere. Read in one pass: the regular expression it replaces
+// backtracked over a long line of them (review of #441's reader, 2026-11-07, F-E).
+function isSeparator(line) {
+  const t = line.trim();
+  return t.length >= 2 && /^[\s:|-]*$/.test(t) && t.indexOf('|', 1) > 0 && line.includes('-');
+}
+
+// The block starts of cmark-gfm's scanners (scanners.re), each read at `p` in `s`, one line that
+// ends in a single line feed. A space there is any of space, tab, vertical tab, form feed, CR, LF.
+const HTML_SPACE = (c) => c === ' ' || c === '\t' || c === '\v' || c === '\f' || c === '\r' || c === '\n';
+const HTML_BLOCK_TAGS = new Set(('address article aside base basefont blockquote body caption center col colgroup dd '
+  + 'details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header '
+  + 'hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param section source title '
+  + 'summary table tbody td tfoot th thead tr track ul').split(' '));
+const NAME_START = /[A-Za-z_:]/;
+const NAME_CHAR = /[A-Za-z0-9:._-]/;
+const UNQUOTED = (c) => c !== undefined && !HTML_SPACE(c) && !'"\'=<>`'.includes(c);
+
+/** The type, 1 to 7, of the HTML block that starts at `p`, or 0; type 7 never interrupts a paragraph. */
+function htmlStart(s, p, overParagraph) {
+  if (s[p] !== '<') return 0;
+  const type1 = /<(?:script|pre|textarea|style)(?:[ \t\v\f\r\n]|>)/iy;
+  type1.lastIndex = p;
+  if (type1.test(s)) return 1;
+  if (s.startsWith('<!--', p)) return 2;
+  if (s.startsWith('<?', p)) return 3;
+  if (s[p + 1] === '!' && /[A-Z]/.test(s[p + 2] ?? '')) return 4;
+  if (s.slice(p, p + 9).toUpperCase() === '<![CDATA[') return 5;
+  let q = p + 1 + (s[p + 1] === '/' ? 1 : 0);
+  const name = /[A-Za-z0-9]*/y;
+  name.lastIndex = q;
+  const tag = name.exec(s)[0];
+  q += tag.length;
+  if (HTML_BLOCK_TAGS.has(tag.toLowerCase()) && (HTML_SPACE(s[q]) || s[q] === '>' || s.startsWith('/>', q))) return 6;
+  return !overParagraph && htmlTag(s, p) ? 7 : 0;
+}
+
+// The end of a whole open or closing tag at `p` - an HTML block's (`scan_html_block_start_7`) or raw
+// HTML in a paragraph's text - read left to right once: an attribute name followed by `=` must take
+// a value, so no reading of it is undone. The index past its `>`, or -1; `find` finds a quote.
+function htmlTagEnd(s, p, find = (c, from) => s.indexOf(c, from)) {
+  const skip = (k, ok) => { while (ok(s[k])) k += 1; return k; };
+  const closing = s[p + 1] === '/';
+  let k = p + (closing ? 2 : 1);
+  if (!/[A-Za-z]/.test(s[k] ?? '')) return -1;
+  k = skip(k + 1, (c) => c !== undefined && /[A-Za-z0-9-]/.test(c));
+  while (!closing) {
+    const name = skip(k, HTML_SPACE);
+    if (name === k || !NAME_START.test(s[name] ?? '')) break;
+    k = skip(name + 1, (c) => c !== undefined && NAME_CHAR.test(c));
+    const eq = skip(k, HTML_SPACE);
+    if (s[eq] !== '=') continue;
+    const value = skip(eq + 1, HTML_SPACE);
+    const quote = s[value];
+    if (quote === '"' || quote === "'") {
+      const end = find(quote, value + 1);
+      if (end < 0) return -1;
+      k = end + 1;
+    } else {
+      k = skip(value, UNQUOTED);
+      if (k === value) return -1;
     }
-    if (comment) { if (text.includes('-->')) comment = false; return true; }
-    const opens = /^(`{3,}|~{3,})(.*)$/.exec(text);
-    if (opens && !(opens[1][0] === '`' && opens[2].includes('`'))) { fence = opens[1]; return true; }
-    if (text.startsWith('<!--')) { if (!text.includes('-->')) comment = true; return true; }
-    return false;
+  }
+  k = skip(k, HTML_SPACE);
+  if (!closing && s[k] === '/') k += 1;
+  return s[k] === '>' ? k + 1 : -1;
+}
+
+// A whole open or closing tag alone on its line: an HTML block of type 7.
+function htmlTag(s, p) {
+  let k = htmlTagEnd(s, p);
+  if (k < 0) return false;
+  while (s[k] === ' ' || s[k] === '\t' || s[k] === '\f') k += 1;
+  return k === s.length - 1;
+}
+
+// Whether the HTML block of `type` ends on this line, looked for from `p` (the start line too).
+function htmlEnds(type, s, p) {
+  if (type === 1) {
+    const end = /<\/(?:script|pre|textarea|style)>/gi;
+    end.lastIndex = p;
+    return end.test(s);
+  }
+  const marker = ['', '', '-->', '?>', '>', ']]>'][type];
+  return marker ? s.indexOf(marker, p) >= 0 : false;
+}
+
+// A fence opens with three or more backticks or tildes; after backticks, none on the rest of the line.
+function fenceOpens(s, p) {
+  const c = s[p];
+  if (c !== '`' && c !== '~') return 0;
+  let k = p;
+  while (s[k] === c) k += 1;
+  if (k - p < 3 || (c === '`' && s.indexOf('`', k) >= 0)) return 0;
+  return k - p;
+}
+
+// It closes with a run of its own character at least as long, then spaces or tabs alone.
+function fenceCloses(s, p, fence) {
+  let k = p;
+  while (s[k] === fence.char) k += 1;
+  if (k - p < 3 || k - p < fence.length) return false;
+  while (s[k] === ' ' || s[k] === '\t') k += 1;
+  return k === s.length - 1;
+}
+
+const ATX = /#{1,6}(?:[ \t]+|\n)/y;
+const SETEXT = /(?:=+|-+)[ \t]*\n/y;
+const FOOTNOTE = /\[\^([^\] \t\r\n\0]+)\]:[ \t]*/y;
+const sticky = (re, s, p) => { re.lastIndex = p; return re.exec(s); };
+// What GitHub reads otherwise than as text in a paragraph, a heading or a cell (`scanRefs`): ASCII
+// punctuation behind a backslash, the autolinks it tries before raw HTML, and a table's cell divider,
+// which splits a row before its cells are read.
+const PUNCT = /[!-/:-@[-`{-~]/;
+const AUTOLINK_URI = /<[A-Za-z][A-Za-z0-9.+-]{1,31}:[^\x00-\x20<>]*>/y;
+const AUTOLINK_EMAIL = /<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*>/y;
+const INLINE_SPECIAL = /[\\`<[]/g;
+const CELL_DIVIDER = /(?<!\\)\|/;
+const LIST_SPACE = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
+
+/**
+ * The length of the list marker at `p` (`parse_list_marker`), or 0. Over a paragraph a marker must
+ * be followed by more than spaces, and an ordered one must be numbered 1.
+ */
+function listMarker(s, p, overParagraph) {
+  let k = p;
+  if (s[k] === '*' || s[k] === '-' || s[k] === '+') {
+    k += 1;
+  } else if (s[k] >= '0' && s[k] <= '9') {
+    let start = 0;
+    let digits = 0;
+    do { start = start * 10 + (s.charCodeAt(k) - 48); k += 1; digits += 1; } while (digits < 9 && s[k] >= '0' && s[k] <= '9');
+    if ((overParagraph && start !== 1) || (s[k] !== '.' && s[k] !== ')')) return 0;
+    k += 1;
+  } else {
+    return 0;
+  }
+  if (!LIST_SPACE(s[k])) return 0;
+  if (overParagraph) {
+    let j = k;
+    while (s[j] === ' ' || s[j] === '\t') j += 1;
+    if (s[j] === '\n') return 0;
+  }
+  return k - p;
+}
+
+/**
+ * Where a thematic break may start in `s`, found once for the whole line: from `p` on, only one of
+ * `*`, `-`, `_` and spaces or tabs, three of it at least.
+ */
+function breakTest(s) {
+  let k = s.length - 2;
+  while (k >= 0 && (s[k] === ' ' || s[k] === '\t')) k -= 1;
+  const ch = s[k];
+  if (ch !== '*' && ch !== '-' && ch !== '_') return () => false;
+  let bad = -1;
+  let seen = 0;
+  let third = -1;
+  for (let j = k; j >= 0; j -= 1) {
+    if (s[j] === ch) {
+      seen += 1;
+      if (seen === 3) third = j;
+    } else if (s[j] !== ' ' && s[j] !== '\t') {
+      bad = j;
+      break;
+    }
+  }
+  return (p) => s[p] === ch && p > bad && p <= third;
+}
+
+/**
+ * Whether an HTML comment is still open after `text`, given whether one was open before it. A
+ * `<!--` after the `-->` that closed one reopens it, and GitHub keeps such a comment open to the
+ * next `-->`, though CommonMark ended the HTML block at that line; `<!-->` and `<!--->` close as
+ * they open, as HTML reads them.
+ */
+function commentOpenAfter(text, open) {
+  let at = 0;
+  let inside = open;
+  for (;;) {
+    if (inside) {
+      const end = text.indexOf('-->', at);
+      if (end < 0) return true;
+      at = end + 3;
+      inside = false;
+    } else {
+      const start = text.indexOf('<!--', at);
+      if (start < 0) return false;
+      at = start + 4;
+      if (text[at] === '>') at += 1;
+      else if (text.startsWith('->', at)) at += 2;
+      else inside = true;
+    }
+  }
+}
+
+/**
+ * Which lines of a document GitHub shows as code or hides, and which headers it makes a table of,
+ * read in one pass. The header search and the stray-row scan ask the same answer, so a table is
+ * judged by one rule wherever it stands (independent audit 2026-11-04, F01).
+ *
+ * It follows cmark-gfm's block parser (blocks.c, table.c) line by line, as GitHub reads the file:
+ * a line ends at LF, CR LF or a carriage return alone; a byte-order mark at the start of the file
+ * is not the first line's content; block quotes, list items and footnote definitions hold the
+ * lines that reach their column, each measured from its parent's, and a paragraph runs on lazily
+ * below them; a fence, an indented code block or an HTML block takes the lines GitHub gives it.
+ * Shortcuts of its own hid every table below an indented example (review of #441, 2026-11-06),
+ * then missed a block at an item's column below a lazy line, a footnote definition, a lone CR and
+ * a header GitHub makes no table of (re-review, 2026-11-07, F-A to F-E and N1). What it does not
+ * follow, and which way each departure errs, is named in ADR-0203, decision 6.
+ *
+ * Returns `{ at, open, heads, rowOf, segs, endWhy, note, tables }`, the first six and `note`
+ * indexed by the 0-based line:
+ * - `at[i]` the record of the block that hides line i - `kind` 'fence', 'indented', 'comment',
+ *   'html' (with its `type`) or 'footnote' (a definition nothing refers to, or one that `repeats`
+ *   the label of the one GitHub keeps, its 1-based line), and the 1-based `line` that opened it -
+ *   or null. Lines of one block share its record. A comment reopened by a `<!--` after the `-->`
+ *   that ended its HTML block carries `reopened`, the 1-based line of that `-->`. A comment the
+ *   body leaves open hides the footnotes too, which GitHub shows below the body; one a footnote
+ *   leaves open - cut off, never closed or reopened - carries `footnote`, the 1-based line of that
+ *   definition, and hides the rest of it and the definitions GitHub shows after it.
+ * - `open` the record of a block the body ends inside, which takes in whatever is written at the
+ *   end of the file: a fence, an HTML block of type 1 or 3 to 5 (`<pre>`, `<script>`, `<style>`,
+ *   `<textarea>`, `<?`, `<!X`, `<![CDATA[`), a comment, a reopened comment, or a comment cut off
+ *   where the block holding it ends (`runaway`, the 1-based line of the cut), which GitHub leaves
+ *   open to the end of the file.
+ * - `heads[i]` true if GitHub makes a table of the header at line i, else why not (`{ why }`, and
+ *   `under`, the container a lazy line stood below).
+ * - `rowOf[i]` the 0-based header line of the table line i is a row of, else -1.
+ * - `segs[i]` how many lines GitHub reads in line i; `endWhy[i]` why a table ended at line i.
+ * - `note[i]` the record of the innermost footnote definition holding line i that something refers
+ *   to, with `order`, its place among the footnotes GitHub shows below the body - or null.
+ * - `tables` every table GitHub makes, in file order: `line`, the 0-based line of its header;
+ *   `gline`, the 1-based line of it as GitHub counts them, a carriage return alone ending one too;
+ *   `text`, the header as GitHub read it, past the markers of the blocks holding it; and `cr`,
+ *   whether a carriage return alone ends a line in its header or delimiter row.
+ */
+export function hiddenLines(lines) {
+  const n = lines.length;
+  const at = new Array(n).fill(null);
+  const note = new Array(n).fill(null);
+  const rowOf = new Array(n).fill(-1);
+  const wasRowOf = new Array(n).fill(-1);
+  const segs = new Array(n).fill(0);
+  const endWhy = new Array(n).fill(null);
+  const outcome = new Array(n).fill(null);
+  // Containers, outermost first: { type: 'quote' }, { type: 'item', need, held } and
+  // { type: 'footnote', label, record }. A line with nothing on it ends the quotes and the items
+  // that hold nothing yet; past its spaces, the footnotes too. Their indexes are kept so that such
+  // a line is read without walking every container (F-E).
+  const stack = [];
+  const stopsEmpty = [];
+  const stopsZero = [];
+  const definitions = [];
+  const refs = new Set();
+  let tip = null;
+  let open = null;
+  // A comment reopened after the `-->` that ended its HTML block, whether it is still open in the
+  // browser at this point of the line, and the footnote definition it stands in (null in the body).
+  let rawComment = null;
+  let rawInside = false;
+  let rawOwner = null;
+  // The footnote definitions open, outermost first; the comments they leave open, cut off or never
+  // closed (`{ record, owner, from }`); and the tables GitHub makes (`{ line, gline, text, cr }`).
+  const footnotes = [];
+  const events = [];
+  const tables = [];
+  let line = 0;
+  let prevLine = 0;
+  // The part of the line a carriage return alone ends that is being read, and its place among all
+  // the lines GitHub reads.
+  let seg = -1;
+  let gseg = 0;
+  // The line being read: cmark's offset, column, partly consumed tab, first non-space and indent.
+  let s = '';
+  let offset = 0;
+  let column = 0;
+  let pct = false;
+  let fns = 0;
+  let fnsc = 0;
+  let indent = 0;
+  let blank = false;
+
+  const findNonspace = () => {
+    let toTab = 4 - (column % 4);
+    if (fns <= offset) {
+      fns = offset;
+      fnsc = column;
+      for (;;) {
+        if (s[fns] === ' ') { fns += 1; fnsc += 1; toTab -= 1; if (toTab === 0) toTab = 4; }
+        else if (s[fns] === '\t') { fns += 1; fnsc += toTab; toTab = 4; }
+        else break;
+      }
+    }
+    indent = fnsc - column;
+    blank = s[fns] === '\n';
   };
+  const advance = (count, columns) => {
+    while (count > 0 && offset < s.length) {
+      if (s[offset] === '\t') {
+        const toTab = 4 - (column % 4);
+        if (columns) {
+          pct = toTab > count;
+          const step = Math.min(count, toTab);
+          column += step;
+          offset += pct ? 0 : 1;
+          count -= step;
+        } else {
+          pct = false; column += toTab; offset += 1; count -= 1;
+        }
+      } else {
+        pct = false; offset += 1; column += 1; count -= 1;
+      }
+    }
+  };
+  const hide = (record) => { at[line] ??= record; };
+  // A container's first child: an item that held nothing no longer ends at a line with nothing on it.
+  const hold = () => {
+    const top = stack[stack.length - 1];
+    if (top?.type === 'item' && !top.held) {
+      top.held = true;
+      stopsEmpty.pop();
+      stopsZero.pop();
+    }
+  };
+  const push = (container) => {
+    hold();
+    if (container.type !== 'footnote') stopsEmpty.push(stack.length);
+    else footnotes.push(container.record);
+    stopsZero.push(stack.length);
+    stack.push(container);
+  };
+  let ended = 0;
+  const popTo = (m) => {
+    while (stack.length > m) {
+      const gone = stack.pop();
+      if (gone.type !== 'footnote') continue;
+      Object.assign(gone.record, { to: prevLine, ended: ended++ });
+      footnotes.pop();
+      // A comment the definition reopened and left open hides what GitHub shows after it there; the
+      // line that ended the definition is not the definition's.
+      if (rawComment && rawOwner === gone.record) {
+        events.push({ record: rawComment, owner: rawOwner, from: rawComment.reopened - 1 });
+        if (seg === 0 && at[line] === rawComment) at[line] = null;
+        rawComment = null;
+        rawOwner = null;
+        rawInside = false;
+      }
+    }
+    while (stopsEmpty.length && stopsEmpty[stopsEmpty.length - 1] >= m) stopsEmpty.pop();
+    while (stopsZero.length && stopsZero[stopsZero.length - 1] >= m) stopsZero.pop();
+  };
+  // Footnote references, `[^label]` or `[\^label]`, where GitHub reads one in a paragraph's, a
+  // heading's or a cell's text: not in a code span, an autolink or raw HTML, not behind a backslash,
+  // and not a link's text (`[^label](`). A paragraph is read whole when it ends, as a code span or a
+  // comment can run across its lines; it counted every `[^label]` it saw (re-review of 116a2a3,
+  // finding 3). One pass, however many it holds.
+  const scanRefs = (text) => {
+    if (!text.includes('[^') && !text.includes('[\\^')) return;
+    // A code span closes at the next run of exactly its opener's backticks; a run over 1000 closes none.
+    const runs = new Map();
+    const passed = new Map();
+    for (let p = text.indexOf('`'); p >= 0;) {
+      let q = p + 1;
+      while (text[q] === '`') q += 1;
+      if (q - p <= 1000 && runs.has(q - p)) runs.get(q - p).push(p);
+      else if (q - p <= 1000) runs.set(q - p, [p]);
+      p = text.indexOf('`', q);
+    }
+    const closer = (length, from) => {
+      const list = runs.get(length) ?? [];
+      let i = passed.get(length) ?? 0;
+      while (i < list.length && list[i] < from) i += 1;
+      passed.set(length, i);
+      return i < list.length ? list[i] : -1;
+    };
+    // What was looked for once is not looked for again: a quote's next place, a marker not there.
+    const quotes = new Map();
+    const find = (c, from) => {
+      const held = quotes.get(c);
+      if (held && held.from <= from && (held.found < 0 || held.found >= from)) return held.found;
+      const found = text.indexOf(c, from);
+      quotes.set(c, { from, found });
+      return found;
+    };
+    const absent = new Set();
+    const through = (marker, from) => {
+      const end = absent.has(marker) ? -1 : text.indexOf(marker, from);
+      if (end < 0) absent.add(marker);
+      return end < 0 ? -1 : end + marker.length;
+    };
+    const pointy = (p) => {
+      for (const autolink of [AUTOLINK_URI, AUTOLINK_EMAIL]) if (sticky(autolink, text, p)) return autolink.lastIndex;
+      let end;
+      if (text.startsWith('<!--', p)) end = text[p + 4] === '>' ? p + 5 : text.startsWith('->', p + 4) ? p + 6 : through('-->', p + 4);
+      else if (text.startsWith('<![CDATA[', p)) end = through(']]>', p + 9);
+      else if (text[p + 1] === '!' && /[A-Za-z]/.test(text[p + 2] ?? '')) end = through('>', p + 2);
+      else if (text[p + 1] === '?') end = through('?>', p + 2);
+      else end = htmlTagEnd(text, p, find);
+      return end < 0 ? p + 1 : end;
+    };
+    const bracket = (p) => {
+      let q = p + 1 + (text[p + 1] === '^' ? 1 : text.startsWith('\\^', p + 1) ? 2 : 0);
+      if (q === p + 1) return q;
+      const from = q;
+      for (;;) {
+        const c = text[q];
+        if (c === undefined || c === '[' || c === '`' || c === '<' || /\s/.test(c)) return q;
+        if (c === '\\' && PUNCT.test(text[q + 1] ?? '')) q += 2;
+        else if (c !== ']') q += 1;
+        else {
+          if (q > from && text[q + 1] !== '(') refs.add(text.slice(from, q).toLowerCase());
+          return q + 1;
+        }
+      }
+    };
+    for (let p = 0; ;) {
+      INLINE_SPECIAL.lastIndex = p;
+      const hit = INLINE_SPECIAL.exec(text);
+      if (!hit) return;
+      p = hit.index;
+      if (text[p] === '\\') {
+        p += PUNCT.test(text[p + 1] ?? '') ? 2 : 1;
+      } else if (text[p] === '`') {
+        let q = p + 1;
+        while (text[q] === '`') q += 1;
+        const end = q - p <= 1000 ? closer(q - p, q) : -1;
+        p = end < 0 ? q : end + (q - p);
+      } else {
+        p = text[p] === '<' ? pointy(p) : bracket(p);
+      }
+    }
+  };
+  const closeTip = (why) => {
+    if (tip?.type === 'table' && endWhy[line] === null) endWhy[line] = why;
+    if (tip?.type === 'para') scanRefs(tip.texts.join('\n'));
+    tip = null;
+  };
+  const addPara = (text) => {
+    tip.last = text;
+    tip.lastLine = line;
+    tip.lastSeg = gseg;
+    tip.lastLazy = null;
+    tip.texts.push(text);
+    if (!tip.overflow && text.length >= 65_536) tip.overflow = rowCells(text) >= 65_536;
+  };
+  // How many containers the line continues (check_open_blocks). Once nothing but the line end is
+  // left, the rest is known without a walk: past held items, up to a quote, an item that holds
+  // nothing, or - unless the line is empty - a footnote definition.
+  const walk = () => {
+    const empty = s === '\n';
+    let m = 0;
+    while (m < stack.length) {
+      findNonspace();
+      if (blank && indent === 0) {
+        const stops = empty ? stopsEmpty : stopsZero;
+        let lo = 0;
+        let hi = stops.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (stops[mid] < m) lo = mid + 1;
+          else hi = mid;
+        }
+        return lo < stops.length ? stops[lo] : stack.length;
+      }
+      const container = stack[m];
+      if (container.type === 'quote') {
+        if (indent > 3 || s[fns] !== '>') break;
+        advance(indent + 1, true);
+        if (s[offset] === ' ' || s[offset] === '\t') advance(1, true);
+      } else if (container.type === 'item') {
+        if (indent >= container.need) advance(container.need, true);
+        else if (blank && container.held) advance(fns - offset, false);
+        else break;
+      } else if (indent >= 4) {
+        advance(4, true);
+      } else if (!empty) {
+        break;
+      }
+      m += 1;
+    }
+    return m;
+  };
+  // A header over a delimiter row (try_opening_table_header): a delimiter row GitHub does not read
+  // leaves the paragraph as it is; one of another width, or an earlier one in the same paragraph,
+  // rules it out for good. The header is the paragraph's last line, as GitHub took it in.
+  const tableHeader = () => {
+    if (tip.visited) return { why: 'visited' };
+    const delimiter = delimiterCells(s.slice(fns, -1));
+    if (delimiter === 0 || delimiter >= 65_536) return { why: 'separator' };
+    const header = tip.overflow ? 65_536 : rowCells(tip.last);
+    if (header !== delimiter) {
+      tip.visited = true;
+      return { why: 'cells', header, delimiter };
+    }
+    // The lines above the header stay a paragraph, and a row's cells are read one by one.
+    scanRefs(tip.texts.slice(0, -1).join('\n'));
+    for (const cell of tip.last.split(CELL_DIVIDER)) scanRefs(cell);
+    tables.push({ line: tip.lastLine, gline: tip.lastSeg + 1, text: tip.last, cr: segs[tip.lastLine] > 1 || segs[line] > 1 });
+    tip = { type: 'table', line: tip.lastLine, cols: delimiter, rows: 1, nonEmpty: delimiter };
+    return true;
+  };
+  let stopped = false;
+  const segment = (text, first) => {
+    s = `${text}\n`;
+    offset = first && s[0] === '\uFEFF' ? 1 : 0;
+    column = 0;
+    pct = false;
+    fns = 0;
+    fnsc = 0;
+    let brk = null;
+    const m = walk();
+    let contType = m ? stack[m - 1].type : 'doc';
+    let tipMatched = false;
+    if (m < stack.length) {
+      // A comment the end of its container cuts off leaves its `<!--` open in GitHub's page, and
+      // the browser hides the rest of the file in it (N1) - in a footnote definition, what GitHub
+      // shows after it there (`events`).
+      if (tip?.type === 'html' && tip.htmlType === 2) {
+        if (!footnotes.length) {
+          tip.record.runaway = line + 1;
+          for (let k = line; k < n; k += 1) at[k] = tip.record;
+          open = tip.record;
+          stopped = true;
+          return;
+        }
+        events.push({ record: tip.record, owner: footnotes[footnotes.length - 1], from: tip.record.line - 1 });
+      }
+    } else if (tip) {
+      findNonspace();
+      if (tip.type === 'fence') {
+        if (indent <= 3 && s[fns] === tip.char && fenceCloses(s, fns, tip)) {
+          hide(tip.record);
+          tip = null;
+          return;
+        }
+        tipMatched = true;
+      } else if (tip.type === 'indented') {
+        tipMatched = indent >= 4 || blank;
+      } else if (tip.type === 'html') {
+        tipMatched = tip.htmlType <= 5 || !blank;
+      } else if (tip.type === 'table') {
+        const cells = blank ? 0 : rowCells(s.slice(fns, -1));
+        tipMatched = cells > 0 && cells < 65_536;
+      } else {
+        tipMatched = !blank;
+      }
+      if (tipMatched) contType = tip.type;
+    }
+    // open_new_blocks: the first block the line opens ends what the line did not continue.
+    let opened = false;
+    let maybeLazy = tip?.type === 'para';
+    let depth = 0;
+    const opens = (why) => {
+      if (opened) return;
+      opened = true;
+      closeTip(m < stack.length ? 'outside' : why);
+      popTo(m);
+    };
+    while (contType !== 'fence' && contType !== 'indented' && contType !== 'html') {
+      depth += 1;
+      findNonspace();
+      const indented = indent >= 4;
+      let k;
+      if (!indented && s[fns] === '>') {
+        opens('block');
+        advance(fns + 1 - offset, false);
+        if (s[offset] === ' ' || s[offset] === '\t') advance(1, true);
+        push({ type: 'quote' });
+      } else if (!indented && sticky(ATX, s, fns)) {
+        opens('block');
+        hold();
+        scanRefs(s.slice(fns, -1));
+        return;
+      } else if (!indented && (k = fenceOpens(s, fns))) {
+        opens('block');
+        hold();
+        tip = { type: 'fence', char: s[fns], length: Math.min(k, 255), record: { kind: 'fence', line: line + 1 } };
+        hide(tip.record);
+        return;
+      } else if (!indented && (k = htmlStart(s, fns, contType === 'para'))) {
+        opens('block');
+        hold();
+        tip = { type: 'html', htmlType: k, commentOpen: false, record: k === 2 ? { kind: 'comment', line: line + 1 } : { kind: 'html', type: k, line: line + 1 } };
+        contType = 'html';
+        break;
+      } else if (!indented && contType === 'para' && sticky(SETEXT, s, fns)) {
+        scanRefs(tip.texts.join('\n'));
+        tip = null;
+        return;
+      } else if (!indented && (brk ??= breakTest(s))(fns)) {
+        opens('block');
+        hold();
+        return;
+      } else if (!indented && depth < 100 && (k = sticky(FOOTNOTE, s, fns))) {
+        opens('block');
+        advance(fns + k[0].length - offset, false);
+        const record = { kind: 'footnote', line: line + 1, from: line, to: line };
+        definitions.push({ label: k[1].toLowerCase(), record });
+        push({ type: 'footnote', record });
+      } else if (indent < 4 && depth < 100 && (k = listMarker(s, fns, contType === 'para'))) {
+        opens('block');
+        const markerOffset = indent;
+        advance(fns + k - offset, false);
+        const [saveOffset, saveColumn, saveTab] = [offset, column, pct];
+        while (column - saveColumn <= 5 && (s[offset] === ' ' || s[offset] === '\t')) advance(1, true);
+        const spaces = column - saveColumn;
+        let padding = k + spaces;
+        if (spaces >= 5 || spaces < 1 || s[offset] === '\n') {
+          padding = k + 1;
+          [offset, column, pct] = [saveOffset, saveColumn, saveTab];
+          if (spaces > 0) advance(1, true);
+        }
+        push({ type: 'item', need: markerOffset + padding, held: false });
+      } else if (indented && !maybeLazy && !blank) {
+        opens('indented');
+        hold();
+        tip = { type: 'indented', record: { kind: 'indented', line: line + 1 } };
+        hide(tip.record);
+        return;
+      } else if (!indented && contType === 'para') {
+        // A header taken in lazily keeps its leading space, which GitHub reads as an empty first
+        // cell: a table of shifted columns where the counts then match, none where they do not (F5).
+        const header = tip.lastLine;
+        const lazyHead = tip.lastLazy;
+        const result = tableHeader();
+        if (lazyHead && (result === true || result.why === 'cells')) outcome[header] ??= { why: 'lazy-header', under: lazyHead };
+        outcome[header] ??= result;
+        if (result !== true) break;
+        return;
+      } else if (!indented && contType === 'table') {
+        // A table takes every line it can read a cell in, and no lazy line; past half a million
+        // cells it would have to fill in, GitHub ends it.
+        if (blank || tip.cols * tip.rows - tip.nonEmpty > 0x80000) break;
+        tip.rows += 1;
+        tip.nonEmpty += Math.min(rowCells(s.slice(fns, -1)), tip.cols);
+        wasRowOf[line] = tip.line;
+        if (segs[line] === 1) rowOf[line] = tip.line;
+        for (const cell of s.slice(fns, -1).split(CELL_DIVIDER)) scanRefs(cell);
+        return;
+      } else {
+        break;
+      }
+      contType = stack[stack.length - 1].type;
+      maybeLazy = false;
+    }
+    // add_text_to_container. A paragraph runs on below the containers a line does not reach,
+    // keeping what is left of the line as it stands, and a header and delimiter row there are its text.
+    if (!opened && tip?.type === 'para' && m < stack.length && !blank) {
+      if (outcome[tip.lastLine] === null && delimiterCells(s.slice(fns, -1)) > 0) {
+        outcome[tip.lastLine] = { why: stack[m].type === 'quote' ? 'quote' : 'lazy', under: stack[m].type };
+      }
+      const text = pct ? ' '.repeat(4 - (column % 4)) + s.slice(offset + 1, -1) : s.slice(offset, -1);
+      addPara(text);
+      if (/^[ \t]/.test(text)) tip.lastLazy = stack[m].type;
+      return;
+    }
+    if (!opened) {
+      if (tip && !tipMatched) closeTip(m < stack.length ? 'outside' : blank ? 'blank' : null);
+      popTo(m);
+    }
+    if (tip?.type === 'fence' || tip?.type === 'indented') {
+      hide(tip.record);
+      return;
+    }
+    if (tip?.type === 'html') {
+      hide(tip.record);
+      const text = s.slice(fns, -1);
+      const here = footnotes[footnotes.length - 1] ?? null;
+      // A reopened comment ends at a `-->` GitHub writes out as it stands, which is an HTML block's:
+      // in a paragraph or code it is written `--&gt;`, and the comment stays open (F3). GitHub writes
+      // a footnote definition below the body, so its `-->` closes only a comment reopened in it.
+      if (rawComment && rawOwner === here) rawInside = commentOpenAfter(text, rawInside);
+      if (tip.htmlType === 2) tip.commentOpen = commentOpenAfter(text, tip.commentOpen);
+      if (htmlEnds(tip.htmlType, s, fns)) {
+        // GitHub ends the block at the line holding `-->`; a `<!--` after it reopens the comment in
+        // the browser, which hides the lines below to the next `-->`. One the body reopened stays
+        // while a footnote definition's opens and closes.
+        if (tip.commentOpen && (!rawComment || rawOwner === here)) {
+          rawComment = { kind: 'comment', line: tip.record.line, reopened: line + 1 };
+          rawOwner = here;
+          rawInside = true;
+        }
+        tip = null;
+      }
+      return;
+    }
+    if (blank) return;
+    if (tip?.type === 'table') closeTip(null);
+    if (tip?.type === 'para') {
+      if (indent >= 4 && outcome[tip.lastLine] === null && delimiterCells(s.slice(fns, -1)) > 0) {
+        outcome[tip.lastLine] = { why: 'indented' };
+      }
+      addPara(s.slice(fns, -1));
+      return;
+    }
+    hold();
+    tip = { type: 'para', last: '', lastLine: line, lastSeg: gseg, texts: [], overflow: false, visited: false };
+    addPara(s.slice(fns, -1));
+  };
+  for (line = 0; line < n && !stopped; line += 1) {
+    const parts = lines[line].split('\r');
+    if (line === n - 1 && parts[parts.length - 1] === '') parts.pop();
+    segs[line] = parts.length;
+    if (rawComment) at[line] = rawComment;
+    // A carriage return alone ends the line on GitHub, and the kit reads what follows it as one line (F-D).
+    if (tip?.type === 'table' && parts.length > 1) endWhy[line] = 'cr';
+    for (seg = 0; seg < parts.length && !stopped; seg += 1) {
+      segment(parts[seg].replace(/\0/g, '\uFFFD'), line === 0 && seg === 0);
+      prevLine = line;
+      gseg += 1;
+    }
+    if (rawComment && !rawInside) {
+      rawComment = null;
+      rawOwner = null;
+    }
+  }
+  seg = -1;
+  if (!stopped) {
+    // What the file ends inside hides what is written at its end: a fence or an HTML block of a type
+    // that ends only at its marker, `<pre>` to CDATA, the body ends inside (finding 5), and a comment
+    // the body leaves open. One a footnote definition leaves open hides what GitHub shows after it there.
+    const comment = tip?.type === 'html' && tip.htmlType === 2;
+    if (comment && footnotes.length) events.push({ record: tip.record, owner: footnotes[footnotes.length - 1], from: tip.record.line - 1 });
+    if (tip?.type === 'para') scanRefs(tip.texts.join('\n'));
+    if (tip?.type === 'fence' && stack.length === 0) open = tip.record;
+    else if (comment && !footnotes.length) open = tip.record;
+    else if (tip?.type === 'html' && tip.htmlType !== 2 && tip.htmlType <= 5 && stack.length === 0) open = tip.record;
+    else if (rawComment && !rawOwner) open = rawComment;
+  }
+  popTo(0);
+  // GitHub drops a footnote definition nothing refers to, and every line of it with it (F-C), and
+  // of a label defined twice it keeps the definition that ends first - one nested in another ends
+  // before it; it shows the others below the body, in the order of their first reference (F2). A
+  // line is the innermost definition's holding it, shown in that one's place: it was the outermost
+  // one's, in its place (re-review of 116a2a3, finding 4).
+  const order = new Map([...refs].map((label, i) => [label, i]));
+  const kept = new Map();
+  for (const { label, record } of definitions) if (!(kept.get(label)?.ended < record.ended)) kept.set(label, record);
+  for (const { label, record } of definitions) {
+    if (!refs.has(label)) continue;
+    if (kept.get(label) !== record) record.repeats = kept.get(label).line;
+    else record.order = order.get(label);
+  }
+  const holding = [];
+  for (let k = 0, d = 0; k < n; k += 1) {
+    while (holding.length && holding[holding.length - 1].to < k) holding.pop();
+    while (d < definitions.length && definitions[d].record.from === k) holding.push(definitions[d++].record);
+    const inner = holding[holding.length - 1];
+    if (inner?.order !== undefined) note[k] = inner;
+    else if (inner) at[k] = inner;
+  }
+  // GitHub shows the footnotes below the body, so a comment the body leaves open hides them too; the
+  // first one a footnote definition leaves open, in GitHub's order, hides the rest of that definition
+  // and those shown after it - never the body (re-review of 116a2a3, finding 1).
+  if (open?.kind === 'comment') for (let k = 0; k < n; k += 1) if (note[k]) at[k] ??= open;
+  let first = null;
+  for (const event of events) {
+    event.record.footnote = event.owner.line;
+    const place = event.owner.order;
+    if (place !== undefined && (!first || place < first.owner.order || (place === first.owner.order && event.from < first.from))) first = event;
+  }
+  for (let k = 0; first && k < n; k += 1) {
+    const holder = note[k];
+    if (holder && (holder.order > first.owner.order || (holder === first.owner && k >= first.from))) at[k] ??= first.record;
+  }
+  const heads = outcome.map((result, i) => {
+    if (segs[i] > 1 || segs[i + 1] > 1) return { why: 'cr' };
+    if (wasRowOf[i] >= 0) return { why: 'row', table: wasRowOf[i] + 1 };
+    return result ?? { why: 'paragraph' };
+  });
+  return { at, open, heads, rowOf, segs, endWhy, note, tables };
 }
 
 /**
@@ -108,53 +911,166 @@ export function repairRowArity(cells, width, free = width - 1) {
 const FREE_TEXT_COLUMNS = ['finding', 'unknown', 'why it matters', 'title'];
 
 /**
- * Parse the first markdown table whose header starts with `header[0]`, of those GitHub renders
- * as a table. Returns `{ header, rows, problems, found, line }`; `line` is the header's 1-based
- * line, and every row carries its own.
+ * The cells of line `i` when it heads a table with `header`'s columns - a row of pipes over a
+ * separator - else null. The reader's header search and the writer's refusal (`tableHidden`) ask
+ * it alike. A header is recognised by its COLUMN SET, not by its first cell alone. Matching on
+ * the first cell missed any table whose columns had been reordered - the reader then silently
+ * found no table at all, and the writer, asking the same question, inserted its row above the
+ * document's title.
+ */
+function headerAt(lines, i, header) {
+  if (!lines[i].trim().startsWith('|') || !isSeparator(lines[i + 1] ?? '')) return null;
+  const cells = splitRow(lines[i]);
+  return namesHeader(cells, header) ? cells : null;
+}
+
+// Whether a header's cells name `header`'s table: its first column, or exactly its columns.
+function namesHeader(cells, header) {
+  const names = cells.map((name) => name.trim().toLowerCase());
+  const want = new Set(header.map((name) => name.trim().toLowerCase()));
+  const sameLead = names[0] === header[0].trim().toLowerCase();
+  const sameSet = names.length === want.size && names.every((name) => want.has(name)) && new Set(names).size === names.length;
+  return sameLead || sameSet;
+}
+
+// Why GitHub makes no table of a header over a delimiter row (`hiddenLines`'s `heads`): the reason,
+// then the remedy. The reader names it, and the writer refuses beside its rows, in the same words.
+const NOT_A_TABLE = {
+  lazy: ["its header and delimiter row stand below a list item's paragraph with less indentation than the item's content, so GitHub reads them as more of that paragraph",
+    "indent the table to the item's content, or put a blank line above it"],
+  quote: ["its header and delimiter row stand below a block quote's paragraph without the quote's `>`, so GitHub reads them as more of that paragraph",
+    'start each line with `>`, or put a blank line above it'],
+  indented: ["its delimiter row is indented 4 or more spaces past the header, so GitHub reads it as more of the header's paragraph",
+    'indent the delimiter row as the header is'],
+  separator: ['GitHub does not read the delimiter row: each cell is dashes, with an optional colon at either end, between pipes',
+    'write it as |---|---|'],
+  visited: ['an earlier delimiter row in the same paragraph had another cell count, and GitHub then makes no table of that paragraph',
+    'put a blank line above the header'],
+  cr: ['the header or the delimiter row holds a carriage return alone, which GitHub reads as a line end',
+    'remove the carriage return'],
+  paragraph: ['GitHub does not read it as a table', 'put a blank line above the header'],
+};
+
+const HOLDER = { item: 'a list item', footnote: 'a footnote definition', quote: 'a block quote' };
+
+function notATable(why) {
+  if (why.why === 'cells') return [`its delimiter row has ${why.delimiter} cells and the header ${why.header}`, 'give the delimiter row one cell per column'];
+  if (why.why === 'row') {
+    return [`its header stands straight below the rows of another table (line ${why.table}), so GitHub reads it as one more row of that table`,
+      'put a blank line above the header'];
+  }
+  if (why.why === 'lazy-header') {
+    return [`its header stands below ${HOLDER[why.under] ?? HOLDER.item}'s paragraph with less indentation than its content, so GitHub `
+      + 'reads it as more of that paragraph, and its leading space as an empty first cell', 'indent the header as the delimiter row is'];
+  }
+  if (why.why === 'lazy' && why.under === 'footnote') {
+    return ["its header and delimiter row stand below a footnote definition's paragraph with less indentation than its content "
+      + '(4 spaces), so GitHub reads them as more of that paragraph', 'put a blank line above it, or indent it 4 spaces to keep it in the footnote'];
+  }
+  return NOT_A_TABLE[why.why] ?? NOT_A_TABLE.paragraph;
+}
+
+/**
+ * Parse the first markdown table whose header starts with `header[0]`, or holds exactly its
+ * columns, that GitHub shows as a table: outside the blocks `hiddenLines` finds hiding it, over a
+ * delimiter row GitHub reads, and with the rows GitHub gives it. Where no such table is found, a
+ * header GitHub makes none of is named, once, with the reason. Returns `{ header, rows, problems,
+ * found, line }`; `line` is the header's 1-based line, and every row carries its own.
  */
 export function parseTable(text, header) {
+  return readTable(text, header).out;
+}
+
+// `parseTable`, with the lines it read and what `hiddenLines` said of them, for the writers.
+function readTable(text, header) {
   const out = { header: [...header], rows: [], problems: [], found: false, line: 0 };
-  if (!text) return out;
+  if (!text) return { out, lines: null, read: null };
   const lines = String(text).split(/\r?\n/);
-  const want = new Set(header.map((name) => name.trim().toLowerCase()));
-  // A table in a fence or an HTML comment is shown as code or hidden, so it is not the table. An
-  // archived CLOSED copy of the unknowns table commented out above the live one was read in its
+  // A table in a code block or an HTML comment is shown as code or hidden, so it is not the table.
+  // An archived CLOSED copy of the unknowns table commented out above the live one was read in its
   // place, and the live table's OPEN unknown passed the gate (independent audit 2026-11-04, F01).
-  const hidden = blockContext();
+  // Nor is a header GitHub makes no table of: it was read with its rows wherever it stood
+  // (re-review of #441, 2026-11-07).
+  const read = hiddenLines(lines);
+  const hidden = read.at;
+  const done = { out, lines, read };
   let start = -1;
+  let refused = -1;
+  let cut = -1;
+  let noted = -1;
+  // A header a block never closed hides is named (F3): one in the body before one in a footnote
+  // definition, which GitHub shows below it, and below a cut-off comment the first below the cut,
+  // which GitHub would show once the comment is closed, before one the comment was written to hide.
+  const rank = (j) => (read.note[j] ? 0 : read.open.runaway && j + 1 >= read.open.runaway ? 2 : 1);
   for (let i = 0; i < lines.length; i += 1) {
-    if (hidden(lines[i].trim())) continue;
-    if (!lines[i].trim().startsWith('|')) continue;
-    if (!isSeparator(lines[i + 1] ?? '')) continue;
-    const cells = splitRow(lines[i]);
-    // A header is recognised by its COLUMN SET, not by its first cell alone. Matching on
-    // the first cell missed any table whose columns had been reordered - the reader then
-    // silently found no table at all, and the writer, asking the same question, inserted
-    // its row above the document's title.
-    const names = cells.map((name) => name.trim().toLowerCase());
-    const sameLead = names[0] === header[0].trim().toLowerCase();
-    const sameSet = names.length === want.size && names.every((name) => want.has(name)) && new Set(names).size === names.length;
-    if (!sameLead && !sameSet) continue;
+    if (!headerAt(lines, i, header)) continue;
+    if (hidden[i]) {
+      if (read.open && hidden[i] === read.open && (cut < 0 || rank(i) > rank(cut))) cut = i;
+      continue;
+    }
+    if (read.heads[i] !== true) {
+      if (refused < 0) refused = i;
+      continue;
+    }
+    // GitHub shows the footnotes below the body, in the order of their first reference: a table in
+    // one is the first GitHub shows only when the body holds none (F2).
+    if (read.note[i]) {
+      if (noted < 0 || read.note[i].order < read.note[noted].order) noted = i;
+      continue;
+    }
     start = i;
-    out.header = cells;
-    out.found = true;
-    out.line = i + 1;
     break;
   }
-  if (start < 0) return out;
+  if (start < 0) start = noted;
+  if (start >= 0) {
+    out.header = headerAt(lines, start, header);
+    out.found = true;
+    out.line = start + 1;
+  } else {
+    // No table is read, so no check reads a row: the header that is not one is named, with why.
+    const named = refused >= 0 ? refused : cut;
+    if (named < 0) return done;
+    const head = lines[named].trim();
+    let detail;
+    if (refused >= 0) {
+      const [reason, remedy] = notATable(read.heads[named]);
+      detail = `\`${head.slice(0, 40)}\` heads no table on GitHub: ${reason} - ${remedy}`;
+    } else if (read.note[named]) {
+      // A comment the body leaves open hides the footnotes, which GitHub shows below the body.
+      const cause = read.open.runaway
+        ? `an HTML comment that starts at line ${read.open.line} is cut off at line ${read.open.runaway}, where the block `
+          + 'holding it ends, and left open to the end of the page, so no check reads the table - close the comment inside its block'
+        : `${blockNamed(read.open)} is never closed, so the rest of the page is in it and no check reads the table - `
+          + 'close it where it should end';
+      detail = `\`${head.slice(0, 40)}\` is hidden on GitHub: it stands in a footnote definition, which GitHub shows below `
+        + `the body, and ${cause}`;
+    } else if (read.open.runaway) {
+      detail = `\`${head.slice(0, 40)}\` is hidden on GitHub: an HTML comment that starts at line ${read.open.line} is cut off `
+        + `at line ${read.open.runaway}, where the block holding it ends, and GitHub leaves it open to the end of the file, `
+        + 'so no check reads the table - close the comment inside its block';
+    } else {
+      const shown = { fence: 'is shown as code', html: 'is not shown as a table' }[read.open.kind] ?? 'is hidden';
+      detail = `\`${head.slice(0, 40)}\` ${shown} on GitHub: `
+        + `${blockNamed(read.open)} is never closed, so the rest of the file is in it on GitHub and no check reads the table - `
+        + 'close it where it should end';
+    }
+    out.problems.push({ kind: 'table-split', line: named + 1, detail, text: head });
+    return done;
+  }
 
   // GFM makes a row's outer pipes optional, so `E-03 | ... |` straight below a row renders as
   // the next row on GitHub. It ended the table here, and every later row was named as standing
-  // after a blank line that was not there (#331). A line in the table's run that starts no other
-  // block, holds a `|`, and splits to the header's cells is a row; the header and separator are
-  // still found by their pipes, since the scaffold writes them that way.
+  // after a blank line that was not there (#331). A line GitHub reads as a row of this table
+  // (`rowOf`) that holds a `|` and splits to the header's cells is a row; one that starts a block
+  // of its own is not, below the table either; the header and separator are still found by their
+  // pipes, since the scaffold writes them that way.
   const startsBlock = (text) => /^(#{1,6}\s|>|`{3}|~{3}|<|[-*+]\s|\d{1,9}[.)]\s)/.test(text);
   const pipeBearing = (text) => text !== '' && !startsBlock(text) && !isSeparator(text) && /(^|[^\\])\|/.test(text);
   const rowShaped = (text) => text.startsWith('|') || (pipeBearing(text) && splitRow(text).length === out.header.length);
   let end = lines.length;
   for (let i = start + 2; i < lines.length; i += 1) {
     const line = lines[i];
-    if (!rowShaped(line.trim())) { end = i; break; }
+    if (read.rowOf[i] !== start || !rowShaped(line.trim())) { end = i; break; }
     if (isSeparator(line)) continue;
     const raw = splitRow(line);
     const freeAt = out.header.findIndex((name) => FREE_TEXT_COLUMNS.includes(name.trim().toLowerCase()));
@@ -174,6 +1090,32 @@ export function parseTable(text, header) {
     out.header.forEach((name, idx) => { row[name] = cells[idx] ?? ''; });
     out.rows.push(row);
   }
+  // The line the table ended at is named once when it is what GitHub still shows in the table and
+  // the reader stopped at - a pipe-bearing line that splits to the wrong number of cells - or a
+  // row GitHub shows apart from it, with why; the rows run on below it are its consequence, not
+  // each a finding of their own.
+  const endedBy = lines[end]?.trim() ?? '';
+  const why = read.endWhy[end] ?? null;
+  const endId = splitRow(endedBy)[0] || endedBy.slice(0, 40);
+  let named = '';
+  if (pipeBearing(endedBy) && !rowShaped(endedBy)) {
+    named = `\`${endedBy.slice(0, 40)}\` does not start with |, and splits to ${splitRow(endedBy).length} cells, not the header's `
+      + `${out.header.length}, so the table ended there and no check reads the rows below it - `
+      + 'add the leading pipe if it is a row, or a blank line above it if it is prose';
+  } else if (rowShaped(endedBy) && why === 'outside' && !isSeparator(lines[end + 1] ?? '')) {
+    named = `row \`${endId}\` stands at a column where the list item or footnote holding the table ends, so GitHub shows it `
+      + 'outside the table and no check reads it - indent it as the rows above it are';
+  } else if (rowShaped(endedBy) && why === 'cr') {
+    named = `row \`${endId}\` holds a carriage return alone, which GitHub reads as a line end, so no check reads it or the `
+      + 'rows below it - remove the carriage return';
+  } else if (rowShaped(endedBy) && why === 'indented') {
+    named = `row \`${endId}\` is indented 4 or more spaces past the table, so GitHub shows it as code and no check reads it - `
+      + 'indent it as the rows above it are';
+  } else if (endedBy.startsWith('|') && why === null && rowCells(endedBy) === 0) {
+    named = `row \`${endId}\` holds no cell, so GitHub ends the table there and no check reads the rows below it - `
+      + 'remove the line, or put a cell in it';
+  }
+  if (named) out.problems.push({ kind: 'table-split', line: end + 1, detail: named, text: endedBy });
   // The table ends at the first line that is not a row - a blank line, as GFM renders it. A
   // row-shaped line AFTER that end, in the same section, is a row somebody wrote into the table
   // that no reader of the table will see: GitHub shows it as prose, and until 2026-10-03 this
@@ -181,44 +1123,31 @@ export function parseTable(text, header) {
   // which printed PASS (gap audit, rank 1). The row stays out of the table, as it is rendered,
   // and is RECORDED. The scan runs to the end of the table's section: a heading of the same or
   // a higher level than the one above the table (a deeper `###` note does not end the section,
-  // and `#tag` prose is not a heading). A fenced code block or an HTML comment is skipped, as
-  // GitHub renders a row there as code or hides it; a lone separator is not a row; a header
+  // and `#tag` prose is not a heading). A code block or an HTML comment is skipped, as GitHub
+  // renders a row there as code or hides it (`hiddenLines`); a lone separator is not a row; a header
   // followed by its separator starts another table and is not a stray row, and a header whose
   // separator is malformed is named as that, once (breaker review, 2026-10-04).
+  // A heading in a code block or a comment heads no section: taken as one, `# example` in a fence
+  // above the table ran the scan past the table's own section (2026-11-06).
   let level = 7;
   for (let k = start - 1; k >= 0; k -= 1) {
+    if (hidden[k]) continue;
     const heading = /^(#{1,6})\s/.exec(lines[k]);
     if (heading) { level = heading[1].length; break; }
   }
-  // A pipe-bearing line that is not a row (it splits to the wrong number of cells) is what
-  // GitHub still shows in the table and the reader stopped at: it is named once, by its own
-  // line, and the rows run on below it are its consequence, not each a finding of their own.
-  const culprit = end < lines.length && pipeBearing(lines[end].trim());
-  if (culprit) {
-    const text = lines[end].trim();
-    out.problems.push({
-      kind: 'table-split',
-      line: end + 1,
-      detail: `\`${text.slice(0, 40)}\` does not start with |, and splits to ${splitRow(text).length} cells, not the header's `
-        + `${out.header.length}, so the table ended there and no check reads the rows below it - `
-        + 'add the leading pipe if it is a row, or a blank line above it if it is prose',
-      text,
-    });
-  }
   // A stray row is named with the line that ENDED the table: only a blank one is a blank line.
-  // The rows run on straight below a culprit (nothing but rows between) are not named again.
-  const endedBy = lines[end]?.trim() ?? '';
-  const runsOn = (k) => {
-    let j = k - 1;
-    while (j > end && rowShaped(lines[j].trim())) j -= 1;
-    return j === end;
-  };
-  const hiddenBelow = blockContext();
+  // The rows run on straight below a line named above (nothing but rows between) are not named
+  // again; where they end is found once, as each walking back to it took time in the square of
+  // their number (F-E).
+  let runEnd = end;
+  while (named && runEnd + 1 < lines.length && rowShaped(lines[runEnd + 1].trim())) runEnd += 1;
+  const runsOn = (k) => named !== '' && end <= k && k <= runEnd;
   let i = out.rows.length ? out.rows[out.rows.length - 1].line : start + 2;
   for (; i < lines.length; i += 1) {
     const line = lines[i];
     const text = line.trim();
-    if (hiddenBelow(text)) continue;
+    // An HTML block of type 6 or 7 hides nothing: the browser shows its text, a row's with it.
+    if (hidden[i] && !(hidden[i].kind === 'html' && hidden[i].type >= 6)) continue;
     const heading = /^(#{1,6})\s/.exec(line);
     if (heading && heading[1].length <= level) break;
     // A row without its leading pipe is row-shaped here too: below a blank line it was dropped
@@ -226,15 +1155,17 @@ export function parseTable(text, header) {
     if (!rowShaped(text) || isSeparator(line)) continue;
     const next = lines[i + 1] ?? '';
     if (isSeparator(next)) break;                                   // another table's header
-    const separatorLike = /^\|?[\s:|=_~.-]+\|?$/.test(next.trim()) && next.trim().length > 1
+    if (i === end && !named) continue;                              // it ended the table, as a block of its own
+    const below = next.trim();
+    const separatorLike = below.length > 1 && /^[\s:|=_~.-]*$/.test(below)
       && (text.startsWith('|') || next.includes('|'));              // `---` under prose is a heading rule
-    if (!separatorLike && culprit && runsOn(i)) continue;            // named once, at the culprit
+    if (!separatorLike && runsOn(i)) continue;                      // named once, at the line that ended the table
     const id = splitRow(line)[0] || text.slice(0, 40);
     out.problems.push({
       kind: 'table-split',
       line: i + 1,
       detail: separatorLike
-        ? `row \`${id}\` starts a table whose separator row \`${next.trim()}\` is malformed (a separator is written |---|---|), so the table is not recognised - fix the separator`
+        ? `row \`${id}\` starts a table whose separator row \`${below}\` is malformed (a separator is written |---|---|), so the table is not recognised - fix the separator`
         : endedBy === ''
           ? `row \`${id}\` stands after a blank line ended the table above it, so no check reads it - `
             + 'remove the blank line (or the row), because the table ends where the blank line is'
@@ -247,7 +1178,7 @@ export function parseTable(text, header) {
       while ((lines[i + 1] ?? '').trim().startsWith('|')) i += 1;
     }
   }
-  return out;
+  return done;
 }
 
 // ---------------------------------------------------------------- captures
@@ -969,17 +1900,148 @@ export function alignToHeader(canonical, cells, actual) {
   return actual.map((name) => byName.get(name.trim().toLowerCase()) ?? '');
 }
 
-/** The header a table actually carries on disk, or null when it has none yet. */
-export function headerOf(text, canonical) {
-  const table = parseTable(text, canonical);
-  return table.found ? table.header : null;
+const HIDDEN_BY = {
+  fence: 'a fenced code block', comment: 'an HTML comment', indented: 'an indented code block', html: 'an HTML block',
+};
+
+// The block a `hiddenLines` record names, in the words the reader and the writer share.
+function blockNamed(record) {
+  if (record.reopened) return `an HTML comment reopened at line ${record.reopened} by a \`<!--\` after its \`-->\``;
+  if (record.repeats) return `a footnote definition that starts at line ${record.line} and repeats the label of the one at line ${record.repeats}`;
+  if (record.kind === 'footnote') return `a footnote definition that starts at line ${record.line} and that nothing refers to`;
+  return `${HIDDEN_BY[record.kind]} that starts at line ${record.line}`;
 }
 
-/** Append one row to an artifact's table, creating the table when it is absent. */
+/**
+ * Why a row for a table with `header` cannot be written where the reader would read it, or null
+ * when it can (review of #441, 2026-11-06, finding 1; ADR-0204). With a table the reader reads,
+ * the row goes below its last row. With none, the writer starts a table at the end of the file,
+ * which is in a block as well when the body ends inside one never closed (`open` true): a fence, an
+ * HTML block of type 1 or 3 to 5, a comment, or a comment cut off where the block holding it ends
+ * (`runaway`). And a table with this header that GitHub does not show as one - in a block that
+ * hides it, a comment a footnote leaves open among them (`footnote`), or over a delimiter row it
+ * makes no table of (`kind` 'not-a-table', with `why`) - with rows below it would be left behind
+ * by the new one, which numbers its own from the first id again. A header with no rows - an
+ * example, commented out - holds nothing a new table would leave behind. A table GitHub shows with
+ * this header that the header search passes over is refused with rows or none, as the new table
+ * would stand beside it (`kind` 'unread', with the `line` of its header and its `shape`, a key of
+ * `UNREAD`). Nor is a row written to a
+ * table the reader stops in above rows GitHub still shows (`kind` 'split', the `line` it names,
+ * the `table` header's line and the reader's `detail`): it was numbered from the rows above the
+ * stop and placed among them, a second U-2 beside the one no check read (re-review of 88fe19a,
+ * 2026-11-07, F1). Returns the record from `hiddenLines` (`kind`, the `line` that opened it) with
+ * `open`.
+ */
+export function tableHidden(text, header) {
+  return writeCheck(text, header).hidden;
+}
+
+// `tableHidden` with the table the reader found, which the writers then write into. The file is
+// read once: the reader's lines and blocks are judged here too.
+function writeCheck(text, header) {
+  const { out: table, lines, read } = readTable(text, header);
+  if (table.found) {
+    const split = table.problems.find((problem) => problem.kind === 'table-split');
+    return { table, hidden: split ? { kind: 'split', line: split.line, table: table.line, detail: split.detail, open: false } : null };
+  }
+  if (!text) return { table, hidden: null };
+  const { at, open, heads, tables } = read;
+  let held = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!headerAt(lines, i, header)) continue;
+    if (!at[i] && heads[i] === true) return { table, hidden: null };
+    const record = at[i] ?? { kind: 'not-a-table', line: i + 1, why: heads[i] };
+    // Its first row: the line below the separator, in the same block, holding a cell divider.
+    const row = lines[i + 2] ?? '';
+    if (!held && (at[i] ? at[i + 2] === at[i] : !at[i + 2]) && !isSeparator(row) && /(^|[^\\])\|/.test(row)) held = record;
+  }
+  if (open) return { table, hidden: { ...open, open: true } };
+  // A table GitHub shows with this header that the header search passes over: a new table would
+  // stand beside it, its rows unread (re-review of 116a2a3, 2026-11-07, finding 2).
+  for (const t of tables) {
+    if (!t.cr && (at[t.line] || headerAt(lines, t.line, header))) continue;
+    if (!namesHeader(splitRow(t.text.trim()), header)) continue;
+    const shape = t.cr ? 'cr' : /^\s*>/.test(lines[t.line]) ? 'quote' : t.text.trim().startsWith('|') ? 'marker' : 'pipes';
+    return { table, hidden: { kind: 'unread', line: t.cr ? t.gline : t.line + 1, shape, open: false } };
+  }
+  return { table, hidden: held ? { ...held, open: false } : null };
+}
+
+// Why a table GitHub shows is passed over by the header search, and the remedy.
+const UNREAD = {
+  pipes: ['its header has no outer pipes', 'write the header between pipes'],
+  quote: ['it stands in a block quote', 'move it out of the quote'],
+  cr: ['its lines end with a carriage return alone, which GitHub reads as a line end and the kit does not',
+    'end its lines with LF or CR LF'],
+  marker: ["its header starts on the line of a list item's marker or a footnote definition's label",
+    'start the header on a line of its own'],
+};
+
+function tableHiddenError(rel, hidden) {
+  let detail;
+  if (hidden.kind === 'split') {
+    detail = `the table at line ${hidden.table} is not read whole - at line ${hidden.line}, ${hidden.detail}. A row written `
+      + 'now would be numbered and placed as if the rows no check reads were not there. Fix that line, then run again.';
+  } else if (hidden.runaway) {
+    detail = `an HTML comment that starts at line ${hidden.line} is cut off at line ${hidden.runaway}, where the block `
+      + 'holding it ends, and GitHub leaves it open to the end of the file, so a table below it is not read, and a row '
+      + 'written at its end would be hidden too. Close the comment inside its block, then run again.';
+  } else if (hidden.kind === 'not-a-table') {
+    const [reason, remedy] = notATable(hidden.why);
+    detail = `the table at line ${hidden.line} is not a table on GitHub: ${reason}. No check reads its rows, and a new `
+      + 'table would leave them behind and number its own from the first id again. '
+      + `${remedy[0].toUpperCase()}${remedy.slice(1)}, then run again.`;
+  } else if (hidden.kind === 'unread') {
+    const [reason, remedy] = UNREAD[hidden.shape];
+    detail = `the table at line ${hidden.line} is shown on GitHub, but no check reads it: ${reason}. A new table would `
+      + 'stand beside it and number its own rows from the first id again. '
+      + `${remedy[0].toUpperCase()}${remedy.slice(1)}, then run again.`;
+  } else if (hidden.footnote && !hidden.open) {
+    detail = 'its table stands in a footnote definition, and GitHub shows the footnotes below the body, where '
+      + `${blockNamed(hidden)} in the footnote definition at line ${hidden.footnote} is left open and hides what follows `
+      + 'it, so no check reads its rows, and a new table would leave them behind and number its own from the first id '
+      + 'again. Close the comment inside its footnote definition, then run again.';
+  } else {
+    const block = blockNamed(hidden);
+    detail = hidden.open
+      ? `the file ends inside ${block} and is never closed, so a table in it is not read, and a row written at its end `
+        + 'would be in it too. Close the block where it should end, then run again.'
+      : `its table stands inside ${block}, which GitHub does not show as a table, so no check reads its rows, and a `
+        + 'new table would leave them behind and number its own from the first id again. Move the table out of the '
+        + 'block, then run again.';
+  }
+  const err = new Error(`refusing to write to ${rel}: ${detail}`);
+  err.code = 'TABLE_HIDDEN';
+  return err;
+}
+
+/**
+ * Refuses, before a collection spends anything, when a row it records would be written where no
+ * reader reads it (`tableHidden`, ADR-0204): by default its evidence and sources tables, else the
+ * `[path, header]` pairs given. The writer refuses too, but only after the fetch, and the capture
+ * it leaves with no row is a cache hit the next run never writes a row for.
+ */
+export function assertTablesWritable(root, tables = [[PATHS.evidence, HEADERS.evidence], [PATHS.sources, HEADERS.sources]]) {
+  for (const [rel, header] of tables) {
+    const hidden = tableHidden(readText(resolve(root, rel), ''), header);
+    if (hidden) throw tableHiddenError(rel, hidden);
+  }
+}
+
+/**
+ * Append one row to an artifact's table, creating the table when it is absent - and refusing,
+ * with nothing written, where the row would be hidden from every reader or numbered past rows
+ * no reader reads (`tableHidden`).
+ */
 export function appendRow(root, rel, header, cells) {
   const file = resolve(root, rel);
   const text = readText(file, '');
-  const onDisk = headerOf(text, header);
+  // Started below a fence or a comment never closed, the table was written inside it, read by
+  // nothing, and its row numbered from the first id again on every run - E-01 cited by the
+  // builder, then resolved to another page once the block was closed (review of #441).
+  const { table, hidden } = writeCheck(text, header);
+  if (hidden) throw tableHiddenError(rel, hidden);
+  const onDisk = table.found ? table.header : null;
   const line = tableRow(alignToHeader(header, cells, onDisk));
   if (!onDisk) {
     const head = `${tableRow(header)}\n|${header.map(() => '---').join('|')}|\n`;
@@ -987,14 +2049,15 @@ export function appendRow(root, rel, header, cells) {
     return line;
   }
   const lines = text.split(/\r?\n/);
-  const table = parseTable(text, header);
   // An empty table takes the row below its separator: the separator of the header the reader
   // found, so the row goes where it is read. A search of its own once looked for the canonical
   // first column, missed a reordered table and spliced the row in above the document's title;
   // then for the column the table leads with, and found an archived copy of the header in a
   // comment above the live table just as readily (independent audit 2026-11-04, F01).
   const last = table.rows.length ? table.rows[table.rows.length - 1].line - 1 : table.line;
-  lines.splice(last + 1, 0, line);
+  // The row keeps the indentation of the one it follows: a table in a list item holds only the
+  // lines at its content column, and a row written at column 0 would stand outside it (ADR-0204).
+  lines.splice(last + 1, 0, /^[ \t]*/.exec(lines[last])[0] + line);
   writeText(file, lines.join('\n'));
   return line;
 }
@@ -1003,8 +2066,9 @@ export function appendRow(root, rel, header, cells) {
 export function upsertRow(root, rel, header, cells) {
   const file = resolve(root, rel);
   const text = readText(file, '');
-  const table = parseTable(text, header);
-  const onDisk = headerOf(text, header);
+  const { table, hidden } = writeCheck(text, header);
+  if (hidden) throw tableHiddenError(rel, hidden);
+  const onDisk = table.found ? table.header : null;
   const aligned = alignToHeader(header, cells, onDisk);
   // The key is the canonical first column's value, matched in whichever position that
   // column occupies on disk.
@@ -1013,9 +2077,10 @@ export function upsertRow(root, rel, header, cells) {
   const found = table.rows.find((r) => String(r.cells[keyAt < 0 ? 0 : keyAt]).trim().toLowerCase() === key);
   if (!found) return appendRow(root, rel, header, cells);
   const lines = text.split(/\r?\n/);
-  lines[found.line - 1] = tableRow(aligned);
+  const row = tableRow(aligned);
+  lines[found.line - 1] = /^[ \t]*/.exec(lines[found.line - 1])[0] + row;
   writeText(file, lines.join('\n'));
-  return lines[found.line - 1];
+  return row;
 }
 
 /** The next free `E-##` / `U-##` / `D-##` style id for a list of rows. */

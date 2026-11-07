@@ -294,6 +294,21 @@ test('a dry run gathers nothing and spends nothing', () => {
 // #305: a dry run wrote the seeded map over a map a real run had drafted - rows unjudged, so the
 // judged-rows guard let it through - and the material that run paid for became "No material
 // gathered". A dry run previews; it does not write over a map that holds anything.
+// Re-review of 88fe19a (2026-11-07), F1: the guard counts the rows the reader reads, and a row holding
+// a carriage return alone stops it, so a map whose first row held one read as empty, and a dry run
+// wrote the seeded map over it.
+test('a dry run does not write over a map the reader stops in', () => {
+  const dir = makeProject(undefined, { content: true });
+  const file = resolve(dir, PATHS.map);
+  const sep = '|---|---|---|---|---|\n';
+  writeText(file, readText(file).replace(sep, `${sep}| S-1 | Access\rmodel | how the data is reached |  |  |\n| S-2 | Auth | who may call |  |  |\n`));
+  const drafted = readText(file);
+  const out = decompose(dir, { topic: 'Fixture topic', dryRun: true, log: () => {} });
+  assert.equal(out.written, false, 'a dry run wrote over the map');
+  assert.match(out.reason ?? '', /already drafted - a dry run does not write over it/);
+  assert.equal(readText(file), drafted, 'the map changed');
+});
+
 test('a dry run does not write over a drafted map, unjudged rows and gathered material included', () => {
   const dir = makeProject(undefined, { content: true });
   decompose(dir, { topic: 'Example limits', adapter: stubAdapter([{ url: 'https://docs.example.com/rate-limits', title: 'Rate limits' }]) });

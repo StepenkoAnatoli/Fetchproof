@@ -331,6 +331,21 @@ test('an explicit search provider that cannot run is refused before anything is 
   }
 });
 
+// ADR-0204: a table no reader reads is a refusal the kit wrote itself, answered with its message
+// and exit 2. decompose.mjs re-threw every named refusal - a broken ledger, a held lock - as a
+// stack trace under exit 1, which reads as FAIL.
+test('an evidence table hidden below a fence never closed is refused with its line and exit 2, not a stack', () => {
+  const root = planned('hidden table');
+  const evidence = path.join(root, 'research', 'EVIDENCE.md');
+  writeText(evidence, fs.readFileSync(evidence, 'utf8').replace('| ID |', '```\nnode fetchproof/bin/research.mjs\n\n| ID |'));
+  for (const [bin, args] of [['research.mjs', ['--plan', 'research/plan.json']], ['decompose.mjs', []]]) {
+    const r = run(bin, [...args, '--dry-run', '--transport', 'http-keyless'], { root });
+    assert.equal(r.status, 2, `${bin}: ${r.all}`);
+    assert.match(r.err, /research\/EVIDENCE\.md: the file ends inside a fenced code block that starts at line \d+ and is never closed/, `${bin}: ${r.err}`);
+    assert.doesNotMatch(r.err, /^\s+at /m, `${bin} printed a stack:\n${r.err}`);
+  }
+});
+
 // ADR-0086, ADR-0129: the fallback is announced before a run, `--fallback` opts into it and
 // `--no-fallback` still means the default. A run already on http-keyless has nothing to fall
 // back to, so nothing is announced either way.
