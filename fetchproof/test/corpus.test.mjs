@@ -791,6 +791,265 @@ test('a row without its leading pipe after a blank line is a table-split problem
   assert.match(split[0].detail, /row `U-2` stands after a blank line/, split[0].detail);
 });
 
+// Found 2026-11-07 by the re-review of #441's reader (F-A to F-E, and N1). The reader followed
+// GitHub's blocks with shortcuts of its own: a list item's paragraph it could not follow it ended
+// the safe way, a footnote definition was prose, a carriage return alone ended no line, and a
+// header over a separator was a table wherever it stood. It now follows cmark-gfm's block parser
+// (ADR-0203); each shape below was rendered by GitHub's renderer or read from cmark-gfm's source.
+const FENCE = '```';
+const U_TABLE = `${tableRow(HEADERS.unknowns)}\n|---|---|---|---|---|`;
+const uRow = (id, status) => `| ${id} | q | w | ${status} | ${status === 'CLOSED' ? 'E-01' : ''} |`;
+const padBy = (n, text) => text.split('\n').map((line) => (line ? `${' '.repeat(n)}${line}` : line)).join('\n');
+const ARCHIVED = `${U_TABLE}\n${uRow('U-1', 'CLOSED')}`;
+const liveTable = (status) => `${U_TABLE}\n${uRow('U-1', status)}`;
+const inComment = (n) => padBy(n, `<!--\n${ARCHIVED}\n-->`);
+const inFence = (n) => padBy(n, `${FENCE}markdown\n${ARCHIVED}\n${FENCE}`);
+const contract = (above, status = 'OPEN') => `# Discovery\n\n## Unknowns\n\n${above}\n\n${liveTable(status)}\n`;
+const statuses = (text) => parseTable(text, HEADERS.unknowns).rows.map((r) => [r.ID, r.Status]);
+const splits = (table) => table.problems.filter((p) => p.kind === 'table-split');
+const EVIDENCE_HEAD = `${tableRow(HEADERS.evidence)}\n|${HEADERS.evidence.map(() => '---').join('|')}|`;
+const eRow = (id, url = 'https://example.invalid/') => tableRow([id, '2026-01-01', 'P', url, 'a claim', `research/raw/${id}.md`]);
+const eCells = (id, url = `https://x.invalid/${id}`) => [id, '2026-01-02', 'P', url, 'a claim', `research/raw/${id}.md`];
+
+// F-A: below a lazy line, or in an item led by an autolink or an inline tag, the reader ended the
+// item, so a comment or a fence at the item's content column was text, and the archived copy in it
+// was read as the contract.
+test("a comment or a fence at a list item's content column below a lazy line is the item's, and hides the copy it holds", () => {
+  const cases = [
+    ['a comment below a lazy line led by an autolink', `10. The contract was reviewed against\n<https://docs.example.com/limits>, and the first table is kept here:\n${inComment(4)}`],
+    ['a comment below an item led by an autolink', `10. <https://docs.example.com/limits> is where the numbers come from; the\nfirst contract is kept below:\n${inComment(4)}`],
+    ['a fence below an item led by an autolink', `10. <https://docs.example.com/limits> is where the numbers come from; the\nfirst contract is kept below:\n${inFence(4)}`],
+    ['a comment in a nested item led by an autolink', `- Sources\n  - <https://docs.example.com/limits> is the source; the\nfirst contract is kept below:\n${inComment(4)}`],
+    ['a comment below a lazy line led by inline code', `10. The contract was reviewed against\n${FENCE}limits${FENCE} on the vendor page; the first table is kept here:\n${inComment(4)}`],
+    ['a comment below a delimiter row of another width', `10. a | b\n    |---|\nand the first table is kept here:\n${inComment(4)}`],
+    ['a comment below a bullet led by an autolink', `- <https://docs.example.com/limits> was the first source; the\nold table is kept below:\n${inComment(4)}`],
+    ['a fence below a bullet led by an inline tag', `- <kbd>Ctrl</kbd> was the old shortcut; the\nold table is kept below:\n${inFence(4)}`],
+    ['a comment at column 5 below a lazy line led by an autolink', `- The old table was reviewed against\n<https://docs.example.com/limits> and is kept below:\n${inComment(5)}`],
+    ['a comment below a plain lazy line', `10. The contract was reviewed against\nthe vendor docs, and the first table is kept here:\n${inComment(4)}`],
+    ['a comment after a blank line below a lazy line', `10. The contract was reviewed against\n<https://docs.example.com/limits>, and the first table is kept here:\n\n${inComment(4)}`],
+    ['a comment at the content column of a bullet led by an autolink', `- <https://docs.example.com/limits> was the first source; the\nold table is kept below:\n${inComment(2)}`],
+  ];
+  for (const [name, above] of cases) {
+    assert.deepEqual(statuses(contract(above)), [['U-1', 'OPEN']], name);
+  }
+
+  const lazy = (wrap) => (table) => `10. The contract was reviewed against\n<https://docs.example.com/limits>, and the first table is kept here:\n${padBy(4, wrap(table))}`;
+  for (const wrap of [(table) => `<!--\n${table}\n-->`, (table) => `${FENCE}markdown\n${table}\n${FENCE}`]) {
+    const dir = makePassingProject();
+    corrupt(dir, PATHS.discovery, hideAbove(lazy(wrap)));
+    assert.deepEqual(readCorpus(dir).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
+    assert.equal(runPreflight(dir).pass, false, 'a visible OPEN unknown passed preflight');
+  }
+
+  // The writer asks the same reader: the row goes into the visible table, not into the copy.
+  const dir = makeProject();
+  const file = resolve(dir, PATHS.evidence);
+  const archived = padBy(4, `<!--\n${EVIDENCE_HEAD}\n${eRow('E-01', 'https://old.invalid/')}\n-->`);
+  writeText(file, `# Evidence\n\n10. <https://docs.example.com/limits> was the first source; the\nold table is kept below:\n${archived}\n\n${EVIDENCE_HEAD}\n${eRow('E-01', 'https://live.invalid/')}\n`);
+  appendRow(dir, PATHS.evidence, HEADERS.evidence, eCells('E-02', 'https://new.invalid/'));
+  const text = readText(file);
+  assert(text.includes(archived), `the archived copy was written into:\n${text}`);
+  assert.deepEqual(parseTable(text, HEADERS.evidence).rows.map((r) => [r.ID, r.URL]), [['E-01', 'https://live.invalid/'], ['E-02', 'https://new.invalid/']]);
+});
+
+// F-B: a table below a list item's paragraph, indented less than its content, is that paragraph's
+// lazy text on GitHub, and a table in an item takes no lazy line - a row written at column 0 below
+// it ends the item. The reader read both as tables, rows and all.
+test("a table below a list item's paragraph at less than its content is that paragraph's text, and a row at column 0 is outside the item's table", () => {
+  for (const above of [`- Superseded on 2026-10-01, kept for the record:\n${ARCHIVED}`, `1. Superseded on 2026-10-01:\n${ARCHIVED}`]) {
+    assert.deepEqual(statuses(contract(above)), [['U-1', 'OPEN']], above);
+  }
+  const lazy = makePassingProject();
+  corrupt(lazy, PATHS.discovery, hideAbove((table) => `- Superseded on 2026-10-01, kept for the record:\n${table}`));
+  assert.deepEqual(readCorpus(lazy).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
+  assert.equal(runPreflight(lazy).pass, false, 'a visible OPEN unknown passed preflight');
+
+  // Indented to the item's content, the delimiter row makes the item's paragraph a table, and the
+  // writers keep the indentation of the row they follow or replace: at column 0 it would be outside.
+  const [head, delimiter] = U_TABLE.split('\n');
+  const dir = makeProject();
+  const file = resolve(dir, PATHS.discovery);
+  writeText(file, `# Discovery\n\n## Unknowns\n\n- Superseded:\n${head}\n  ${delimiter}\n  ${uRow('U-1', 'CLOSED')}\n`);
+  const read = parseTable(readText(file), HEADERS.unknowns);
+  assert.deepEqual(read.rows.map((r) => [r.ID, r.Status]), [['U-1', 'CLOSED']]);
+  assert.deepEqual(read.problems, []);
+  const appended = appendRow(dir, PATHS.discovery, HEADERS.unknowns, ['U-2', 'q', 'w', 'OPEN', '']);
+  const replaced = upsertRow(dir, PATHS.discovery, HEADERS.unknowns, ['U-1', 'q', 'w', 'OPEN', '']);
+  const lines = readText(file).split('\n');
+  assert.deepEqual([lines[7], lines[8]], [`  ${replaced}`, `  ${appended}`]);
+  assert(!/^\s/.test(appended) && !/^\s/.test(replaced), 'a row was returned with its indentation');
+  const after = parseTable(readText(file), HEADERS.unknowns);
+  assert.deepEqual(after.rows.map((r) => [r.ID, r.Status]), [['U-1', 'OPEN'], ['U-2', 'OPEN']]);
+  assert.deepEqual(after.problems, []);
+
+  const outside = `- Superseded on 2026-10-01:\n${padBy(2, U_TABLE)}\n${uRow('U-1', 'CLOSED')}`;
+  for (const text of [`# Discovery\n\n## Unknowns\n\n${outside}\n`, contract(outside)]) {
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, table.rows], [true, 6, []]);
+    const named = splits(table);
+    assert.equal(named.length, 1, JSON.stringify(table.problems));
+    assert.equal(named[0].line, 8);
+    assert.match(named[0].detail, /stands at a column where the list item or footnote holding the table ends/, named[0].detail);
+  }
+  const rows = makePassingProject();
+  corrupt(rows, PATHS.discovery, (text) => text.replace(/^(\| ID .*)\n(\|---.*)$/m, '- Superseded on 2026-10-01:\n  $1\n  $2'));
+  assert.equal(runPreflight(rows).pass, false, 'a contract whose rows GitHub shows outside its table passed preflight');
+});
+
+// F-C: a footnote definition is a container on GitHub - the lines indented four below it are its
+// content - and a definition nothing refers to is not shown at all. The reader took both as prose.
+test('a footnote definition holds the lines indented four below it, and one nothing refers to is not shown', () => {
+  const old = (body) => `The contract was revised.[^old]\n\n[^old]: The first contract, kept for the reviewer:\n${body}`;
+  const cases = [
+    ['a comment below its first line', old(inComment(4))],
+    ['a fence below its first line', old(inFence(4))],
+    ['a comment after a blank line', old(`\n${inComment(4)}`)],
+  ];
+  for (const [name, above] of cases) {
+    assert.deepEqual(statuses(contract(above)), [['U-1', 'OPEN']], name);
+  }
+
+  // A referenced definition's table is shown among the footnotes; one nothing refers to is dropped.
+  assert.deepEqual(statuses(`# Discovery\n\n## Unknowns\n\n${old(padBy(4, ARCHIVED))}\n`), [['U-1', 'CLOSED']]);
+  const unreferenced = `[^old]: The first contract, kept for the reviewer:\n${padBy(4, ARCHIVED)}`;
+  assert.deepEqual(statuses(contract(unreferenced)), [['U-1', 'OPEN']]);
+  assert.equal(parseTable(`# Discovery\n\n## Unknowns\n\n${unreferenced}\n`, HEADERS.unknowns).found, false);
+});
+
+// F-D: GitHub ends a line at a carriage return alone, as at LF and CR LF; the reader split at LF
+// only, so a fence opened on a line ending CR CR LF (a text-mode conversion run twice) was not seen.
+test('a carriage return alone ends a line, as on GitHub: a fence it ends hides the copy, and a header it splits makes no table', () => {
+  const crlf = (text) => text.replace(/\n/g, '\r\n');
+  const top = crlf('# Discovery\n\n## Unknowns\n\n');
+  const cases = [
+    ['a CRLF file whose fence line ends CR CR LF', `${top}${FENCE}markdown\r\r\n${crlf(`${ARCHIVED}\n${FENCE}\n\n${liveTable('OPEN')}\n`)}`],
+    ['the same with a bare fence', `${top}${FENCE}\r\r\n${crlf(`${ARCHIVED}\n${FENCE}\n\n${liveTable('OPEN')}\n`)}`],
+    ['a fence line ending in a carriage return alone', `${FENCE}markdown\r${ARCHIVED}\n${FENCE}\n\n${liveTable('OPEN')}\n`],
+    ['a CRLF file and a comment', crlf(`<!-- archived\n${ARCHIVED}\n-->\n\n${liveTable('OPEN')}\n`)],
+  ];
+  for (const [name, text] of cases) {
+    assert.deepEqual(statuses(text), [['U-1', 'OPEN']], name);
+  }
+  // A NUL, or a byte-order mark past the first line, is text: the comment does not open there, and
+  // GitHub shows the copy as the table.
+  for (const lead of ['\u0000', 'Notes\n\n\uFEFF']) {
+    assert.deepEqual(statuses(`${lead}<!-- archived\n${ARCHIVED}\n-->\n\n${liveTable('OPEN')}\n`), [['U-1', 'CLOSED']], JSON.stringify(lead));
+  }
+  // Every line ending CR CR LF puts a blank line below each, and no table is left: the visible
+  // header is named once, with the reason.
+  for (const [open, close] of [[`${FENCE}markdown`, FENCE], ['<!-- archived', '-->']]) {
+    const table = parseTable(`${open}\n${ARCHIVED}\n${close}\n\n${liveTable('OPEN')}\n`.replace(/\n/g, '\r\r\n'), HEADERS.unknowns);
+    assert.equal(table.found, false, open);
+    const named = splits(table);
+    assert.equal(named.length, 1, JSON.stringify(table.problems));
+    assert.equal(named[0].line, 7);
+    assert.match(named[0].detail, /holds a carriage return alone/, named[0].detail);
+  }
+
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (text) => {
+    const at = text.indexOf('| ID |');
+    const table = text.slice(at).trimEnd();
+    return `${crlf(text.slice(0, at))}${FENCE}markdown\r\r\n${crlf(`${table}\n${FENCE}\n\n${table.replace('| CLOSED |', '| OPEN |')}\n`)}`;
+  });
+  assert.deepEqual(readCorpus(dir).unknowns.map((u) => [u.id, u.status]), [['U-1', 'OPEN']]);
+  assert.equal(runPreflight(dir).pass, false, 'a visible OPEN unknown passed preflight');
+});
+
+// N1: a comment opened in a list item and cut off where the item ends leaves its `<!--` in GitHub's
+// page with nothing after it to close it, and the browser hides the rest of the file in it.
+test('an HTML comment cut off by the end of its list item hides every line to the end of the file, and the writer refuses', () => {
+  const [head, delimiter] = U_TABLE.split('\n');
+  const text = `# Discovery\n\n## Unknowns\n\n- Archived:\n  <!--\n  ${head}\n  ${delimiter}\n  ${uRow('U-1', 'OPEN')}\n-->\n\n${liveTable('CLOSED')}\n`;
+  const table = parseTable(text, HEADERS.unknowns);
+  assert.equal(table.found, false);
+  const named = splits(table);
+  assert.equal(named.length, 1, JSON.stringify(table.problems));
+  assert.equal(named[0].line, 12, 'the header named is the live one below the cut, not the copy the comment hides');
+  assert.match(named[0].detail, /an HTML comment that starts at line 6 is cut off at line 10/, named[0].detail);
+  const alone = parseTable(text.slice(0, text.indexOf('\n\n| ID |')), HEADERS.unknowns);
+  assert.deepEqual(splits(alone).map((p) => p.line), [7], 'with no header below the cut, the one in the comment is named');
+
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.discovery, (body) => body.replace('| ID |', `- Archived:\n  <!--\n${padBy(2, liveTable('OPEN'))}\n-->\n\n| ID |`));
+  assert.equal(runPreflight(dir).pass, false, 'a contract GitHub hides passed preflight');
+
+  const project = makeProject();
+  const file = resolve(project, PATHS.evidence);
+  writeText(file, `# Evidence\n\n- Archived:\n  <!--\n${padBy(2, `${EVIDENCE_HEAD}\n${eRow('E-01')}`)}\n-->\n\n${EVIDENCE_HEAD}\n${eRow('E-01')}\n`);
+  const before = readText(file);
+  assert.throws(
+    () => appendRow(project, PATHS.evidence, HEADERS.evidence, eCells('E-02')),
+    (err) => err.code === 'TABLE_HIDDEN' && /an HTML comment that starts at line 4 is cut off at line 8/.test(err.message),
+  );
+  assert.equal(readText(file), before, 'the file was written');
+});
+
+// With no table the reader reads, the writer starts one at the end of the file; a header GitHub
+// does not show as a table, with rows below it, would be left behind by it, and the new table
+// would number its own rows from the first id again (ADR-0204).
+test('appendRow refuses, writing nothing, beside rows GitHub does not show as a table, whatever the reason', () => {
+  const [head] = EVIDENCE_HEAD.split('\n');
+  const cases = [
+    ['a delimiter row of another width', `${head}\n|---|---|\n${eRow('E-01')}`, /its delimiter row has 2 cells and the header 6/],
+    ["a table below a list item's paragraph", `- Kept:\n${EVIDENCE_HEAD}\n${eRow('E-01')}`, /reads them as more of that paragraph/],
+    ['a delimiter row GitHub does not read', `${head}\n|---|- -|---|---|---|---|\n${eRow('E-01')}`, /GitHub does not read the delimiter row/],
+    ['an HTML block', `<div>\n${EVIDENCE_HEAD}\n${eRow('E-01')}\n</div>`, /its table stands inside an HTML block that starts at line 3,/],
+    ['a footnote definition nothing refers to', `[^old]: The old table:\n${padBy(4, `${EVIDENCE_HEAD}\n${eRow('E-01')}`)}`,
+      /its table stands inside a footnote definition that starts at line 3 and that nothing refers to,/],
+  ];
+  for (const [name, body, says] of cases) {
+    const dir = makeProject();
+    const file = resolve(dir, PATHS.evidence);
+    writeText(file, `# Evidence\n\n${body}\n`);
+    const before = readText(file);
+    assert.throws(
+      () => appendRow(dir, PATHS.evidence, HEADERS.evidence, eCells('E-02')),
+      (err) => err.code === 'TABLE_HIDDEN' && err.message.startsWith(`refusing to write to ${PATHS.evidence}: `) && says.test(err.message),
+      name,
+    );
+    assert.equal(readText(file), before, `${name}: the file was written`);
+  }
+});
+
+test('a header over a delimiter row that GitHub makes no table of is named once, with the reason', () => {
+  const [head, delimiter] = EVIDENCE_HEAD.split('\n');
+  const cases = [
+    ['a delimiter row indented four past the header', `${head}\n    ${delimiter}\n${eRow('E-01')}`, 3, /indented 4 or more spaces past the header/],
+    ['a paragraph an earlier delimiter row ruled out', `a | b\n|---|---|---|\n${EVIDENCE_HEAD}\n${eRow('E-01')}`, 5, /an earlier delimiter row in the same paragraph/],
+    ["a header straight below another table's rows", `| a | b |\n|---|---|\n| 1 | 2 |\n${EVIDENCE_HEAD}\n${eRow('E-01')}`, 6, /below the rows of another table \(line 3\)/],
+  ];
+  for (const [name, body, line, says] of cases) {
+    const table = parseTable(`# Evidence\n\n${body}\n`, HEADERS.evidence);
+    assert.equal(table.found, false, name);
+    const named = splits(table);
+    assert.equal(named.length, 1, `${name}: ${JSON.stringify(table.problems)}`);
+    assert.equal(named[0].line, line, name);
+    assert.match(named[0].detail, says, named[0].detail);
+  }
+});
+
+// F-E: the separator test backtracked over a long delimiter-like line, and each row run on below a
+// line that ended the table walked back to it, so both took time in the square of their length.
+test('the reader takes linear time on long delimiter-like lines, rows run on below a culprit, and a long tag', () => {
+  const evidence = `${EVIDENCE_HEAD}\n${eRow('E-01')}`;
+  const rows = Array.from({ length: 16_000 }, (_, i) => eRow(`E-${i + 2}`)).join('\n');
+  const cases = [
+    ['40,000 characters of |- below a lone |', `|\n${'|-'.repeat(20_000)}x\n\n${evidence}`, 0],
+    ['40,000 pipes below a lone |', `|\n${'|'.repeat(40_000)}x\n\n${evidence}`, 0],
+    ['16,000 rows run on below a line that ended the table', `${evidence}\na | b\n${rows}`, 1],
+    ['a tag of 50,000 attributes', `<a${' b'.repeat(50_000)} !\n\n${evidence}`, 0],
+  ];
+  for (const [name, body, problems] of cases) {
+    const started = performance.now();
+    const table = parseTable(`# Evidence\n\n${body}\n`, HEADERS.evidence);
+    const ms = performance.now() - started;
+    assert.deepEqual(table.rows.map((r) => r.ID), ['E-01'], name);
+    assert.equal(table.problems.length, problems, `${name}: ${JSON.stringify(table.problems.slice(0, 2))}`);
+    assert(ms < 2_000, `${name}: ${ms.toFixed(0)} ms - the reader is not linear`);
+  }
+});
+
 // A `.source.html` under raw/ that no ledger entry names is a planted file, not a source.
 test('a source sibling no ledger entry names is a corpus problem', () => {
   const dir = makePassingProject();

@@ -34,9 +34,10 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   it stood, so an archived CLOSED copy of the unknowns table, commented out or kept as a fenced example above the
   live one, was read in its place: a visible OPEN unknown passed preflight and the portable state derived
   `buildAuthorized: true`. The header search, the stray-row scan and the heading above a table now share one
-  reading of what GitHub shows as code or hides, `hiddenLines`: CommonMark's rules in columns, inside list items
-  too - fences opened and closed as GitHub does, indented code, and comments to their `-->`, reopened by a `<!--`
-  after it (ADR-0203). Read at first from trimmed lines, an indented example of a fence or a comment hid every
+  reading of what GitHub shows as code or hides, `hiddenLines`, which follows cmark-gfm's block parser, the one
+  GitHub renders with, line by line: fences, indented code, HTML blocks and comments - a comment reopened by a
+  `<!--` after its `-->` - inside list items, block quotes and footnote definitions (ADR-0203). Read at first
+  from trimmed lines, an indented example of a fence or a comment hid every
   table below it, and an archived copy after a list marker or in a reopened comment was still read. `appendRow`
   writes into the table the reader reads, and refuses (`TABLE_HIDDEN`), writing nothing, where its row would be
   hidden: below a fence or a comment never closed it started a new table inside the block, read by nothing, and
@@ -49,7 +50,16 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   item's lazy continuation line ended the item, so a table indented in it, which GitHub shows, was read as code;
   and a line of 40,000 list markers took 18-23 s to read. Auto-collect now refuses a request into a project whose
   evidence or sources table is hidden before it reserves anything: it had charged the pages and paused the queue.
-  Fifteen tests.
+  The re-review of that fix (2026-11-07) found its own shortcuts reading six more shapes otherwise than GitHub, and
+  the reading was ported to cmark-gfm's rules: an item it ended early let a comment or a fence below it be read as
+  text, so an archived CLOSED copy there passed preflight again and `appendRow` wrote into it; a header and
+  delimiter row written as lazy lines below an item, which GitHub makes no table of, were read as a table, and
+  rows at column 0 below a table in an item as its rows; a footnote definition held nothing, and one nothing
+  refers to, which GitHub leaves out, was read; a carriage return alone, a line end on GitHub, hid a fence's
+  opener; two scans took time in the square of their input; and a comment cut off by its item, which leaves the
+  rest of the page hidden, was taken as closed. A header GitHub makes no table of, and a row it shows apart from
+  its table, are now named with why, the writer refuses in the same words, and a row is written at the
+  indentation of the row it follows. Twenty-three tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same
