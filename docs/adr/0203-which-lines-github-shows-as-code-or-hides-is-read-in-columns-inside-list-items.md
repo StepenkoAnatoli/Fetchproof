@@ -4,8 +4,8 @@
 - **Status:** accepted
 - **Area:** `fetchproof/lib/corpus.mjs` (`hiddenLines`, `parseTable`, `notATable`, `tableHidden`)
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), findings 3 and 4, the
-  re-review of its fix (2026-11-06), findings 1-5, and the re-review of 9b9afaa (2026-11-07),
-  findings F-A to F-E and N1
+  re-review of its fix (2026-11-06), findings 1-5, the re-review of 9b9afaa (2026-11-07),
+  findings F-A to F-E and N1, and the re-review of 88fe19a (2026-11-07), findings F2-F6
 - **Extends:** the F01 fix of the same branch (independent audit 2026-11-04, F01: a table in a
   code block or an HTML comment is not the table), which had no ADR
 - **Freeze (ADR-0117):** a bug fix. F01's rule is that a table GitHub shows as code or hides is
@@ -61,17 +61,38 @@ found two defects in that reading.
   - N1: a comment opened in an item and cut off where the item ends - its `-->` at column 0 -
     was taken as closed. GitHub ends the block there but leaves the `<!--` open in its page, and
     the browser hides what follows: the table below it was read.
+- **The re-review of 88fe19a found five more in the reading** (2026-11-07; its F1 is the
+  writer's, ADR-0204):
+  - F2: GitHub shows footnote definitions below the body, in the order of their first reference,
+    wherever they stand; the reader took a table in a referenced definition above the body's
+    table, and an archived CLOSED copy there passed preflight over the live OPEN table.
+  - F3: a comment reopened by a `<!--` after the `-->` that ended its block was closed at any
+    `-->`, where GitHub writes one in a paragraph or in code as `--&gt;` and the browser's comment
+    stays open: the archived copy below such a line was read. A header in a block the file never
+    closes was not named.
+  - F4: nested footnote definitions nothing refers to were each marked over all their lines:
+    7,200 nested over 200,000 lines took 3.9 s.
+  - F5: a header taken in lazily keeps its leading space, which GitHub reads as an empty first
+    cell. It was named for its cell counts, with a remedy - one more delimiter cell - that makes a
+    table of shifted columns.
+  - F6: a header and delimiter row lazy below a footnote definition's paragraph were named in a
+    list item's words.
+  - Found while fixing them: a label defined twice - GitHub keeps the definition that ends first
+    and drops the other, with all it holds; of two nested, the inner one ends first - was read in
+    both.
 
 ## Decision
 
 1. **One pass over the raw lines, `hiddenLines(lines)`,** returns, line by line: `at`, the block
    that hides a line - `{ kind: 'fence' | 'indented' | 'comment' | 'html' (with its `type`) |
-   'footnote', line }`, naming the line that opened it; `open`, a fence or a comment the document
-   ends inside, or a comment cut off where the block holding it ends (`runaway`); `heads`, whether
-   GitHub makes a table of a header there, or why not; `rowOf`, the table a line is a row of;
-   `segs`, how many lines GitHub reads in it; and `endWhy`, why a table ended there. The header
-   search, the stray-row scan, the search for the heading above a table and the writer
-   (ADR-0204) all ask it.
+   'footnote', line }`, naming the line that opened it, and for a reopened comment the line of the
+   `-->` it was reopened after (`reopened`); `open`, a fence, a comment or a reopened comment the
+   document ends inside, or a comment cut off where the block holding it ends (`runaway`); `heads`,
+   whether GitHub makes a table of a header there, or why not; `rowOf`, the table a line is a row
+   of; `segs`, how many lines GitHub reads in it; `endWhy`, why a table ended there; and `note`,
+   the footnote definition GitHub shows that holds a line, with its place in the footnotes'
+   order. The header search, the stray-row scan, the search for the heading above a table and the
+   writer (ADR-0204) all ask it.
 2. **cmark-gfm's block parser, line by line** - the parser GitHub renders with; `blocks.c` and
    `table.c` read on 2026-11-07:
    - a line ends at LF, CR LF or a carriage return alone; a NUL reads as U+FFFD; a byte-order mark
@@ -98,10 +119,14 @@ found two defects in that reading.
      attempt that paragraph makes none. Its rows are the lines below it that are not blank and
      start no block, to a cap on its cells;
    - a comment's `-->` ends its block. A `<!--` after it reopens the comment in GitHub's page,
-     which keeps it open to the next raw `-->`, and a comment cut off where its container ends
-     (N1) hides the rest of the file;
+     which keeps it open to the next `-->` GitHub writes as it stands, an HTML block's - one in a
+     paragraph or in code is written `--&gt;` (F3) - and a comment cut off where its container
+     ends (N1) hides the rest of the file;
    - a footnote definition nothing refers to - no `[^label]`, matched without regard to case, on
-     a line GitHub shows - is left out, with all it holds.
+     a line GitHub shows - is left out, with all it holds, and so is a label's definition that
+     ends after another of it: the second, or the one holding a nested one (cmark-gfm's
+     `process_footnotes` keeps the first to end). The others are shown below the body, in the
+     order of their first reference (F2).
 3. **A table in indented code is not the table.** GitHub shows it as code. It was read before F01
    and after it, and below an item a blank line ended or a heading's underline until the
    re-review.
@@ -109,28 +134,37 @@ found two defects in that reading.
    fence above the table set the section the stray-row scan runs to.
 5. **A header GitHub makes no table of is not the table, and is named with why.** The header the
    reader takes is the first with the table's columns that GitHub makes a table of, outside a
-   block that hides it. With none, the first such header GitHub makes no table of is a
-   `table-split` problem, with the reason and the remedy: its header and delimiter row are lazy
-   lines below a list item's paragraph or a block quote's; its delimiter row is indented 4 past
-   the header; GitHub does not read the delimiter row; an earlier delimiter row in the paragraph
-   had another number of cells, or this one has; a carriage return alone stands in either line;
-   or it stands straight below another table's rows, of which GitHub makes it one more. The
-   writer refuses in the same words (`notATable`, ADR-0204). With no header but one a cut-off
-   comment hides, the cut is named. The table's rows are the lines GitHub reads as its rows
+   block that hides it, in the order GitHub shows them: the body's first, else the first in the
+   footnote definition first referred to (F2). With none, the first such header GitHub makes no
+   table of is a `table-split` problem, with the reason and the remedy: its header and delimiter
+   row are lazy lines below a list item's paragraph, a footnote definition's or a block quote's,
+   each named in its own words (F6); its header alone is, and GitHub reads its leading space as
+   an empty first cell (F5); its delimiter row is indented 4 past the header; GitHub does not read
+   the delimiter row; an earlier delimiter row in the paragraph had another number of cells, or
+   this one has; a carriage return alone stands in either line; or it stands straight below
+   another table's rows, of which GitHub makes it one more. The writer refuses in the same words
+   (`notATable`, ADR-0204). With no header but one a block the file never closes hides - a fence,
+   a comment, a reopened comment, or a comment cut off where its block ends - that block is
+   named; below a cut-off comment, the first header below the cut (F3). The table's rows are the
+   lines GitHub reads as its rows
    (`rowOf`); the line that ends them, when GitHub shows it apart from the table - at a column
    where the item or footnote holding the table ends, indented 4 past it, after a carriage return
    alone, or holding no cell - is named once, with why, and the rows run on below it are its
    consequence.
-6. **Not followed, and named here.** Three shapes are read more strictly than GitHub shows them,
+6. **Not followed, and named here.** Five shapes are read more strictly than GitHub shows them,
    so a project is blocked, or a row refused, that GitHub would show: a table inside a block
    quote, whose lines start with `>`, which the header search does not take; what follows a
    comment cut off where its block ends, hidden to the end of the file, where the browser shows
-   text again after the next raw `-->`; and the rows below a line of prose straight below a table,
-   which GitHub reads as one more row and which ends the table here. Four are not modelled: link
-   reference definitions, read as a paragraph's text; a comment cut off inside a footnote
-   definition, which GitHub moves to the end of the page; the rows of an HTML block of type 1,
-   skipped by the stray-row scan though the browser shows a `<pre>`'s; and a second table with
-   the header, also shown (ADR-0204).
+   text again after the next raw `-->`; the rows below a line of prose straight below a table,
+   which GitHub reads as one more row and which ends the table here; a reopened comment, closed
+   only by a `-->` in an HTML block, where the browser also closes it at an inline comment in a
+   paragraph, which GitHub writes as it stands (F3); and a footnote definition GitHub shows nested
+   in one it leaves out, hidden with it. Five are not modelled: link reference definitions, read
+   as a paragraph's text; a comment cut off inside a footnote definition, which GitHub moves to
+   the end of the page; the rows of an HTML block of type 1, skipped by the stray-row scan though
+   the browser shows a `<pre>`'s; a second table with the header, also shown (ADR-0204); and the
+   order of nested footnote definitions, which GitHub moves out one by one and the reader orders
+   with the outermost.
 
 ## Rejected alternatives
 
@@ -172,6 +206,11 @@ found two defects in that reading.
   GitHub's page raw depends on its inline parsing - one in a paragraph is escaped, one in an HTML
   block or inline HTML is not - which this reading does not model. Hidden to the end of the
   file, a table the browser may show is refused, and none it hides is read.
+- **Close a reopened comment at any `-->`, as before; or at an inline comment in a paragraph too,
+  as the browser does.** The first read the archived copy below a `-->` GitHub escapes (F3). The
+  second needs the inline parse - code spans, backslash escapes, which comments are valid inline
+  HTML - that this reading does not do. Closed only by an HTML block's `-->`, a table the browser
+  shows may be refused, and none it hides is read.
 
 ## Consequences
 
@@ -189,9 +228,11 @@ found two defects in that reading.
 - The reading is linear in the file. Each line is read once; a line left blank by its containers'
   prefixes finds the containers it ends by a binary search over two lists kept as they open, not
   by walking each; `isSeparator` reads a line in one pass; and the stray-row scan finds once where
-  the rows run on below a named line end. 40,000 markers on a line with 40,000 lazy lines below,
-  40,000 characters of a delimiter row's, 16,000 rows below a line that ended the table, and a
-  tag of 50,000 attributes are each read within the tests' 2 s bound.
+  the rows run on below a named line end; and a line of nested footnote definitions is marked
+  once, with the outermost (F4). 40,000 markers on a line with 40,000 lazy lines below, 40,000
+  characters of a delimiter row's, 16,000 rows below a line that ended the table, a tag of 50,000
+  attributes, and 7,200 nested footnote definitions over 200,000 lines are each read within the
+  tests' 2 s bound.
 - `open` and `heads` let the writer refuse a row that would be hidden, or left in a table GitHub
   does not show (ADR-0204).
 

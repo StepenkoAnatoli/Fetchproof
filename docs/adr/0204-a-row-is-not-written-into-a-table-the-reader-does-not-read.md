@@ -3,14 +3,15 @@
 - **Date:** 2026-11-06 (amended 2026-11-07)
 - **Status:** accepted
 - **Area:** `fetchproof/lib/corpus.mjs` (`appendRow` and `upsertRow`, the new `tableHidden`,
-  `notATable` and `assertTablesWritable`, `headerAt` factored out of `parseTable`),
+  `notATable` and `assertTablesWritable`, `headerAt` factored out of `parseTable`, `escapeCell`),
   `fetchproof/lib/collect.mjs`
   (`collectOne`), `fetchproof/lib/research-run.mjs` and `fetchproof/lib/decompose.mjs` (the checks
-  before anything is spent), `fetchproof/lib/core.mjs` (`NAMED_RUN_REFUSALS`),
-  `fetchproof/bin/decompose.mjs` (its answer to a named refusal), `fetchproof/lib/auto-collect.mjs`
-  (`collect`)
+  before anything is spent, and the map a dry run keeps), `fetchproof/lib/core.mjs`
+  (`NAMED_RUN_REFUSALS`), `fetchproof/bin/decompose.mjs` (its answer to a named refusal),
+  `fetchproof/lib/auto-collect.mjs` (`collect`), `fetchproof/lib/requests.mjs` (`applyRequest`)
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1, the re-review of its
-  fix (2026-11-06), finding 6, and the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1
+  fix (2026-11-06), finding 6, the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1, and
+  the re-review of 88fe19a (2026-11-07), finding F1
 - **Extends:** ADR-0203 (which lines GitHub shows as code or hides, and which headers it makes a
   table of), ADR-0122 (a collection that cannot be recorded is refused before the money)
 - **Freeze (ADR-0117):** a bug fix. Since F01 the writer appended where no reader reads, and issued
@@ -38,6 +39,15 @@ item, as text, and the reader, reading as GitHub does, no longer takes it as a r
 cut off where its item ends leaves the rest of the file hidden in the browser (N1), a table
 started below it with it.
 
+The re-review of 88fe19a (2026-11-07, F1) found the writer numbering past where the reader stops.
+Where the reader found the table but stopped above rows GitHub still shows - a row at the column
+where the item holding the table ends, indented 4 past it, holding a carriage return alone, or
+below a blank line - `nextId` counted the rows above the stop and `appendRow` placed the new row
+among them: a second U-2 or E-02 beside the one no check read. And `escapeCell` wrote a carriage
+return alone into a cell, which GitHub reads as a line end: a fetched page title holding one split
+the sources table it was written to, and a request's fact the contract. `decompose`'s dry run took
+a map whose first row held one for the empty template, and wrote over it.
+
 ## Decision
 
 1. **`appendRow` refuses, and writes nothing,** when it finds no table the reader reads and either
@@ -46,8 +56,9 @@ started below it with it.
    written at its end would be hidden with it; or a table with this header that GitHub does not
    show as one holds rows, which a second table would leave unread and number again: one on lines
    GitHub shows as code or hides (a fence, a comment, indented code, an HTML block, a footnote
-   definition nothing refers to), or over a delimiter row GitHub makes no table of (`not-a-table`,
-   with the reason of ADR-0203's decision 5). `tableHidden(text, header)` says which; the error's
+   definition nothing refers to, or that repeats the label of one GitHub keeps), or over a
+   delimiter row GitHub makes no table of (`not-a-table`, with the reason of ADR-0203's decision
+   5). `tableHidden(text, header)` says which; the error's
    code is `TABLE_HIDDEN`, and its message names the file, what hides the table or why GitHub
    makes none of it, the line, and the remedy: close the block, move the table out of it, or the
    remedy the reader names for that reason, in the reader's words (`notATable`).
@@ -69,6 +80,15 @@ started below it with it.
    item holds the lines that reach the item's content column: `appendRow` gives its row the
    leading whitespace of the line it is written below, the table's last row or its separator, and
    `upsertRow` keeps that of the row it replaces. Both return the row without it, as before.
+6. **Nor into a table the reader does not read whole.** Where the reader finds the table and
+   names a `table-split` in it - a line that ended the table above rows GitHub shows, a row below
+   a blank line, a malformed separator - `appendRow` and `upsertRow` refuse (`kind: 'split'`),
+   with the table's line, the line named and the reader's words, and write nothing; so does
+   `assertTablesWritable`. `applyRequest` asks it of the unknowns table in `DISCOVERY.md` before
+   it writes a row or a plan, for a request naming its unknown too. A dry run of `decompose` counts
+   such a map as drafted, and leaves it.
+7. **A cell is written on one line:** `escapeCell` writes LF, CR LF and a carriage return alone
+   as a space.
 
 ## Rejected alternatives
 
@@ -80,7 +100,11 @@ started below it with it.
   one the file holds; a warning in a run's log is not read by the builder who cites the id.
 - **`nextId` over every id in the file, hidden or not** (the review's option). It stops the
   duplicate ids, not the hidden rows; with the writer refusing, no row is appended that it would
-  number.
+  number - hidden, or below where the reader stops (F1). Numbered past them, the row would still
+  go among the rows above the stop, and those below it stay unread by every check.
+- **Refuse a request whose fact or reason holds a line end** (`requestProblems`). With
+  `escapeCell` writing any line end as a space, the contract can hold such a request; refusing it
+  would turn away a fact the kit can record.
 - **Refuse any hidden header, rows or not** (the review's smallest fix). A commented-out example of
   the header loses nothing, and refusing it would block a file the reader reads correctly.
 - **Refuse only in the writer, after the fetch.** The credits are spent and the capture stays on
@@ -99,6 +123,8 @@ started below it with it.
   so does one into a file whose table GitHub makes none of, or that a cut-off comment hides, with
   the reason the reader names.
 - A row appended to a table in a list item stays in it.
+- A write into a table the reader stops in - evidence, sources, the contract, the map's dry run -
+  is refused, or left, with the line to fix.
 - A request auto-collect applies is refused - a `refused` result, committed and pushed - before it
   reserves pages, writes the request into `DISCOVERY.md` or runs research, when the evidence or
   sources table is hidden; and by the writer, before the request's plan is written, when the

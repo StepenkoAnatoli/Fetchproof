@@ -254,13 +254,16 @@ function outlinesOf(root, captures, material) {
 /**
  * Whether a map holds anything a run or a reviewer put there: a subtopic row, or candidate
  * material - or text that is not the template's shape at all. The scaffold's map has the
- * table header and a placeholder line, and a dry run may write over that, or over nothing.
+ * table header and a placeholder line, and a dry run may write over that, or over nothing. A
+ * table the reader stops in holds rows it does not read: a dry run wrote over a map whose first
+ * row held a carriage return (re-review of 88fe19a, 2026-11-07, F1).
  */
 function mapHoldsContent(text) {
   if (!String(text ?? '').trim()) return false;
   const table = parseTable(text, HEADERS.subtopics);
   if (!table.found) return true;
-  return table.rows.length > 0 || /^\s*-\s+\S/m.test(sectionOf(text, 'Candidate material'));
+  return table.rows.length > 0 || table.problems.some((problem) => problem.kind === 'table-split')
+    || /^\s*-\s+\S/m.test(sectionOf(text, 'Candidate material'));
 }
 
 function mapBody({ topic, rows, hosts, material, date, recipe, failures = [], dryRun = false, outlines = null, ownerSkipped = [] }) {

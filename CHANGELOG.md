@@ -59,7 +59,17 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   opener; two scans took time in the square of their input; and a comment cut off by its item, which leaves the
   rest of the page hidden, was taken as closed. A header GitHub makes no table of, and a row it shows apart from
   its table, are now named with why, the writer refuses in the same words, and a row is written at the
-  indentation of the row it follows. Twenty-three tests.
+  indentation of the row it follows. The re-review of the port (2026-11-07) found the writer numbering past
+  where the reader stops: in a table it found but stopped in above rows GitHub still shows, a new row went in
+  above the stop with the next id there, a second U-2 beside one no check read. A write into a table the reader
+  does not read whole is now refused - evidence, sources, and the contract a request is applied to - and a dry run
+  of `decompose` leaves such a map, which it wrote over; `escapeCell` writes a carriage return alone, a line end
+  on GitHub that split the sources table under a fetched title holding one, as a space. A table in a footnote
+  definition, which GitHub shows below the body, is read only when the body holds none, and one in a definition
+  GitHub drops for repeating a label not at all; a comment reopened after its `-->` is closed only by a `-->`
+  GitHub writes as it stands; each line of nested footnote definitions is marked once, where they took 3.9 s
+  on 200,000 lines; and a lazy header and lazy lines below a footnote definition are named in their own words.
+  Thirty-one tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

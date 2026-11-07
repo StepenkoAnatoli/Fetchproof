@@ -146,6 +146,36 @@ test('a request into a contract whose table is hidden is refused, and nothing is
   assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'hidden.plan.json')), false);
 });
 
+// Re-review of 88fe19a (2026-11-07), F1: a row holding a carriage return alone ends the rows the
+// reader reads, and the ids were counted over those, so a request took an id the file already held
+// below it - and the kit wrote such a row itself, from a fact holding one.
+test('a request is refused, writing nothing, where the contract is not read whole, and a fact is written on one line', () => {
+  const sep = '|---|---|---|---|---|\n';
+  const project = makeProject(undefined, { topic: 'One line', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const first = applyRequest(project, 'price', { ...GOOD, fact: 'Price\rper seat' }, 1).unknown;
+  assertEqual(applyRequest(project, 'price', { ...GOOD, fact: 'Price\rper seat' }, 1).unknown, first);
+  const read = parseTable(readText(discovery), HEADERS.unknowns);
+  assert.deepEqual(read.rows.map((r) => [r.ID, r.Unknown]), [[first, 'Price per seat']]);
+  assert.deepEqual(read.problems, []);
+
+  const split = makeProject(undefined, { topic: 'Split contract', content: true });
+  const file = path.join(split, 'research', 'DISCOVERY.md');
+  const planPath = path.join(split, 'research', 'plan.json');
+  const row = (id, fact) => `| ${id} | ${fact} | the design | OPEN |  |`;
+  writeText(file, readText(file).replace(sep, `${sep}${row('U-1', 'Seat price')}\n${row('U-2', 'Price\rper seat')}\n${row('U-3', 'Seats')}\n`));
+  const before = { discovery: readText(file), plan: readText(planPath) };
+  for (const request of [GOOD, { ...GOOD, unknown: 'U-1' }]) {
+    let threw = null;
+    try { applyRequest(split, 'split', request, 1); } catch (err) { threw = err; }
+    assertEqual(threw?.code, 'TABLE_HIDDEN');
+    assert(/research\/DISCOVERY\.md: the table at line \d+ is not read whole - at line \d+, row `U-2` holds a carriage return alone/.test(threw.message), threw.message);
+  }
+  assertEqual(readText(file), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(split, 'research', 'requests', 'split.plan.json')), false);
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);
