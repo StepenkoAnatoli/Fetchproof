@@ -177,6 +177,55 @@ test('behind a configured proxy every request is forwarded to it, CONNECT includ
   assert.equal(parseUpstream(''), null);
 });
 
+// Independent audit 2026-11-04, F02 (ADR-0198): the guard speaks plain HTTP to its upstream, and
+// an https:// proxy was read as one, so the CONNECT line - and the credential, when the URL
+// carried one - went in clear to a port that expects TLS. Refused before anything is listened on
+// or sent, and never sent direct instead, which would route around the operator's proxy.
+test('an upstream proxy that is not plain HTTP is refused before a byte is sent, and its credential is never echoed', async () => {
+  for (const value of ['https://proxy.corp:8443', 'HTTPS://proxy.corp', 'https://user:s3cret@proxy.corp:8443', 'socks5://proxy.corp:1080', 'socks://user:s3cret@proxy.corp:1080']) {
+    assert.throws(() => parseUpstream(value), (err) => /plain HTTP/.test(err.message) && !err.message.includes('s3cret') && !err.message.includes('user:'), value);
+  }
+  assert.deepEqual(parseUpstream('http://proxy.corp:3128'), { host: 'proxy.corp', port: 3128, auth: null }, 'a plain-HTTP proxy is still read');
+  assert.deepEqual(parseUpstream('proxy.corp:443'), { host: 'proxy.corp', port: 443, auth: null }, 'a bare host:port is plain HTTP, as curl reads it, whatever its port');
+
+  // The audit's probe, with the expectation this decision gives it: no TLS, because nothing is sent.
+  const accepted = [];
+  const upstream = net.createServer((socket) => { accepted.push(socket); socket.destroy(); });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  try {
+    const via = `https://user:s3cret@127.0.0.1:${upstream.address().port}`;
+    await assert.rejects(startGuard({ upstream: via, lookup: fakeLookup({}) }), (err) => /https:/.test(err.message) && !err.message.includes('s3cret'));
+    assert.equal(accepted.length, 0, 'the guard connected to an upstream it cannot speak to');
+    // A NO_PROXY of '*' sends everything direct, so the upstream is never used and not judged.
+    const direct = await startGuard({ upstream: via, bypass: '*', lookup: fakeLookup({}) });
+    await direct.close();
+  } finally { await new Promise((r) => upstream.close(r)); }
+});
+
+test('through the child, an https:// HTTPS_PROXY is the render\'s error before any launch, and the proxy receives nothing', async () => {
+  const accepted = [];
+  const upstream = net.createServer((socket) => { accepted.push(socket); socket.destroy(); });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  try {
+    const marker = path.join(tempDir('fp-guard-launch-'), 'launched');
+    const writer = path.join(tempDir('fp-guard-writer-'), 'browser.mjs');
+    fs.writeFileSync(writer, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'launched'); process.stdout.write('<html></html>');`);
+    const report = await new Promise((resolve) => {
+      const env = { PATH: process.env.PATH ?? '', SystemRoot: process.env.SystemRoot ?? '', HTTPS_PROXY: `https://user:s3cret@127.0.0.1:${upstream.address().port}` };
+      const child = spawn(process.execPath, [path.join(KIT_ROOT, 'lib', 'browser-guard.mjs')], { stdio: ['pipe', 'pipe', 'pipe'], env });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.on('close', () => resolve(JSON.parse(out)));
+      child.stdin.end(JSON.stringify({ binary: process.execPath, args: [writer, '--dump-dom', 'http://127.0.0.1:9/none'], url: 'http://127.0.0.1:9/none', allowInternalRedirects: true, timeout: 20_000 }));
+    });
+    assert.equal(report.errorCode, 'GUARD', JSON.stringify(report));
+    assert.match(report.errorMessage, /https:\/\/127\.0\.0\.1:\d+ .*plain HTTP/);
+    assert.ok(!report.errorMessage.includes('s3cret'), 'the credential was echoed');
+    assert.equal(fs.existsSync(marker), false, 'the browser was launched behind a proxy the guard cannot speak to');
+    assert.equal(accepted.length, 0, 'the proxy was connected to');
+  } finally { await new Promise((r) => upstream.close(r)); }
+});
+
 // #315 (2026-10-17, measured with Chrome 154 through the guard): an origin that declared
 // 100000 bytes and closed after 2000 left the guard's answer to the browser open - piped, the
 // cut-off answer never ended it - so the browser waited out its deadline and the transport

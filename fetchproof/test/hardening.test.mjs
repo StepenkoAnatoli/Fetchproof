@@ -62,6 +62,37 @@ test('a research run refuses before its first fetch when the chain is broken', (
   assert.throws(() => runResearch(dir, { adapter, dryRun: true }), (err) => err.code === 'LEDGER_CHAIN_BROKEN');
 });
 
+// ADR-0204 (review of #441, finding 1): a row a collection would record where no reader reads it -
+// its evidence table below a comment never closed - is refused before anything is spent, as the
+// broken chain is above. The writer refuses too, but after the fetch, and the capture it left with
+// no row was a cache hit the next run never wrote a row for.
+test('a collection refuses before its first search or fetch when its evidence table is hidden', () => {
+  const dir = makePassingProject();
+  corrupt(dir, PATHS.evidence, (text) => text.replace('| ID |', '<!-- notes\n\n| ID |'));
+  const hiddenText = readText(resolve(dir, PATHS.evidence));
+
+  let searched = 0;
+  let scraped = 0;
+  const adapter = {
+    ...stub({ results: [{ url: 'https://a.invalid/1' }] }),
+    search: (q) => { searched += 1; return stub({ results: [{ url: 'https://a.invalid/1' }] }).search(q); },
+    runScrape: (u) => { scraped += 1; return stub().runScrape(u); },
+  };
+  const hidden = (err) => err.code === 'TABLE_HIDDEN' && /research\/EVIDENCE\.md: the file ends inside an HTML comment/.test(err.message);
+  assert.throws(() => runResearch(dir, { adapter, force: true }), hidden);
+  assert.throws(() => runResearch(dir, { adapter, dryRun: true }), hidden);
+  // collectOne asks again under the lock, before its fetch, for a file changed during a run.
+  assert.throws(() => collectOne(dir, 'https://a.invalid/new', { corpus: readCorpus(dir), runScrape: adapter.runScrape }), hidden);
+  // Phase 0 spends too.
+  const fresh = makeProject();
+  writeText(resolve(fresh, PATHS.evidence), hiddenText);
+  assert.throws(() => decompose(fresh, { topic: 't', adapter }), hidden);
+
+  assert.equal(searched + scraped, 0, 'the run spent before it learned its rows could not be read');
+  assert.equal(readText(resolve(dir, PATHS.evidence)), hiddenText);
+  assert.equal(readText(resolve(fresh, PATHS.evidence)), hiddenText);
+});
+
 // --- F16: an unreadable role config must not enable collection --------------------
 
 test('F16: an unreadable config with nothing to hold refuses metered collection', () => {

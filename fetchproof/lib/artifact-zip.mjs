@@ -113,7 +113,52 @@ export function checkEntryName(name) {
   if (name.split('/').includes('.')) {
     return { ok: false, code: 'ZIP-PATH', detail: `entry "${name}" contains a "." segment` };
   }
+  // Names another platform reads as a different name (independent audit 2026-11-04, F03).
+  // Each was judged here by its spelling and written elsewhere by its meaning:
+  // `research//BRIEF.md` is `research/BRIEF.md` to `path.join` and to Python's zipfile, so a
+  // second brief validated as another file and extracted onto the reviewed one. Refused, not
+  // translated, for the backslash's reason above (ADR-0032).
+  const segments = name.split('/');
+  if (segments.includes('')) {
+    return { ok: false, code: 'ZIP-PATH', detail: `entry "${name}" has an empty segment, which extractors drop, so it lands on another entry's path` };
+  }
+  const banned = /[<>:"|?*\u0001-\u001f]/.exec(name);
+  if (banned) {
+    return {
+      ok: false,
+      code: 'ZIP-PATH',
+      detail: `entry "${name}" contains ${JSON.stringify(banned[0])}, which Windows does not allow in a name: an extractor there writes another (Python's zipfile writes "_", so GATE?OFF lands as GATE_OFF), and ":" opens a stream of another file`,
+    };
+  }
+  for (const segment of segments) {
+    if (/[. ]$/.test(segment)) {
+      return { ok: false, code: 'ZIP-PATH', detail: `entry "${name}" has a segment ending in a dot or a space, which Windows drops: "${segment}" is "${segment.replace(/[. ]+$/, '')}" there` };
+    }
+    if (DEVICE_NAME.test(segment)) {
+      return { ok: false, code: 'ZIP-PATH', detail: `entry "${name}" is named for a Windows device ("${segment}"), which a write there reaches instead of a file` };
+    }
+    if (SHORT_NAME.test(segment)) {
+      return { ok: false, code: 'ZIP-PATH', detail: `entry "${name}" is shaped like a Windows short name ("${segment}"), which on a volume that makes them opens the file already holding that short name` };
+    }
+  }
   return { ok: true };
+}
+
+/** CON, PRN, AUX, NUL, COM0-9 and LPT0-9 (and COM/LPT with a superscript 1-3), with any extension. */
+const DEVICE_NAME = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(?: *\..*)?$/i;
+/** An 8.3 alias as Windows generates one: `DISCOV~1.MD`, `PROGRA~1`, `DI8A3F~1`. */
+const SHORT_NAME = /^[^.~]{1,6}~[0-9]+(?:\.[^.]{1,3})?$/;
+
+/**
+ * The one identity of an entry name: the key under which a filesystem may take two
+ * spellings for one file (independent audit 2026-11-04, F03). NFC, then upper- and
+ * lower-cased - wider than any one filesystem on purpose: NTFS folds case but not Unicode
+ * form, APFS folds both, and the long s upper-cases to S. A key that folds too much refuses
+ * an exotic pair of names; one that folds too little lets one entry land on another. Every
+ * duplicate, collision and forbidden-path comparison asks it, never the raw spelling.
+ */
+export function pathKey(name) {
+  return String(name).normalize('NFC').toUpperCase().toLowerCase();
 }
 
 // ---------------------------------------------------------------- central directory
@@ -211,7 +256,7 @@ const S_IFDIR = 0o040000;
 export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
   const problems = [];
   const seen = new Map();          // exact name -> count
-  const folded = new Map();        // lowercased name -> first exact name that produced it
+  const folded = new Map();        // pathKey of a name -> first exact name that produced it
   const files = new Set();
   const directories = new Set();
   let totalBytes = 0;
@@ -259,14 +304,16 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
 
     // Case collision. Two entries differing only in case are one file on Windows and
     // macOS and two on Linux, so the package means different things on different
-    // machines - and the one that wins is whichever was extracted last.
-    const key = entry.name.toLowerCase();
+    // machines - and the one that wins is whichever was extracted last. The same holds
+    // for two Unicode forms of one name (an accent composed or decomposed), which macOS
+    // folds and Linux and Windows do not, so the key is pathKey, not the spelling.
+    const key = pathKey(entry.name);
     const first = folded.get(key);
     if (first === undefined) folded.set(key, entry.name);
     else if (first !== entry.name) {
       problems.push({
         code: 'ZIP-CASE-COLLISION',
-        detail: `"${entry.name}" and "${first}" differ only in case; on a case-insensitive filesystem one silently overwrites the other`,
+        detail: `"${entry.name}" and "${first}" differ only in case or Unicode form; on a filesystem that folds them one silently overwrites the other`,
         path: entry.name,
       });
     }
@@ -291,21 +338,33 @@ export function inspectEntries(entries, { limits = ZIP_LIMITS } = {}) {
   // An archive may not use one path as both a regular file and the directory
   // containing another entry. Otherwise materialization order decides whether mkdir
   // or writeFileSync throws, turning a readable contradictory package into BLOCKED.
+  // One path by pathKey, for the reason above: `docs/a` and `docs/A/child.md` are two
+  // paths on Linux and a file-folder contradiction on Windows (audit F03).
+  const directoryKeys = new Map();   // pathKey -> first exact directory name
+  for (const directory of directories) {
+    if (!directoryKeys.has(pathKey(directory))) directoryKeys.set(pathKey(directory), directory);
+  }
+  const fileKeys = new Map();        // pathKey -> first exact file name
   for (const file of files) {
-    if (directories.has(file)) {
+    if (!fileKeys.has(pathKey(file))) fileKeys.set(pathKey(file), file);
+  }
+  for (const file of files) {
+    const directory = directoryKeys.get(pathKey(file));
+    if (directory !== undefined) {
       problems.push({
         code: 'ZIP-PATH-COLLISION',
-        detail: `file "${file}" is also declared as a directory`,
+        detail: `file "${file}" is also declared as a directory${directory === file ? '' : `, spelled "${directory}/"`}`,
         path: file,
       });
     }
     let slash = file.indexOf('/');
     while (slash !== -1) {
-      const parent = file.slice(0, slash);
-      if (files.has(parent)) {
+      const prefix = file.slice(0, slash);
+      const parent = fileKeys.get(pathKey(prefix));
+      if (parent !== undefined) {
         problems.push({
           code: 'ZIP-PATH-COLLISION',
-          detail: `file "${parent}" is also a directory prefix of "${file}"`,
+          detail: `file "${parent}" is also a directory prefix of "${file}"${parent === prefix ? '' : `, spelled "${prefix}"`}`,
           path: file,
         });
       }
@@ -370,6 +429,9 @@ export function openZip(buf, { limits = ZIP_LIMITS } = {}) {
   return {
     entries: files,
     names: files.map((e) => e.name),
+    // Directory entries carry no payload, but a name can still mean something by being a
+    // folder: the gate asks `exists(research/GATE_OFF)`, which a folder answers (audit F03).
+    directories: entries.filter((e) => e.isDirectory).map((e) => e.name),
     problems,
     totalBytes,
     has: (name) => byName.has(name),

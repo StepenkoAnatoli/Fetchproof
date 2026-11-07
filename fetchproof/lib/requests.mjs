@@ -17,7 +17,7 @@ import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
 import { HEADERS, parseJson, readJson, readText, writeJson, today, nowIso } from './core.mjs';
-import { duplicateKey, parseTable, appendRow } from './corpus.mjs';
+import { duplicateKey, parseTable, appendRow, assertTablesWritable } from './corpus.mjs';
 import { DEPTH_SCRAPES, readPlan, taggedRequest } from './research-run.mjs';
 import { internalTarget, isInternal } from './http-transport.mjs';
 import { configPath } from './machine.mjs';
@@ -239,6 +239,10 @@ export function applyRequest(project, id, request, pages) {
   } catch (err) {
     throw new Error(`cannot apply request: ${err.message}`);
   }
+  // A contract the reader stops in above rows GitHub shows is refused, before a row is written or
+  // a plan: the ids below the stop are not read, and the next one was a second U-2 (re-review of
+  // 88fe19a, 2026-11-07, F1).
+  assertTablesWritable(project, [['research/DISCOVERY.md', HEADERS.unknowns]]);
   const unknownRows = parseTable(readText(path.join(project, 'research', 'DISCOVERY.md'), ''), HEADERS.unknowns).rows;
   const ids = unknownRows.map((row) => String(row.cells[0] ?? '').trim()).filter(Boolean);
   plan.queries = Array.isArray(plan.queries) ? plan.queries : [];

@@ -8,7 +8,7 @@
 
 import { PATHS, HEADERS, resolve, readJson, readText, today, hostOf, uniq, sleepSync, urlKey, operatorPath } from './core.mjs';
 import * as firecrawl from './firecrawl.mjs';
-import { readCorpus, cacheDecision, appendJsonLine, parseTable } from './corpus.mjs';
+import { readCorpus, cacheDecision, appendJsonLine, parseTable, assertTablesWritable } from './corpus.mjs';
 import { assertAppendable } from './provenance.mjs';
 import { collectOne, recentlyGone, DEFAULT_SOURCE_TYPE } from './collect.mjs';
 import { creditsPolicy } from './credits.mjs';
@@ -453,6 +453,9 @@ ${compatibility.remedy}`);
   // money. A dry run is refused the same way, as the CLI check above is: a preview that
   // says "this will collect" onto a chain that cannot record it is worse than no preview.
   assertAppendable(root);
+  // And an evidence or sources table no reader reads, which the writer would refuse only
+  // after the fetch, leaving the capture with no row (ADR-0204). A dry run too, as above.
+  assertTablesWritable(root);
 
   const settings = plan ?? readPlan(root);
   const tier = depth || settings.depth;

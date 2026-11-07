@@ -117,3 +117,36 @@ test('index materialisation does not put every tracked path in one argv', () => 
     }
   } finally { cleanup(root); }
 });
+
+test('a temp folder the index cannot be read into BLOCKS the commit gate; it is not an internal error', () => {
+  // Found 2026-11-04 by an independent audit (A-1). mkdtemp threw out of materializeIndex, the
+  // hook reported "internal error" and, fail-open by default, allowed the commit - while a git
+  // failure two lines further down the same function blocked it. Same failure, opposite answers.
+  const root = makePassingProject();
+  const parent = tempDir('fetchproof-no-temp-');
+  const missing = path.join(parent, 'does-not-exist');
+  try {
+    // isGitRepo reads the filesystem, so give it a .git to find; git itself is never reached.
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    let result;
+    try {
+      result = materializeIndex(root, { tmp: missing, run: () => { throw new Error('git ran before the scratch folder existed'); } });
+    } catch (error) {
+      assert(false, `materializeIndex threw instead of reporting a failure: ${error.message}`);
+    }
+    assertEqual(result.ok, false, JSON.stringify(result));
+    assertEqual(result.reason, 'scratch-failed');
+
+    const verdict = evaluate(root, {
+      gate: 'commit',
+      stagedPaths: ['research/EVIDENCE.md'],
+      record: false,
+      materialize: (dir, options) => materializeIndex(dir, { ...options, tmp: missing }),
+    });
+    assertEqual(verdict.verdict, 'block', `a gate that could not read the index returned ${verdict.verdict}`);
+    assertEqual(verdict.allow, false);
+    assertEqual(verdict.judged, 'nothing');
+    assert(/temp folder/.test(verdict.fix ?? ''),
+      `the fix sends the operator to git rather than to the temp folder: ${JSON.stringify(verdict.fix)}`);
+  } finally { cleanup(root); cleanup(parent); }
+});

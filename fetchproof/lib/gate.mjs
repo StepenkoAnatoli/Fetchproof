@@ -680,7 +680,16 @@ export function materializeIndex(root, { run = gitCapture, tmp = tempBase(), top
     return { ok: false, reason: 'not-a-repository', detail: 'no .git here, so there is no index to read' };
   }
 
-  const dir = fs.mkdtempSync(path.join(tmp, 'fetchproof-index-'));
+  // The scratch folder is where the index is read into, so failing to make one is failing to
+  // read the index - the same block as the git failures below. Thrown, it escaped `evaluate`
+  // as an internal error, and the fail-open hook allowed the commit while the neighbouring
+  // git failure blocked it (independent audit 2026-11-04, A-1: a TEMP that does not exist).
+  let dir;
+  try {
+    dir = fs.mkdtempSync(path.join(tmp, 'fetchproof-index-'));
+  } catch (error) {
+    return { ok: false, reason: 'scratch-failed', detail: `could not create the scratch folder the index is read into: ${error.message}` };
+  }
   const inRepo = projectPrefix(top, root);
   // Only the corpus is materialised. The gate judges research/, and copying a whole
   // checkout to answer a question about one directory is a cost paid on every commit.
@@ -869,7 +878,9 @@ export function evaluate(root, { gate = 'commit', stagedPaths = undefined, corpu
         judged: 'nothing',
         indexNote: `could not read the index: ${materialised.detail ?? materialised.reason}`,
         reason: `the commit gate judges the staged bytes and could not read them (${materialised.reason})`,
-        fix: 'check that git works here (git status), then commit again; '
+        fix: (materialised.reason === 'scratch-failed'
+          ? 'check that the temp folder (TMPDIR, TEMP or TMP) exists and is writable, then commit again; '
+          : 'check that git works here (git status), then commit again; ')
           + 'git commit --no-verify overrides, and records nothing - say so in your reply',
         findings: [],
       };
