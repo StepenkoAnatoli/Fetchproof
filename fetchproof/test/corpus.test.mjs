@@ -6,7 +6,7 @@ import { PATHS, HEADERS, resolve, writeText, readText, sha256File, isRegularFile
 import {
   readCorpus, readCaptures, readLedger, parseTable, parseCapture, splitRow, escapeCell, tableRow,
   repairRowArity, captureEntry, rememberCapture, cacheDecision, traceOf, captureOf,
-  claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl, assertTablesWritable,
+  claimOf, sectionOf, appendRow, upsertRow, nextId, citedIds, stripReviewNotes, requestedUrl, assertTablesWritable, tableHidden,
 } from '../lib/corpus.mjs';
 import { runPreflight } from '../lib/preflight.mjs';
 import { command as keylessCommand } from '../lib/http-transport.mjs';
@@ -1197,6 +1197,212 @@ test("a lazy header is named with the block that holds its paragraph, and with t
   assert.equal(named.length, 1, JSON.stringify(footnote.problems));
   assert.equal(named[0].line, 8);
   assert.match(named[0].detail, /stand below a footnote definition's paragraph with less indentation than its content \(4 spaces\), so GitHub reads them as more of that paragraph - put a blank line above it, or indent it 4 spaces to keep it in the footnote$/, named[0].detail);
+});
+
+// Re-review of 116a2a3 (2026-11-07), finding 1: GitHub shows the footnotes below the body, so a
+// comment the body leaves open hides them too, and one a footnote leaves open hides only what GitHub
+// shows after it - never the body. The reader went by the file's order: it read a footnote's table
+// below a comment the body never closed, and hid the body's below one a footnote left open.
+const OLD_NOTE = `The contract was narrowed on 2026-11-01.[^old]\n\n[^old]: The first contract, kept for the record:\n\n${padBy(4, ARCHIVED)}`;
+const page = (body) => `# Discovery\n\n## Unknowns\n\n${body}\n`;
+// The message appendRow refuses with; the file is left as it was, and `tableHidden` agrees.
+const refusal = (text, rel = PATHS.discovery) => {
+  const [header, cells] = rel === PATHS.discovery ? [HEADERS.unknowns, ['U-9', 'q', 'w', 'OPEN', '']] : [HEADERS.evidence, eCells('E-09')];
+  const dir = makeProject();
+  const file = resolve(dir, rel);
+  writeText(file, text);
+  let threw = null;
+  try { appendRow(dir, rel, header, cells); } catch (err) { threw = err; }
+  assert.equal(readText(file), text, 'the file was written');
+  assert.equal(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'the row was written');
+  assert.notEqual(tableHidden(text, header), null);
+  return threw.message;
+};
+
+test('a comment the body leaves open hides the footnotes too, which GitHub shows below it', () => {
+  const cases = [
+    ['never closed', `${OLD_NOTE}\n\n<!-- Drafting below; close this when done.\n\n${liveTable('OPEN')}`, 'an HTML comment that starts at line 13 is never closed'],
+    ['reopened', `${OLD_NOTE}\n\n<!-- a --> <!-- b\n\n${liveTable('OPEN')}`, 'an HTML comment reopened at line 13 by a `<!--` after its `-->` is never closed'],
+    ['cut off by its list item', `${OLD_NOTE}\n\n- <!-- an item's note\n\n${liveTable('OPEN')}`, 'an HTML comment that starts at line 13 is cut off at line 15'],
+  ];
+  for (const [name, body, says] of cases) {
+    const text = page(body);
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.equal(table.found, false, `${name}: the footnote's table was read`);
+    const named = splits(table);
+    assert.equal(named.length, 1, `${name}: ${JSON.stringify(table.problems)}`);
+    assert.equal(named[0].line, 15, name);
+    assert(named[0].detail.includes(says), `${name}: ${named[0].detail}`);
+    assert.match(refusal(text), /^refusing to write to research\/DISCOVERY\.md: (the file ends inside an HTML comment|an HTML comment that starts at line 13 is cut off)/, name);
+  }
+  // With no table in the body, the footnote's is named, with where GitHub shows it.
+  const alone = page(`See the contract.[^c]\n\n[^c]: The contract:\n\n${padBy(4, ARCHIVED)}\n\n<!-- notes, never closed`);
+  const table = parseTable(alone, HEADERS.unknowns);
+  assert.equal(table.found, false);
+  const named = splits(table);
+  assert.equal(named.length, 1, JSON.stringify(table.problems));
+  assert.equal(named[0].line, 9);
+  assert.match(named[0].detail, /is hidden on GitHub: it stands in a footnote definition, which GitHub shows below the body, and an HTML comment that starts at line 13 is never closed, so the rest of the page is in it and no check reads the table - close it where it should end$/, named[0].detail);
+  assert.match(refusal(alone), /the file ends inside an HTML comment that starts at line 13 and is never closed/);
+  // Below the body's table the comment hides only the footnote's; a fence never closed ends with the
+  // body, and GitHub shows the footnote below it.
+  const below = page(`${OLD_NOTE}\n\n${liveTable('OPEN')}\n\n<!-- notes, never closed`);
+  assert.equal(parseTable(below, HEADERS.unknowns).line, 13);
+  assert.deepEqual(statuses(below), [['U-1', 'OPEN']]);
+  assert.equal(tableHidden(below, HEADERS.unknowns), null);
+  assert.deepEqual(statuses(page(`${OLD_NOTE}\n\n${FENCE}\n${liveTable('OPEN')}`)), [['U-1', 'CLOSED']]);
+
+  const pass = makePassingProject();
+  corrupt(pass, PATHS.discovery, hideAbove((t) => `The contract was narrowed on 2026-11-01.[^old]\n\n[^old]: The first contract, kept for the record:\n\n${padBy(4, t)}\n\n<!-- Drafting below; close this when done.`));
+  assert.deepEqual(readCorpus(pass).unknowns, []);
+  assert.equal(runPreflight(pass).pass, false, 'an archived contract passed preflight');
+});
+
+test('a comment a footnote leaves open hides only what GitHub shows after it, never the body', () => {
+  const both = page(`${OLD_NOTE}\n\nSee also.[^x]\n\n[^x]: <!-- a --> <!-- b\n\n${liveTable('OPEN')}`);
+  const read = parseTable(both, HEADERS.unknowns);
+  assert.equal(read.line, 17);
+  assert.deepEqual(read.rows.map((r) => [r.ID, r.Status]), [['U-1', 'OPEN']]);
+  assert.equal(tableHidden(both, HEADERS.unknowns), null);
+  const body = parseTable(page(`See also.[^x]\n\n[^x]: <!-- a --> <!-- b\n\n${liveTable('OPEN')}`), HEADERS.unknowns);
+  assert.equal(body.line, 9);
+  assert.deepEqual(body.problems, []);
+  // Nor does a `-->` in a footnote close a comment the body reopened: GitHub writes it below the body.
+  const reopened = page(`<!-- a --> <!-- b\n\nSee.[^x]\n\n[^x]: <!-- c -->\n\n${liveTable('OPEN')}`);
+  const hidden = parseTable(reopened, HEADERS.unknowns);
+  assert.equal(hidden.found, false);
+  assert.deepEqual(splits(hidden).map((p) => p.line), [11], JSON.stringify(hidden.problems));
+  assert.match(refusal(reopened), /the file ends inside an HTML comment reopened at line 5 by a `<!--` after its `-->` and is never closed/);
+
+  // In GitHub's order it hides the rest of its footnote and the footnotes shown after it, no other.
+  const item = "Notes:\n\n    - <!-- an item's note\n\n    Then.";
+  const old = `[^b]: Old:\n\n${padBy(4, ARCHIVED)}`;
+  const cases = [
+    ['cut off, the table below it in its footnote', `See.[^a]\n\n[^a]: Notes:\n\n    - <!-- an item's note\n\n    Then:\n\n${padBy(4, ARCHIVED)}`, 'an HTML comment that starts at line 9', 7],
+    ['cut off, the table in a footnote shown after it', `See.[^a] And.[^b]\n\n${old}\n\n[^a]: ${item}`, 'an HTML comment that starts at line 15', 13],
+    ['never closed', `See the notes.[^a] And the old contract.[^b]\n\n${old}\n\n[^a]: <!-- notes, never closed`, 'an HTML comment that starts at line 13', 13],
+    ['reopened', `See the notes.[^a] And the old contract.[^b]\n\n${old}\n\n[^a]: <!-- a --> <!-- b`, 'an HTML comment reopened at line 13 by a `<!--` after its `-->`', 13],
+  ];
+  for (const [name, notes, block, at] of cases) {
+    const text = page(notes);
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.equal(table.found, false, `${name}: a table GitHub hides was read`);
+    assert.deepEqual(table.problems, [], name);
+    assert(refusal(text).includes(`: its table stands in a footnote definition, and GitHub shows the footnotes below the body, where ${block} in the footnote definition at line ${at} is left open and hides what follows it, so no check reads its rows`), name);
+  }
+  // A footnote GitHub shows before it keeps its table.
+  const before = page(`See.[^b] And.[^a]\n\n${old}\n\n[^a]: ${item}`);
+  assert.equal(parseTable(before, HEADERS.unknowns).line, 9);
+  assert.deepEqual(statuses(before), [['U-1', 'CLOSED']]);
+});
+
+// Finding 3: GitHub counts `[^label]` as a reference only where it is text - not in a code span, a
+// link, an autolink or raw HTML, and not behind a backslash - and drops a definition nothing refers
+// to, with its table. The reader counted every `[^label]` it saw.
+test('a footnote is referred to only where GitHub reads a reference', () => {
+  const fn = `[^old]: The first contract, kept for the record:\n\n${padBy(4, ARCHIVED)}`;
+  const none = [
+    'Footnotes are written `[^old]` here.',
+    'Footnotes are `written\n[^old]` here.',
+    'Footnotes are ``a ` [^old]`` here.',
+    'The contract was narrowed.<!-- [^old] -->',
+    'A comment <!-- a\n[^old] --> here.',
+    'A link [^old](https://example.com) here.',
+    'An autolink <https://example.com/[^old]> here.',
+    'A tag <span title="[^old]">x</span> here.',
+    'A processing instruction <?x [^old] ?> here.',
+    'Escaped \\[^old] here.',
+    'Escaped close [^old\\] here.',
+  ];
+  for (const body of none) assert.deepEqual(statuses(page(`${body}\n\n${fn}`)), [], body);
+  const counted = [
+    'A lone ` then [^old] here.',
+    '### Heading [^old]',
+    'A ref [^old] then `code`.',
+    'Not escaped \\\\[^old] here.',
+    'Escaped caret [\\^old] here.',
+    'In a cell:\n\n| a | b |\n|---|---|\n| `x` | [^old] |',
+    'Code across a pipe:\n\n| a | b |\n|---|---|\n| `x | [^old]` | y |',
+    'A ref [^old] (x) here.',
+  ];
+  for (const body of counted) assert.deepEqual(statuses(page(`${body}\n\n${fn}`)), [['U-1', 'CLOSED']], body);
+  // Read in time linear in the paragraph, whatever it opens and never closes; each answer checked on
+  // GitHub's renderer at a small size.
+  const long = [
+    `[^old] ${Array.from({ length: 4000 }, (_, i) => `${'`'.repeat((i % 60) + 1)}x`).join(' ')}`,
+    `A ${'<!-- '.repeat(200000)}[^old]`,
+    `${'<a x="'.repeat(100000)} [^old]`,
+    `${'[^abc '.repeat(100000)}[^old]`,
+  ];
+  for (const body of long) {
+    const started = Date.now();
+    assert.deepEqual(statuses(page(`${body}\n\n${fn}`)), [['U-1', 'CLOSED']], body.slice(0, 12));
+    assert.ok(Date.now() - started < 2000, `${body.slice(0, 12)}: ${Date.now() - started} ms`);
+  }
+});
+
+// Finding 4: of two nested definitions both referred to, GitHub shows each in the order of its first
+// reference, and a line belongs to the innermost; the reader gave the outer one's place to them all.
+test("a line of nested footnotes is the innermost one's, shown in that one's order", () => {
+  const text = page(`See [^b] and [^a].\n\n[^a]: Archived:\n\n${padBy(4, ARCHIVED)}\n\n    [^b]: Live:\n\n${padBy(8, liveTable('OPEN'))}`);
+  const read = parseTable(text, HEADERS.unknowns);
+  assert.equal(read.line, 15);
+  assert.deepEqual(read.rows.map((r) => [r.ID, r.Status]), [['U-1', 'OPEN']]);
+});
+
+// Finding 2: a table GitHub shows that the header search passes over was left where it stood, and a
+// new one written beside it, its rows numbered from the first id again - a second U-1 on the page.
+test('the writers refuse, writing nothing, beside a table GitHub shows and no check reads', () => {
+  const bare = (row) => row.replace(/^\|\s?/, '').replace(/\s?\|$/, '');
+  const lines = [...U_TABLE.split('\n'), uRow('U-1', 'CLOSED'), uRow('U-2', 'OPEN')];
+  const cases = [
+    ['no outer pipes', lines.map(bare).join('\n'), 'its header has no outer pipes', 'Write the header between pipes'],
+    ['a block quote', lines.map((l) => `> ${l}`).join('\n'), 'it stands in a block quote', 'Move it out of the quote'],
+    ['carriage returns alone', lines.join('\r'), 'its lines end with a carriage return alone, which GitHub reads as a line end and the kit does not', 'End its lines with LF or CR LF'],
+    ["a list item's marker", `- ${[lines[0], ...lines.slice(1).map((l) => `  ${l}`)].join('\n')}`, "its header starts on the line of a list item's marker or a footnote definition's label", 'Start the header on a line of its own'],
+    ["a footnote's label", `See.[^x]\n\n[^x]: ${[lines[0], ...lines.slice(1).map((l) => `    ${l}`)].join('\n')}`, "its header starts on the line of a list item's marker or a footnote definition's label", 'Start the header on a line of its own'],
+  ];
+  for (const [name, body, reason, remedy] of cases) {
+    const text = page(body);
+    assert.equal(parseTable(text, HEADERS.unknowns).found, false, name);
+    const line = name === "a footnote's label" ? 7 : 5;
+    assert.equal(refusal(text), `refusing to write to research/DISCOVERY.md: the table at line ${line} is shown on GitHub, but no check reads it: `
+      + `${reason}. A new table would stand beside it and number its own rows from the first id again. ${remedy}, then run again.`, name);
+  }
+  // The evidence and sources tables alike, before a collection and in either writer.
+  const [eHead, eDelimiter] = EVIDENCE_HEAD.split('\n');
+  const evidence = `# Evidence\n\n${[eHead, eDelimiter, eRow('E-01')].map(bare).join('\n')}\n`;
+  assert.match(refusal(evidence, PATHS.evidence), /: the table at line 3 is shown on GitHub, but no check reads it: its header has no outer pipes\./);
+  const dir = makeProject();
+  writeText(resolve(dir, PATHS.evidence), evidence);
+  assert.throws(() => assertTablesWritable(dir), (err) => err.code === 'TABLE_HIDDEN');
+  const sources = `# Sources\n\n${[tableRow(HEADERS.sources), `|${HEADERS.sources.map(() => '---').join('|')}|`, tableRow(['https://a.invalid/', 'P', 'T', '2026-11-07', 'U-1'])].map((l) => `> ${l}`).join('\n')}\n`;
+  writeText(resolve(dir, PATHS.sources), sources);
+  assert.throws(() => upsertRow(dir, PATHS.sources, HEADERS.sources, ['https://a.invalid/', 'P', 'T2', '2026-11-08', 'U-1']),
+    (err) => err.code === 'TABLE_HIDDEN' && /it stands in a block quote/.test(err.message));
+  assert.equal(readText(resolve(dir, PATHS.sources)), sources, 'the sources were written');
+  // A table of other columns is not the one the writer starts.
+  assert.equal(tableHidden(page('a | b\n--|--\nc | d'), HEADERS.unknowns), null);
+});
+
+// Finding 5: a file that ends inside an HTML block GitHub never closes - `<pre>`, `<script>`, `<?`,
+// `<![CDATA[` and the like - holds what is written at its end, and GitHub shows no table there; the
+// writer started its table inside the block.
+test('a file that ends inside an HTML block never closed takes no table at its end', () => {
+  for (const opener of ['<pre>', '<script>', '<?php', '<![CDATA[']) {
+    const text = `${opener}\ncurl -s https://api.example.com/limits\n\n## Unknowns\n`;
+    assert.equal(tableHidden(text, HEADERS.unknowns)?.open, true, opener);
+    assert(refusal(text).includes(': the file ends inside an HTML block that starts at line 1 and is never closed, so a table in it is not read, and a row written at its end would be in it too. '), opener);
+  }
+  const table = parseTable(page(`<pre>\ncurl -s https://api.example.com/limits\n\n${liveTable('OPEN')}`), HEADERS.unknowns);
+  assert.equal(table.found, false);
+  const named = splits(table);
+  assert.equal(named.length, 1, JSON.stringify(table.problems));
+  assert.equal(named[0].line, 8);
+  assert.match(named[0].detail, /is not shown as a table on GitHub: an HTML block that starts at line 5 is never closed/, named[0].detail);
+  // In a list item the block ends with the item, and GitHub shows a table at column 0 below it.
+  assert.equal(tableHidden(page('- <pre>\n  curl -s https://api.example.com/limits'), HEADERS.unknowns), null);
+  assert.deepEqual(statuses(page(`- <pre>\n  curl -s https://api.example.com/limits\n\n${liveTable('OPEN')}`)), [['U-1', 'OPEN']]);
 });
 
 // A `.source.html` under raw/ that no ledger entry names is a planted file, not a source.

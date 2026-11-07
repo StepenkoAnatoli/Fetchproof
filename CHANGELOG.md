@@ -69,7 +69,15 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   GitHub drops for repeating a label not at all; a comment reopened after its `-->` is closed only by a `-->`
   GitHub writes as it stands; each line of nested footnote definitions is marked once, where they took 3.9 s
   on 200,000 lines; and a lazy header and lazy lines below a footnote definition are named in their own words.
-  Thirty-one tests.
+  The re-review of that fix (2026-11-07) found comments read in the file's order, though GitHub shows the
+  footnotes below the body: below a comment the body never closed, an archived CLOSED contract in a footnote
+  passed preflight where GitHub shows no table or the live OPEN one, and a comment reopened in a footnote hid
+  the body's table. A comment the body leaves open now hides the footnotes too, and one a footnote leaves open
+  only what GitHub shows after it; a `[^label]` in a code span, a link or raw HTML no longer keeps a definition
+  GitHub drops; nested definitions are each read in their own place; and a file ending inside a `<pre>` or a
+  `<script>` never closed takes no table at its end. A table GitHub shows that no check reads - with no outer
+  pipes, in a block quote, or ended by carriage returns alone - got a second table beside it, numbered from U-1
+  or E-01 again; the writers now refuse beside it, naming the shape to fix. Thirty-eight tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

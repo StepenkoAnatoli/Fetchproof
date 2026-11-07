@@ -176,6 +176,39 @@ test('a request is refused, writing nothing, where the contract is not read whol
   assertEqual(fs.existsSync(path.join(split, 'research', 'requests', 'split.plan.json')), false);
 });
 
+// Re-review of 116a2a3 (2026-11-07), findings 1, 2 and 5: where GitHub shows the contract's table
+// other than the kit reads it - an archived copy in a footnote below a comment never closed, a table
+// with no outer pipes, in a block quote or ended by carriage returns alone, a file ending inside a
+// `<pre>` - the request's row and plan were written for an unknown no check reads.
+test('a request is refused, writing nothing, where GitHub shows the contract other than the kit reads it', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const indent = (text) => text.split('\n').map((line) => `    ${line}`).join('\n');
+  const bare = (row) => row.replace(/^\|\s?/, '').replace(/\s?\|$/, '');
+  const shapes = [
+    ['a footnote below a comment never closed', `The contract was narrowed.[^old]\n\n[^old]: Kept:\n\n${indent(archived)}\n\n<!-- Drafting below.\n\n${head}`, /: the file ends inside an HTML comment that starts at line \d+ and is never closed/],
+    ['no outer pipes', archived.split('\n').map(bare).join('\n'), /is shown on GitHub, but no check reads it: its header has no outer pipes/],
+    ['a block quote', archived.split('\n').map((line) => `> ${line}`).join('\n'), /is shown on GitHub, but no check reads it: it stands in a block quote/],
+    ['carriage returns alone', archived.split('\n').join('\r'), /is shown on GitHub, but no check reads it: its lines end with a carriage return alone/],
+    ['a <pre> never closed', '<pre>\ncurl -s https://docs.example.com/limits', /: the file ends inside an HTML block that starts at line \d+ and is never closed/],
+  ];
+  for (const [name, body, says] of shapes) {
+    const project = makeProject(undefined, { topic: 'Unread contract', content: true });
+    const discovery = path.join(project, 'research', 'DISCOVERY.md');
+    const planPath = path.join(project, 'research', 'plan.json');
+    assert(readText(discovery).includes(head), 'the scaffold has no unknowns table');
+    writeText(discovery, readText(discovery).replace(head, body));
+    const before = { discovery: readText(discovery), plan: readText(planPath) };
+    let threw = null;
+    try { applyRequest(project, 'unread', GOOD, 1); } catch (err) { threw = err; }
+    assertEqual(threw?.code, 'TABLE_HIDDEN', `${name}: ${threw?.message ?? 'applied'}`);
+    assert(says.test(threw.message), `${name}: ${threw.message}`);
+    assertEqual(readText(discovery), before.discovery, name);
+    assertEqual(readText(planPath), before.plan, name);
+    assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'unread.plan.json')), false, name);
+  }
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);

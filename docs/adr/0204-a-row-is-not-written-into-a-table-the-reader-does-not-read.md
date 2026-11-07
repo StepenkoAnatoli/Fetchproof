@@ -10,8 +10,9 @@
   (`NAMED_RUN_REFUSALS`), `fetchproof/bin/decompose.mjs` (its answer to a named refusal),
   `fetchproof/lib/auto-collect.mjs` (`collect`), `fetchproof/lib/requests.mjs` (`applyRequest`)
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1, the re-review of its
-  fix (2026-11-06), finding 6, the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1, and
-  the re-review of 88fe19a (2026-11-07), finding F1
+  fix (2026-11-06), finding 6, the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1,
+  the re-review of 88fe19a (2026-11-07), finding F1, and the re-review of 116a2a3 (2026-11-07),
+  findings 1, 2 and 5
 - **Extends:** ADR-0203 (which lines GitHub shows as code or hides, and which headers it makes a
   table of), ADR-0122 (a collection that cannot be recorded is refused before the money)
 - **Freeze (ADR-0117):** a bug fix. Since F01 the writer appended where no reader reads, and issued
@@ -48,22 +49,41 @@ return alone into a cell, which GitHub reads as a line end: a fetched page title
 the sources table it was written to, and a request's fact the contract. `decompose`'s dry run took
 a map whose first row held one for the empty template, and wrote over it.
 
+The re-review of 116a2a3 (2026-11-07) found the writer starting a second table beside one GitHub
+shows (finding 2). A table whose header has no outer pipes, stands in a block quote, or whose lines
+end with a carriage return alone is a table on GitHub, but the header search, which takes a header
+by its leading pipe over a separator, passes it over: finding none, `appendRow` started a table at
+the end of the file and numbered from U-1 or E-01 again, beside the rows GitHub shows first. Found
+while fixing it: a header on the line of a list item's marker or a footnote definition's label is
+passed over too. Where the reader took a table GitHub hides, in a footnote definition below a
+comment the body leaves open, the writer wrote into it (finding 1, read as GitHub reads it by
+ADR-0203); and a file that ends inside a `<pre>` or a `<script>` never closed took the new table
+inside it (finding 5).
+
 ## Decision
 
 1. **`appendRow` refuses, and writes nothing,** when it finds no table the reader reads and either
-   the document ends inside a block never closed - a fence, a comment, or a comment cut off where
+   the body ends inside a block never closed - a fence, an HTML block of type 1 or 3 to 5
+   (`<pre>`, `<script>`, `<?`, `<![CDATA[` and the like), a comment, or a comment cut off where
    the block holding it ends, which GitHub leaves open to the end of the file - so that a table
-   written at its end would be hidden with it; or a table with this header that GitHub does not
-   show as one holds rows, which a second table would leave unread and number again: one on lines
-   GitHub shows as code or hides (a fence, a comment, indented code, an HTML block, a footnote
-   definition nothing refers to, or that repeats the label of one GitHub keeps), or over a
-   delimiter row GitHub makes no table of (`not-a-table`, with the reason of ADR-0203's decision
-   5). `tableHidden(text, header)` says which; the error's
-   code is `TABLE_HIDDEN`, and its message names the file, what hides the table or why GitHub
-   makes none of it, the line, and the remedy: close the block, move the table out of it, or the
-   remedy the reader names for that reason, in the reader's words (`notATable`).
+   written at its end would be in it; or a table with this header that GitHub does not show as one
+   holds rows, which a second table would leave unread and number again: one on lines GitHub
+   shows as code or hides (a fence, a comment, indented code, an HTML block, a footnote definition
+   nothing refers to, or that repeats the label of one GitHub keeps, or one a comment hides that a
+   footnote definition leaves open - named with that definition), or over a delimiter row GitHub
+   makes no table of (`not-a-table`, with the reason of ADR-0203's decision 5); or a table GitHub
+   shows with this header that the header search passes over - its header without outer pipes,
+   in a block quote, or on the line of a list item's marker or a footnote definition's label, or
+   its lines ended by a carriage return alone (`unread`, with the shape) - rows or none, which a
+   new table would stand beside, numbering its own from the first id again. `tableHidden(text,
+   header)` says which, reading the file once with the reader; the error's code is
+   `TABLE_HIDDEN`, and its message names the file, what hides the table, why GitHub makes none of
+   it or why no check reads the one it shows, the line, and the remedy: close the block, move the
+   table out of it, the remedy the reader names for that reason, in the reader's words
+   (`notATable`), or the shape to write the table in.
 2. **A header with no rows is left alone,** hidden or made no table of: an example of the table's
-   header, commented out, holds nothing a new table would orphan, and the new table is read.
+   header, commented out, holds nothing a new table would orphan, and the new table is read. A
+   table GitHub shows is not left alone (decision 1): a new one would stand beside it on the page.
 3. **Before anything is spent,** `runResearch` and `decompose` ask the same of
    `research/EVIDENCE.md` and `research/SOURCES.md` (`assertTablesWritable`), beside
    `assertAppendable`, dry runs too; auto-collect's `collect` asks before it reserves a request's
@@ -116,6 +136,16 @@ a map whose first row held one for the empty template, and wrote over it.
 - **Refuse only under the lock, in `collectOne`.** It is before each fetch, but not before the
   run's searches: phase 0 made four searches and a fetch on a damaged ledger before `collectOne`
   threw (ADR-0122's finding), and a run's queries are searched before its pages are fetched.
+- **Read the tables the header search passes over** (the other option the re-review of 116a2a3
+  named for finding 2: let `headerAt` take a header without outer pipes). The header search, the
+  stray-row scan and both writers find a row by its leading pipe at the table's column and write
+  one the same way; reading a quoted table means writing `> ` into its rows, and a file of lone
+  carriage returns means writing its line ends - each a new way of writing the corpus, which the
+  freeze reads as a feature (ADR-0117). Refused with the shape to fix, the table is rewritten in
+  the one every reader reads.
+- **Refuse beside such a table only when it holds rows,** as for a hidden one (decision 2). A
+  hidden header without rows is not on the page; a table GitHub shows is, and a new table at the
+  end of the file would be the second the page shows, its first rows written where none is read.
 
 ## Consequences
 
@@ -131,7 +161,8 @@ a map whose first row held one for the empty template, and wrote over it.
   unknowns table in `DISCOVERY.md` is. `research.mjs` refused the first too, but only after
   auto-collect had reserved the pages, and with no accounting to settle them by: the pages were
   charged, the queue paused, and the request went back as failed (the re-review's finding 6).
-- A second, visible table with the same header is still not read (the F01 residual, unchanged).
+- A second, visible table with the same header is still not read (the F01 residual, unchanged),
+  but no table is started beside one GitHub shows that the header search passes over.
 - `decompose.mjs` exits 2 with the message on every named refusal, where it printed a stack.
 
 ## Trigger to revisit
