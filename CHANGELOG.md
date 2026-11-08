@@ -77,7 +77,22 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   GitHub drops; nested definitions are each read in their own place; and a file ending inside a `<pre>` or a
   `<script>` never closed takes no table at its end. A table GitHub shows that no check reads - with no outer
   pipes, in a block quote, or ended by carriage returns alone - got a second table beside it, numbered from U-1
-  or E-01 again; the writers now refuse beside it, naming the shape to fix. Thirty-eight tests.
+  or E-01 again; the writers now refuse beside it, naming the shape to fix. The re-review of that fix (2026-11-07)
+  found such a table named only where no table was read: with an archived copy of its header further down, the
+  copy was read as the contract, and preflight passed while the table GitHub shows first held an OPEN unknown. It
+  is now a `table-split` problem wherever it stands before the table the checks read, and the writers refuse; one
+  ended by carriage returns alone is named as a table no check can place, not as one GitHub shows. A `[^label]` is
+  read by cmark-gfm's inline parse, with the link references the file defines: three rules had dropped references
+  GitHub reads, so a definition it shows was left out and a later one's archived copy read in its place; one in a
+  cell past the header's count, or followed by a `[ref]` the file defines, was counted; a bare URL or a `www.` link
+  takes in a `[^label]` written straight after it; and a label is case-folded with its escapes and entities read,
+  while one holding an entity name the kit does not know leaves its footnotes unjudged. The body and each footnote
+  definition read their own comments and tags, so a definition's reopened comment is no longer dropped while the
+  body's is open, and a comment or a tag left open in an HTML block of any type hides what follows. GitHub's page
+  is one HTML stream, and what it writes between two HTML blocks can end a tag or a comment the kit keeps open: a
+  table it may then show first, and every table read after an HTML block the browser may read from text, cannot
+  be judged and are named so, where preflight passed on a CLOSED copy below the OPEN table GitHub shows, and the
+  writers refuse beside them. `upsertRow` of a new key reads the file once. Fifty-eight tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

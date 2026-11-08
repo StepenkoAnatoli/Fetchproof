@@ -1,9 +1,10 @@
 # ADR-0204 — A row is not written into a table the reader does not read
 
-- **Date:** 2026-11-06 (amended 2026-11-07)
+- **Date:** 2026-11-06 (amended 2026-11-07 and 2026-11-08)
 - **Status:** accepted
 - **Area:** `fetchproof/lib/corpus.mjs` (`appendRow` and `upsertRow`, the new `tableHidden`,
-  `notATable` and `assertTablesWritable`, `headerAt` factored out of `parseTable`, `escapeCell`),
+  `notATable` and `assertTablesWritable`, `headerAt` factored out of `parseTable`, `escapeCell`,
+  `appendChecked`),
   `fetchproof/lib/collect.mjs`
   (`collectOne`), `fetchproof/lib/research-run.mjs` and `fetchproof/lib/decompose.mjs` (the checks
   before anything is spent, and the map a dry run keeps), `fetchproof/lib/core.mjs`
@@ -11,8 +12,8 @@
   `fetchproof/lib/auto-collect.mjs` (`collect`), `fetchproof/lib/requests.mjs` (`applyRequest`)
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1, the re-review of its
   fix (2026-11-06), finding 6, the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1,
-  the re-review of 88fe19a (2026-11-07), finding F1, and the re-review of 116a2a3 (2026-11-07),
-  findings 1, 2 and 5
+  the re-review of 88fe19a (2026-11-07), finding F1, the re-review of 116a2a3 (2026-11-07),
+  findings 1, 2 and 5, and the re-review of dde656a (2026-11-07), findings F-1, F-5 and F-6
 - **Extends:** ADR-0203 (which lines GitHub shows as code or hides, and which headers it makes a
   table of), ADR-0122 (a collection that cannot be recorded is refused before the money)
 - **Freeze (ADR-0117):** a bug fix. Since F01 the writer appended where no reader reads, and issued
@@ -59,6 +60,17 @@ passed over too. Where the reader took a table GitHub hides, in a footnote defin
 comment the body leaves open, the writer wrote into it (finding 1, read as GitHub reads it by
 ADR-0203); and a file that ends inside a `<pre>` or a `<script>` never closed took the new table
 inside it (finding 5).
+
+The re-review of dde656a (2026-11-07) found the writer writing below a table GitHub shows second
+(F-1). A table the header search passes over was refused beside only where no table was read; with
+an archived copy of the header further down, the reader read the copy, and the writer numbered
+from the copy's rows and wrote below them, while GitHub showed the unread table first. A file whose
+lines a carriage return alone ends was refused as one whose table GitHub shows, where GitHub hid
+it, and the remedy led to another refusal (F-5). And `upsertRow` of a new key read the file and
+judged it twice (F-6). Found while fixing them (ADR-0203, decisions 7 and 8): a reference whose
+label holds an entity name the kit does not know, and a table a tag or a comment hides that GitHub
+may close earlier, or one an HTML block above it may leave open on GitHub alone, cannot be judged.
+A row written then may go to a table GitHub hides, or beside one it shows.
 
 ## Decision
 
@@ -109,6 +121,23 @@ inside it (finding 5).
    such a map as drafted, and leaves it.
 7. **A cell is written on one line:** `escapeCell` writes LF, CR LF and a carriage return alone
    as a space.
+8. **Refused as well, whether or not the reader reads a table,** in this order (re-review of
+   dde656a):
+   - `uncertain`: a reference whose label holds an entity name the kit does not know, where the
+     table is looked for among the footnotes (ADR-0203, decision 7), with the remedy: write the
+     character itself or a numeric reference;
+   - `unread`: a table GitHub shows with this header that the header search passes over, before
+     the one read (`before`) or anywhere when none is read - a row written to the one read goes to
+     the table GitHub shows second, and may repeat an id the first holds (F-1); and, wherever it
+     stands, one whose lines a carriage return alone ends, which no check can place - named as one
+     that cannot be judged, never as one GitHub shows (F-5);
+   - `doubt`: a table with this header that no check can tell GitHub shows or hides (ADR-0203,
+     decision 8), before the one read (`before`), that one itself (`same`), where the row could go
+     to a table GitHub hides, or anywhere when none is read; the tag or the comment is named, with
+     the remedy: close it inside its block.
+9. **A write reads the file once.** `upsertRow` of a new key appends with the text and the
+   reader's table it already holds (`appendChecked`), where it read the file and judged it again
+   (F-6).
 
 ## Rejected alternatives
 
@@ -146,6 +175,9 @@ inside it (finding 5).
 - **Refuse beside such a table only when it holds rows,** as for a hidden one (decision 2). A
   hidden header without rows is not on the page; a table GitHub shows is, and a new table at the
   end of the file would be the second the page shows, its first rows written where none is read.
+- **Refuse beside a table the header search passes over only where no table is read** (decision
+  1 as first written). With a table read below it, the row went to that one, which GitHub shows
+  second, and could repeat an id the first holds (F-1).
 
 ## Consequences
 
@@ -164,6 +196,9 @@ inside it (finding 5).
 - A second, visible table with the same header is still not read (the F01 residual, unchanged),
   but no table is started beside one GitHub shows that the header search passes over.
 - `decompose.mjs` exits 2 with the message on every named refusal, where it printed a stack.
+- No row is written below the table the checks read while GitHub shows another first, or may hide
+  the one read; the refusal names the line and the remedy, and a correct file in doubt is refused
+  until it is edited (ADR-0203, decision 8).
 
 ## Trigger to revisit
 
