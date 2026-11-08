@@ -13,7 +13,8 @@
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), finding 1, the re-review of its
   fix (2026-11-06), finding 6, the re-review of 9b9afaa (2026-11-07), findings F-A, F-B and N1,
   the re-review of 88fe19a (2026-11-07), finding F1, the re-review of 116a2a3 (2026-11-07),
-  findings 1, 2 and 5, and the re-review of dde656a (2026-11-07), findings F-1, F-5 and F-6
+  findings 1, 2 and 5, the re-review of dde656a (2026-11-07), findings F-1, F-5 and F-6, and
+  the re-review of 50b18d1 (2026-11-08), findings G-1 and G-5
 - **Extends:** ADR-0203 (which lines GitHub shows as code or hides, and which headers it makes a
   table of), ADR-0122 (a collection that cannot be recorded is refused before the money)
 - **Freeze (ADR-0117):** a bug fix. Since F01 the writer appended where no reader reads, and issued
@@ -134,7 +135,9 @@ A row written then may go to a table GitHub hides, or beside one it shows.
    - `doubt`: a table with this header that no check can tell GitHub shows or hides (ADR-0203,
      decision 8), before the one read (`before`), that one itself (`same`), where the row could go
      to a table GitHub hides, or anywhere when none is read; the tag or the comment is named, with
-     the remedy: close it inside its block.
+     the remedy: close it inside its block, or write inline HTML in a code span or escape its `<`;
+     and, with none read, the end of the file, where the table would be started, past what leaves
+     the body in doubt (`end`; ADR-0203, decision 8; G-1, G-5).
 9. **A write reads the file once.** `upsertRow` of a new key appends with the text and the
    reader's table it already holds (`appendChecked`), where it read the file and judged it again
    (F-6).

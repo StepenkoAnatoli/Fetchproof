@@ -1954,6 +1954,204 @@ test('a refusal over carriage returns alone says the table cannot be judged, not
   }
 });
 
+// G-4: a link destination with a `(` left open was read as no link, where cmark-gfm ends it at a space
+// or a line end whatever its depth: GitHub reads a link there, and its brackets as no footnote reference
+// (re-review of 50b18d1, 2026-11-08, G-4; each body rendered by GitHub).
+test('a link destination with a parenthesis left open ends where GitHub ends it', () => {
+  const fx = own('fx');
+  shownCases([
+    ['P1', 'Text [^fx](https://e.com/a(b ) end.', [], fx],
+    ['P2', 'Text [^fx](https://e.com/a(b) end.', ['fx'], fx],
+    ['P3', 'Text [^fx](a((b) end.', ['fx'], fx],
+    ['P4', 'Text [^fx][fy] end.\n\n[fy]: https://e.com/a(b', [], fx],
+    ['P7', 'Text [^fx](https://e.com/a(b', ['fx'], fx],
+    ['P8', 'Text [^fx](https://e.com/a(b\nc) end.', ['fx'], fx],
+    ['P9', 'Text [^fx](https://e.com/a(b\n"t") end.', [], fx],
+  ]);
+  const notes = (...first) => [...first, '', '[^a]: Live.', '', padBy(4, liveTable('OPEN')), '', '[^b]: Archive.', '', padBy(4, ARCHIVED)];
+  for (const [id, body, read] of [
+    ['M1', notes('See the old note[^b](https://e.com/a(b ) and the contract[^a].'), 9],
+    ['M2', notes('See the old note[^b][old] and the contract[^a].', '', '[old]: https://e.com/a(b'), 11],
+  ]) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, statuses(text)], [true, read, [['U-1', 'OPEN']]], id);
+    assert.deepEqual(splits(table), [], id);
+    assert.equal(tableHidden(text, HEADERS.unknowns), null, id);
+  }
+});
+
+// G-2: a link closed inside a footnote reference's brackets made every bracket below it text but an
+// image's: cmark-gfm makes text only of a bracket closed while no link opener has been pushed since the
+// last link, and a footnote reference made inside is freed with its brackets (G-2).
+test('a bracket below a link is text only until the next bracket opens, as cmark-gfm reads it', () => {
+  shownCases([
+    ['B1', 'Text [^z [x](https://e.com) [b]] end.', ['z'], own('z')],
+    ['B2', 'Text [^z [x](https://e.com) [b] c] end.', ['z'], own('z')],
+    ['B3', 'Text [^z [x](https://e.com) [^b]] end.', ['z'], own('z', 'b')],
+    ['B4', 'Text [^z [x](https://e.com) ![i]] end.', [], own('z')],
+    ['B5', 'Text [^z [x](https://e.com)] end [y] [^w].', ['w'], own('z', 'w')],
+    ['B8', 'Text ![^z [x](https://e.com) [b]] end.', ['z'], own('z')],
+    ['B10', 'Text [^z [x][r] [b]] end.\n\n[r]: https://e.com', ['z'], own('z')],
+    ['B11', 'Text [^z [x](https://e.com) [b](https://f.com)] end.', [], own('z')],
+    ['B12', 'Text [^z [b] [x](https://e.com)] end.', [], own('z')],
+  ]);
+  const text = page(['The table is in a note[^a [x](https://e.com) [b]] and an old copy in another[^b].', '', '[^a]: Live.', '',
+    padBy(4, liveTable('OPEN')), '', '[^b]: Archive.', '', padBy(4, ARCHIVED)].join('\n'));
+  const table = parseTable(text, HEADERS.unknowns);
+  assert.deepEqual([table.found, table.line, statuses(text)], [true, 9, [['U-1', 'OPEN']]]);
+  assert.deepEqual(splits(table), []);
+  assert.equal(tableHidden(text, HEADERS.unknowns), null);
+});
+
+// G-3: a footnote label was case-folded by the Unicode tables Node carries, and GitHub's are older
+// (Unicode 9 or 10): two labels it holds apart were read as one, and a definition it drops shown. Each
+// pair rendered by GitHub, 2026-11-08: [id, the reference's code point, the definition's label, shown].
+test('a footnote label is case-folded as GitHub folds it, by its older Unicode tables', () => {
+  const C = (cp) => String.fromCodePoint(cp);
+  const pairs = [
+    ['F1', 0xa7ae, C(0x26a), true], ['F2', 0x1c80, C(0x432), true], ['F3', 0xa7b8, C(0xa7b9), false],
+    ['F4', 0xa7c4, C(0xa794), false], ['F5', 0x2c2f, C(0x2c5f), false], ['F6', 0x1c89, C(0x1c8a), false],
+    ['F7', 0x16ea0, C(0x16ebb), false], ['F8', 0xa7b6, C(0xa7b7), true], ['F9', 0x13f5, C(0x13fd), true],
+    ['F10', 0x10c80, C(0x10cc0), true], ['F11', 0x118a0, C(0x118c0), true], ['F12', 0x10400, C(0x10428), true],
+    ['F13', 0x2c2e, C(0x2c5e), true], ['F14', 0x52e, C(0x52f), true], ['F15', 0x37f, C(0x3f3), true],
+    ['F16', 0xa698, C(0xa699), true], ['F17', 0xa7ad, C(0x26c), true], ['F18', 0xa7b3, C(0xab53), true],
+    ['F19', 0x1c88, C(0xa64b), true], ['F20', 0x2c7e, C(0x23f), true], ['F21', 0xa7c2, C(0xa7c3), false],
+    ['F22', 0x131, C(0x49), false], ['F23', 0x1e9e, 'ss', true], ['F24', 0xab70, C(0x13a0), true],
+    ['F25', 0x10d0, C(0x1c90), false], ['F26', 0x526, C(0x527), true], ['F27', 0x3c2, C(0x3a3), true],
+  ];
+  shownCases(pairs.map(([id, ref, label, shown]) => [id, `Text [^${C(ref)}].`, shown ? [label] : [], [`[^${label}]: Kept.`]]));
+});
+
+// G-1: raw HTML GitHub writes as it stands - in a paragraph, a heading or a table cell - can leave the
+// browser in a comment or a quoted value: a processing instruction or CDATA, which the browser ends at
+// its first `>`, before a `<!--` inside it, or a `--!>` before a tag's open value. The tables GitHub
+// writes after it were hidden where the kit read them (G-1; each body rendered by GitHub, 2026-11-08).
+test('raw HTML that leaves the browser in a comment or a quoted value makes the tables after it doubt', () => {
+  const T = liveTable('OPEN');
+  const comment = (at) => `the raw HTML at line ${at} leaves an HTML comment open in the browser, which hides what GitHub writes after it up to the next \`-->\``;
+  const quoted = (at) => `the raw HTML at line ${at} leaves a quoted attribute value open, and the browser ends it at the next quote mark GitHub writes, which can come before the table`;
+  const remedy = 'write that HTML in a code span or escape its `<`';
+  // A `-->` GitHub writes later closes the comment, which no check follows: refused (ADR-0203 decision 8).
+  const later = ['', '<div>', '-->', '</div>', '', T];
+  // [id, lines, the header in doubt, which the checks read, why]
+  const doubted = [
+    ['H1a', ['Text <?x a> <!-- ?> end.', '', T], 7, comment(5)],
+    ['H1b', ['Text <![CDATA[ a > <!-- ]]> end.', '', T], 7, comment(5)],
+    ['H1c', ['Text <!-- a --!><b title="--> end.', '', T], 7, quoted(5)],
+    ['H1d', ['Use <?php if ($a > 1) echo "<!--"; ?> here.', '', T], 7, comment(5)],
+    ['H1e', ['### Note <?x > <!-- ?>', '', T], 7, comment(5)],
+    ['H1f', ['Text <?x > <!-- ?> end.', '', ARCHIVED, ...later], 7, comment(5)],
+    ['Q1', ['Text <?x > <b title="y ?> end.', '', T], 7, quoted(5)],
+    ['CX', ['Text <?a > <b title=" ?> [l](https://e.com) <?x > " <!-- ?> end.', '', T], 7, quoted(5)],
+    ['TC1', ['| A | B |', '|---|---|', '| <?x > <!-- ?> | y |', '', T], 9, comment(7)],
+    ['TC2', [U_TABLE, uRow('U-1', 'OPEN'), '| U-2 | x <?x > <!-- ?> y | w | OPEN |  |'], 5, comment(8)],
+    ['FD1', ['See[^n].', '', '[^n]: Note <?x > <!-- ?> end.', '', padBy(4, T)], 9, comment(7)],
+    ['FD2', ['See[^n] and[^a].', '', '[^n]: Note <?x > <!-- ?> end.', '', '[^a]: Live.', '', padBy(4, T)], 11, comment(7)],
+    ['LI1', ['- Item <?x > <!-- ?> end.', '', T], 7, comment(5)],
+    ['LT1', ['Text [a <?x > <!-- ?> b](https://e.com) end.', '', T], 7, comment(5)],
+    ['IA2', ['Text ![a <?x > <!-- ?> b] end.', '', T], 7, comment(5)],
+    ['ML1', ['Text <?x > <!--', '?> end.', '', T], 8, comment(5)],
+    ['ML2', ['Text <?x', 'a > <!-- ?> end.', '', T], 8, comment(6)],
+    ['AF1', ['Superseded contract: <![CDATA[ > <!-- ]]>', '', ARCHIVED, ...later], 7, comment(5)],
+  ];
+  for (const [id, body, line, why] of doubted) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line], [true, line], id);
+    assert.deepEqual(splits(table).map((p) => p.line), [line], id);
+    assert.ok(splits(table)[0].detail.endsWith(` cannot be judged: ${why}, so no check can tell whether GitHub shows it - ${remedy}`), `${id}: ${splits(table)[0].detail}`);
+    assert.deepEqual([tableHidden(text, HEADERS.unknowns)?.kind, tableHidden(text, HEADERS.unknowns)?.line], ['doubt', line], id);
+    assert.equal(refusal(text), `refusing to write to research/DISCOVERY.md: the table at line ${line} cannot be judged: ${why}, so no check can tell whether GitHub shows it. A row written now could go to a table GitHub hides. Write that HTML in a code span or escape its \`<\`, then run again.`, id);
+  }
+  // With no table, a table written at the end of the file could be hidden as well.
+  const end = page('Text <?x a> <!-- ?> end.');
+  assert.deepEqual([parseTable(end, HEADERS.unknowns).found, tableHidden(end, HEADERS.unknowns)?.kind, tableHidden(end, HEADERS.unknowns)?.line], [false, 'doubt', 5]);
+  assert.equal(refusal(end), `refusing to write to research/DISCOVERY.md: the end of the file cannot be judged: ${comment(5)}, so no check can tell whether GitHub shows a table written there. Write that HTML in a code span or escape its \`<\`, then run again.`);
+});
+
+// What the browser reads to its end where GitHub's scanner does, and what GitHub writes escaped or drops
+// - an image's text, a code span, the brackets of a footnote reference - or a comment a later span
+// closes, leave the tables after it as the kit reads them (G-1).
+test('raw HTML the browser reads to its end, or GitHub writes escaped or drops, leaves the tables after it judged', () => {
+  const T = liveTable('OPEN');
+  for (const [id, body, line] of [
+    ['H1g', ['Text <!X a > <!-- b> end.', '', T], 7],
+    ['C1', ['Text <?x > y ?> end.', '', T], 7],
+    ['C2', ['Text <![CDATA[ a > b ]]> end.', '', T], 7],
+    ['C3', ['Text <!-- a --!> b --> end.', '', T], 7],
+    ['C4', ['Text <!-- a --!> <!-- b --> end.', '', T], 7],
+    ['IA1', ['Text ![a <?x > <!-- ?> b](i.png) end.', '', T], 7],
+    ['CS1', ['Text `<?x > <!-- ?>` end.', '', T], 7],
+    ['AF2', ['Text <?x > <!-- ?> and <!-- c --> end.', '', T], 7],
+    ['FD3', ['See[^n].', '', '[^n]: Note <?x > <!-- ?> end.', '', T], 9],
+    ['FR1', ['Text [^z<?x><!--?>] end.', '', '[^z<?x><!--?>]: Kept.', '', T], 9],
+    ['FR2', ['Text [^z <?x > <!-- ?>] end.', '', '[^z]: Kept.', '', T], 9],
+    ['FR3', ['Text [^z<?x a> <!-- ?>] end.', '', T], 7],
+  ]) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, statuses(text)], [true, line, [['U-1', 'OPEN']]], id);
+    assert.deepEqual(splits(table), [], id);
+    assert.equal(tableHidden(text, HEADERS.unknowns), null, id);
+  }
+});
+
+// G-5: a `<select>` GitHub writes as a tag, left open where its block ends, puts the browser in its
+// select mode, which drops every tag but an option's until the select is closed - by `</select>`,
+// another `<select>`, an `<input>` or a `<keygen>`, or the end of the table cell it is in: the tables
+// GitHub writes after it were hidden where the kit read them (G-5; each body rendered by GitHub).
+test('a select left open where its block ends makes the tables after it doubt', () => {
+  const T = liveTable('OPEN');
+  const select = (at) => `a \`<select>\` at line ${at} is left open where its block ends, and the browser drops the tables GitHub writes after it until the select is closed`;
+  // [id, lines, the header in doubt, which the checks read, the select's line]
+  const doubted = [
+    ['S1', ['<select>', '', ARCHIVED, '', '</select>', '', T], 7, 5],
+    ['S2', ['Text <select> here.', '', T], 7, 5],
+    ['S3', ['<select>', '', T], 7, 5],
+    ['S4', ['Text <select> here.', '', ARCHIVED, '', 'Text </select> here.', '', T], 7, 5],
+    ['S13', ['<SELECT>', '', T], 7, 5],
+    ['S14', ['<select/>', '', T], 7, 5],
+    ['S15', ['See[^s].', '', '[^s]: Pick <select> one.', '', padBy(4, T)], 9, 7],
+    ['S16', ['<select>', '', ARCHIVED, '', '<table><tr><td>x</td></tr></table>', '', T], 7, 5],
+    ['S17', ['- Pick <select> one.', '', T], 7, 5],
+    ['S21', ['### Pick <select> one', '', T], 7, 5],
+    ['S23', ['See[^s] and[^a].', '', '[^s]: Pick <select> one.', '', '[^a]: Live.', '', padBy(4, T)], 11, 7],
+    ['S24', ['See[^s].', '', '[^s]: Note.', '', '    <select>', '', padBy(4, T)], 11, 9],
+  ];
+  for (const [id, body, line, at] of doubted) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line], [true, line], id);
+    assert.deepEqual(splits(table).map((p) => p.line), [line], id);
+    assert.ok(splits(table)[0].detail.endsWith(` cannot be judged: ${select(at)}, so no check can tell whether GitHub shows it - close the select inside its block`), `${id}: ${splits(table)[0].detail}`);
+    assert.equal(refusal(text), `refusing to write to research/DISCOVERY.md: the table at line ${line} cannot be judged: ${select(at)}, so no check can tell whether GitHub shows it. A row written now could go to a table GitHub hides. Close the select inside its block, then run again.`, id);
+  }
+  // Closed in its block or its cell, in a code span, a comment or an attribute value, or another tag: judged.
+  for (const [id, body, line] of [
+    ['S5', ['<select><option>a</option></select>', '', T], 7],
+    ['S6', ['Pick <select><option>a</option></select> one.', '', T], 7],
+    ['S7', ['Text `<select>` here.', '', T], 7],
+    ['S8', ['See[^s].', '', '[^s]: Pick <select> one.', '', T], 9],
+    ['S9', ['<!-- <select> -->', '', T], 7],
+    ['S10', ['| A | B |', '|---|---|', '| <select> | y |', '', T], 9],
+    ['S11', ['<div title="<select>">', '</div>', '', T], 8],
+    ['S12', ['<selectx>', '', T], 7],
+    ['S18', ['Text <select> <input> here.', '', T], 7],
+    ['S19', ['Text <select> <keygen> here.', '', T], 7],
+    ['S20', ['Text <select> <select> here.', '', T], 7],
+    ['S22', ['<select>', '<input>', '', T], 8],
+  ]) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, statuses(text)], [true, line, [['U-1', 'OPEN']]], id);
+    assert.deepEqual(splits(table), [], id);
+    assert.equal(tableHidden(text, HEADERS.unknowns), null, id);
+  }
+  // A block select with no table after it leaves the end of the file in doubt.
+  assert.match(refusal(page('<select>')), /: the end of the file cannot be judged: a `<select>` at line 5 is left open where its block ends/);
+});
+
 // F-6: upsertRow of a new key read and judged the file, then appendRow read and judged it again.
 test('upsertRow of a new key reads the file once', () => {
   const dir = makeProject();

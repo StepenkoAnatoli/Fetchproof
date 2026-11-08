@@ -284,12 +284,28 @@ function entityAt(text, p) {
 
 /**
  * A label as GitHub compares one (`normalize_map_label`): case-folded, its ends trimmed, each run of
- * spaces one space; null if nothing is left. Lowering, raising and lowering again folds as Unicode
- * does, but for the dotless i, which folds to itself.
+ * spaces one space; null if nothing is left. GitHub folds by its own tables (`case_fold_switch.inc`),
+ * from an older Unicode than Node's: a character in the blocks they cover (`FOLDED`) folds as
+ * lowering, raising and lowering it again does, but for the dotless i, which folds to itself; any
+ * other is kept as it is (G-3).
  */
-const DOTLESS_I = String.fromCharCode(0x131);
+const FOLDED = [
+  [0xb5, 0x58f], [0x10a0, 0x10ff], [0x13a0, 0x13ff], [0x1c80, 0x1c88], [0x1e00, 0x1fff], [0x2126, 0x2183],
+  [0x24b6, 0x24cf], [0x2c00, 0x2c2e], [0x2c60, 0x2cff], [0xa640, 0xa69f], [0xa722, 0xa7b7], [0xab70, 0xabbf],
+  [0xfb00, 0xfb17], [0xff21, 0xff3a], [0x10400, 0x1044f], [0x104b0, 0x104ff], [0x10c80, 0x10cff], [0x118a0, 0x118ff],
+  [0x1e900, 0x1e95f],
+];
+const NON_ASCII = /[^\x00-\x7f]/;
+function foldChar(ch) {
+  const code = ch.codePointAt(0);
+  if (code < 0x80) return ch.toLowerCase();
+  if (code === 0x131 || !FOLDED.some(([lo, hi]) => code >= lo && code <= hi)) return ch;
+  return ch.toLowerCase().toUpperCase().toLowerCase();
+}
 function normalizeLabel(label) {
-  const folded = label.split(DOTLESS_I).map((part) => part.toLowerCase().toUpperCase().toLowerCase()).join(DOTLESS_I);
+  let folded = '';
+  if (!NON_ASCII.test(label)) folded = label.toLowerCase();
+  else for (const ch of label) folded += foldChar(ch);
   let out = folded.replace(/[ \t\n\v\f\r]+/g, ' ');
   if (out.startsWith(' ')) out = out.slice(1);
   if (out.endsWith(' ')) out = out.slice(0, -1);
@@ -328,7 +344,9 @@ const spaceChars = (s, p) => {
 
 /**
  * The length of the link destination at `p` (`manual_scan_link_url`), or -1: between pointy
- * brackets on one line, or a run of no spaces whose parentheses balance, nested 32 deep at most.
+ * brackets on one line, or a run of no spaces up to a space, a line end or a `)` that no `(` in it
+ * opened, with 32 `(` open at most. A `(` still open where the run ends is kept, as cmark-gfm keeps
+ * it (G-4); a run that reaches the end of the text is no destination.
  */
 function linkDestination(text, p) {
   let i = p;
@@ -360,7 +378,7 @@ function linkDestination(text, p) {
       i += 1;
     }
   }
-  return i >= text.length || depth !== 0 ? -1 : i - p;
+  return i >= text.length ? -1 : i - p;
 }
 
 /**
@@ -602,9 +620,14 @@ function atxContent(s, from) {
  * `(` opening an inline link follows it, and no label that `refmap` holds (the link reference
  * definitions' labels, normalized). Its label is its text up to the first thing in it that is not
  * text. Not in a code span, an autolink or raw HTML; a link's text keeps the references in it.
+ *
+ * Given `spans`, the raw HTML GitHub writes as it stands is added to it, `{ start, end }` in `source`:
+ * in a link's text too, but not in an image's, which GitHub writes escaped, nor in a reference's
+ * brackets, which it drops (G-1).
  */
-function footnoteRefs(source, refmap) {
-  if (!source.includes('[') || (!source.includes('^') && !source.includes('&#') && !source.includes('&Hat;'))) return [];
+function footnoteRefs(source, refmap, spans = null) {
+  const refsPossible = source.includes('[') && (source.includes('^') || source.includes('&#') || source.includes('&Hat;'));
+  if (!refsPossible && !(spans && source.includes('<'))) return [];
   const text = rtrimSpace(source);
   // A code span closes at the next run of exactly its opener's backticks; a run over 1000 closes none.
   const runs = new Map();
@@ -638,10 +661,13 @@ function footnoteRefs(source, refmap) {
     if (end < 0) absent.add(marker);
     return end < 0 ? -1 : end + marker.length;
   };
-  // The end of an autolink or of raw HTML at the `<` at `p` (`handle_pointy_brace`) - a comment,
-  // CDATA, a declaration (`<!`, capitals, then a space), a processing instruction or a tag - or -1.
-  const pointy = (p) => {
+  // The end of an autolink at the `<` at `p` (`handle_pointy_brace`), or -1; and of raw HTML there - a
+  // comment, CDATA, a declaration (`<!`, capitals, then a space), a processing instruction or a tag.
+  const autolinkAt = (p) => {
     for (const autolink of [AUTOLINK_URI, AUTOLINK_EMAIL]) if (sticky(autolink, text, p)) return autolink.lastIndex;
+    return -1;
+  };
+  const rawHtmlAt = (p) => {
     if (text.startsWith('<!--', p)) return text[p + 4] === '>' ? p + 5 : text.startsWith('->', p + 4) ? p + 6 : through('-->', p + 4);
     if (text.startsWith('<![CDATA[', p)) return through(']]>', p + 9);
     if (text[p + 1] === '!') {
@@ -654,18 +680,16 @@ function footnoteRefs(source, refmap) {
   };
   // The nodes GitHub makes, as far as a label depends on them: text (`v`, with the name of an entity
   // the kit does not know), a link or an image (`kids`), a reference, and the rest. While no bracket
-  // is open only links and references are kept. A link deactivates the brackets below it but images:
-  // a bracket under `inactiveBelow` that opens no image is text.
+  // is open only links and references are kept. Once a link is made, a bracket that opens no image
+  // closes as text until another one opens (`no_link_openers`), so one below the link that a later
+  // bracket followed may still make a link or a reference (G-2). Each bracket notes how many `spans`
+  // were found before it.
   const OTHER = { t: 'other' };
   const nodes = [];
   const stack = [];
-  let inactiveBelow = 0;
+  let noLinkOpeners = false;
   const keep = (node) => { if (stack.length) nodes.push(node); };
   const textNode = (v, unknown = null) => keep({ t: 'text', v, unknown });
-  const pop = () => {
-    stack.pop();
-    inactiveBelow = Math.min(inactiveBelow, stack.length);
-  };
   for (let p = 0; p < text.length;) {
     const c = text[p];
     if (c === '\n') {
@@ -689,14 +713,17 @@ function footnoteRefs(source, refmap) {
       textNode(entity ? entity.value : '&', entity?.unknown ? entity.value : null);
       p = entity ? entity.end : p + 1;
     } else if (c === '<') {
-      const end = pointy(p);
+      const auto = autolinkAt(p);
+      const end = auto >= 0 ? auto : rawHtmlAt(p);
       if (end < 0) textNode('<');
       else keep(OTHER);
+      if (auto < 0 && end >= 0 && spans) spans.push({ start: p, end });
       p = end < 0 ? p + 1 : end;
     } else if (c === '[' || (c === '!' && text[p + 1] === '[' && text[p + 2] !== '^')) {
       const image = c === '!';
       if (stack.length) stack[stack.length - 1].bracketAfter = true;
-      stack.push({ at: nodes.length, start: image ? p + 1 : p, pos: image ? p + 2 : p + 1, image, bracketAfter: false });
+      if (!image) noLinkOpeners = false;
+      stack.push({ at: nodes.length, start: image ? p + 1 : p, pos: image ? p + 2 : p + 1, image, bracketAfter: false, spans: spans ? spans.length : 0 });
       nodes.push({ t: 'text', v: image ? '![' : '[', unknown: null });
       p += image ? 2 : 1;
     } else if (c === ']') {
@@ -704,8 +731,8 @@ function footnoteRefs(source, refmap) {
       p = initial;
       const opener = stack[stack.length - 1];
       if (!opener) continue;
-      if (!opener.image && stack.length - 1 < inactiveBelow) {
-        pop();
+      if (!opener.image && noLinkOpeners) {
+        stack.pop();
         textNode(']');
         continue;
       }
@@ -719,8 +746,9 @@ function footnoteRefs(source, refmap) {
       }
       if (after >= 0) {
         const kids = nodes.splice(opener.at).slice(1);
-        pop();
-        if (!opener.image) inactiveBelow = stack.length;
+        stack.pop();
+        if (!opener.image) noLinkOpeners = true;
+        else if (spans) spans.length = opener.spans;
         nodes.push({ t: 'link', kids });
         p = after;
         continue;
@@ -735,11 +763,12 @@ function footnoteRefs(source, refmap) {
           unknown ??= nodes[k].unknown;
         }
         nodes.length = opener.at;
-        pop();
+        stack.pop();
+        if (spans) spans.length = opener.spans;
         nodes.push({ t: 'fn', label, start: opener.start, raw: text.slice(opener.start, initial), unknown });
         continue;
       }
-      pop();
+      stack.pop();
       textNode(']');
     } else {
       // A run of text; at a `:` or a `w` outside every bracket, an autolink first (autolink.c).
@@ -823,16 +852,25 @@ function breakTest(s) {
 const FILTERED = /<\/?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(?:[ \t\n\v\f\r>]|\/>)/iy;
 const HTML_WHITE = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r';
 
+// The name of the tag that starts at `p`, as the browser reads one: up to a space, a `/` or a `>`.
+const tagName = (text, p) => {
+  let e = p;
+  while (e < text.length && !HTML_WHITE(text[e]) && text[e] !== '/' && text[e] !== '>') e += 1;
+  return text.slice(p, e).toLowerCase();
+};
+
 /**
- * Reads `text`, an HTML block's line as GitHub writes it out, with the browser's tokenizer, from
- * the state `owner` holds: GitHub's page is one HTML document, so a comment or a tag left open where
- * an HTML block ends goes on in the browser over what follows it, whatever CommonMark ended. State
- * 0 is text; 1 a comment, closed by `-->` or `--!>`; 2 a bogus comment (`<!`, `<?`, `</` and no
- * letter), closed by `>`; 3 a tag name; 7 before an attribute; 8 an attribute's name; 6 before its
- * value; 4 and 5 a value quoted with `"` or `'`; 9 one unquoted. `<!-->` and `<!--->` close as they
- * open; a tag the tagfilter writes out as text opens nothing. `owner.since` is the 1-based line of
- * the `<` that left text; back in text, `owner.record` is cleared. Each marker's next place is kept,
- * so a line is read in linear time.
+ * Reads `text`, an HTML block's line as GitHub writes it out or a line of raw HTML in a paragraph's,
+ * with the browser's tokenizer, from the state `owner` holds: GitHub's page is one HTML document, so
+ * a comment or a tag left open where an HTML block ends goes on in the browser over what follows it,
+ * whatever CommonMark ended. State 0 is text; 1 a comment, closed by `-->` or `--!>`; 2 a bogus
+ * comment (`<!`, `<?`, `</` and no letter), closed by `>`; 3 a tag name; 7 before an attribute; 8 an
+ * attribute's name; 6 before its value; 4 and 5 a value quoted with `"` or `'`; 9 one unquoted.
+ * `<!-->` and `<!--->` close as they open; a tag the tagfilter writes out as text opens nothing.
+ * `owner.since` is the 1-based line of the `<` that left text; back in text, `owner.record` is
+ * cleared. `owner.select` is the 1-based line of a `<select>` the browser is in, which drops the tags
+ * GitHub writes after it, a table's too, until `</select>`, another `<select>`, an `<input>` or a
+ * `<keygen>` closes it (G-5) - or 0. Each marker's next place is kept, so a line is read in linear time.
  */
 function feedHtml(owner, text, line) {
   let { state } = owner;
@@ -874,10 +912,16 @@ function feedHtml(owner, text, line) {
         i = k + 1;
       } else if (c === '/') {
         const d = text[k + 2] ?? '';
-        if (/[A-Za-z]/.test(d)) { leave(3); i = k + 2; }
-        else if (d === '>') i = k + 2;
+        if (/[A-Za-z]/.test(d)) {
+          if (tagName(text, k + 2) === 'select') owner.select = 0;
+          leave(3);
+          i = k + 2;
+        } else if (d === '>') i = k + 2;
         else { leave(2); i = k + 1; }
       } else if (/[A-Za-z]/.test(c)) {
+        const name = tagName(text, k + 1);
+        if (name === 'select') owner.select = owner.select ? 0 : line + 1;
+        else if (name === 'input' || name === 'keygen') owner.select = 0;
         leave(3);
         i = k + 1;
       }
@@ -918,8 +962,8 @@ function feedHtml(owner, text, line) {
  * other blocks there as HTML the kit does not read, and may close it earlier (`doubtOf`). The
  * footnote references are read once every link reference definition is known (`refmap`).
  *
- * Returns `{ at, open, heads, rowOf, segs, endWhy, note, tables, uncertain, doubtOf }`, the first six
- * and `note` indexed by the 0-based line:
+ * Returns `{ at, open, heads, rowOf, segs, endWhy, note, tables, uncertain, doubtOf, endUnsure }`, the
+ * first six and `note` indexed by the 0-based line:
  * - `at[i]` the record of the block that hides line i - `kind` 'fence', 'indented', 'comment',
  *   'tag', 'html' (with its `type`) or 'footnote' (a definition nothing refers to, or one that
  *   `repeats` the label of the one GitHub keeps, its 1-based line), and the 1-based `line` that
@@ -956,7 +1000,12 @@ function feedHtml(owner, text, line) {
  *   after an HTML block that starts where GitHub may already have closed what an earlier one left open
  *   (`record`), and that the browser, reading it from text, leaves otherwise than the kit - later in
  *   its owner, or in a footnote GitHub shows after it - `{ record, closer: -1, after }`, `after` the
- *   block's 1-based line.
+ *   block's 1-based line. So too after raw HTML GitHub writes as it stands in a paragraph, a heading
+ *   or a cell that leaves the browser in a comment or a quoted value (`why` 'inline'), or a `<select>`
+ *   left open where its block ends (`why` 'select'), and in the table that cell is in: `record` is
+ *   then `{ kind, line, inline }` or `{ kind: 'tag', line, select }`, and `after` its line (G-1, G-5).
+ * - `endUnsure` the first of those that leaves the body in doubt, `{ record, line, why }`, so the end
+ *   of the file and a table written there too - or null.
  */
 export function hiddenLines(lines) {
   const n = lines.length;
@@ -1021,10 +1070,16 @@ export function hiddenLines(lines) {
   // in a comment or a tag, the two may disagree on what follows: the owner is `unsure` from here on.
   const endHtml = (how) => {
     const owner = innermost();
+    // A `<select>` left open drops the tables GitHub writes after it until something closes it, which
+    // no check follows (G-5).
+    if (owner.select) {
+      owner.unsure ??= { record: { kind: 'tag', line: owner.select, select: true }, line: owner.select, why: 'select' };
+      owner.select = 0;
+    }
     const { alt } = owner;
     if (alt) {
       owner.alt = null;
-      if (alt.state || owner.state) owner.unsure ??= { record: alt.left, line: alt.line };
+      if (alt.state || owner.state || alt.select) owner.unsure ??= { record: alt.left, line: alt.line };
     }
     if (owner.state === 0) owner.record = null;
     else if (owner.since < tip.record.line && owner.record) return;
@@ -1200,7 +1255,7 @@ export function hiddenLines(lines) {
       for (; lead < above.length && HTML_SPACE(above[lead]); lead += 1) if (above[lead] === '\n') shift += 1;
       pending.push({ text: trimSpace(above), lines: tip.lines.slice(shift, -1) });
     }
-    for (const text of rowCellTexts(tip.last, delimiter)) pending.push({ text, lines: [tip.lastLine] });
+    for (const text of rowCellTexts(tip.last, delimiter)) pending.push({ text, lines: [tip.lastLine], cell: true });
     tables.push({ line: tip.lastLine, gline: tip.lastSeg + 1, text: tip.last, cr: segs[tip.lastLine] > 1 || segs[line] > 1 });
     tip = { type: 'table', line: tip.lastLine, cols: delimiter, rows: 1, nonEmpty: delimiter };
     return true;
@@ -1364,7 +1419,7 @@ export function hiddenLines(lines) {
         wasRowOf[line] = tip.line;
         if (segs[line] === 1) rowOf[line] = tip.line;
         // A cell past the header's is dropped, and what it holds with it.
-        for (const text of rowCellTexts(s.slice(fns, -1), tip.cols)) pending.push({ text, lines: [line] });
+        for (const text of rowCellTexts(s.slice(fns, -1), tip.cols)) pending.push({ text, lines: [line], cell: true });
         return;
       } else {
         break;
@@ -1392,9 +1447,9 @@ export function hiddenLines(lines) {
       return;
     }
     if (tip?.type === 'html') {
-      // GitHub writes an HTML block out as it stands, and only there does the browser read a `-->`
-      // or a `>` that ends what an earlier block left open: in a paragraph or code it is written
-      // `--&gt;` (F3). A footnote definition is written below the body, so it reads only its own.
+      // GitHub writes an HTML block out as it stands, as it does a paragraph's raw HTML, read once the
+      // pass is over (`pending`, `closer`); text and code it writes escaped, a `-->` as `--&gt;` (F3).
+      // A footnote definition is written below the body, so it reads only its own.
       hide(tip.record);
       const owner = innermost();
       feedHtml(owner, s.slice(fns), line);
@@ -1431,7 +1486,7 @@ export function hiddenLines(lines) {
       gseg += 1;
       // What an HTML block left open, once it has ended, hides the lines its owner reads after it. A
       // `-->` past a `<` in what it hides may close a comment on GitHub: a paragraph's raw HTML, which
-      // the kit does not read, is written as it stands (`closer`, `doubtOf`). Past an HTML block the
+      // the kit does not read where it is hidden, is written as it stands (`closer`, `doubtOf`). Past an HTML block the
       // browser may read otherwise, nothing the owner reads can be judged (`unsure`).
       const owner = innermost();
       if (owner.unsure) unsure[line] ??= owner.unsure;
@@ -1465,8 +1520,10 @@ export function hiddenLines(lines) {
   // The references GitHub reads, once it knows every link reference definition: a label of 1 to 1000
   // bytes is looked up. The first whose label holds an entity the kit cannot decode is `uncertain`.
   let uncertain = null;
-  for (const { text, lines: where } of pending) {
-    for (const ref of footnoteRefs(text, refmap)) {
+  for (const entry of pending) {
+    const { text, lines: where } = entry;
+    entry.spans = [];
+    for (const ref of footnoteRefs(text, refmap, entry.spans)) {
       const bytes = Buffer.byteLength(ref.label, 'utf8');
       const label = bytes >= 1 && bytes <= 1000 ? normalizeLabel(ref.label) : null;
       if (label !== null) refs.add(label);
@@ -1511,6 +1568,34 @@ export function hiddenLines(lines) {
     const holder = note[k];
     if (holder && (holder.order > first.owner.order || (holder === first.owner && k >= first.from))) at[k] ??= first.record;
   }
+  // GitHub writes the raw HTML of a paragraph, a heading or a cell as it stands (`spans`), and the
+  // browser reads it as it reads an HTML block: what leaves it in a comment or a quoted value, or in a
+  // `<select>` outside a cell, whose end closes one, leaves the owner `unsure` from that line on, and
+  // the table the cell is in (G-1, G-5). Each text is read from text: a line hidden reads none.
+  for (const { text, lines: where, spans, cell } of pending) {
+    if (!spans?.length || at[where[0]]) continue;
+    const holder = note[where[0]];
+    const scratch = { state: 0, since: 0, record: null, select: 0 };
+    let u = null;
+    let row = 0;
+    let nl = text.indexOf('\n');
+    for (const { start, end } of spans) {
+      while (nl >= 0 && nl < start) { row += 1; nl = text.indexOf('\n', nl + 1); }
+      text.slice(start, end).split('\n').forEach((piece, j) => feedHtml(scratch, piece, where[row + j]));
+      if (scratch.state === 4 || scratch.state === 5) { u = { kind: 'tag', line: scratch.since, why: 'inline' }; break; }
+    }
+    if (!u && scratch.state === 1) u = { kind: 'comment', line: scratch.since, why: 'inline' };
+    if (!u && scratch.select && !cell) u = { kind: 'tag', line: scratch.select, why: 'select' };
+    if (!u) continue;
+    const mark = { record: { kind: u.kind, line: u.line, inline: true }, line: u.line, why: u.why };
+    for (let k = u.line - 1; k < n; k += 1) if (holder ? note[k] === holder : !note[k]) unsure[k] ??= mark;
+    if (wasRowOf[where[0]] >= 0) unsure[wasRowOf[where[0]]] ??= mark;
+    if (!holder) body.unsure ??= mark;
+    else {
+      if (!owners.has(holder)) owners.set(holder, { state: 0, since: 0, record: null });
+      owners.get(holder).unsure ??= mark;
+    }
+  }
   // GitHub writes the footnotes below the body, in their order: an owner `unsure` leaves every one shown
   // after it so too.
   let taint = body.unsure ? { order: -1, unsure: body.unsure } : null;
@@ -1535,7 +1620,7 @@ export function hiddenLines(lines) {
   const doubtOf = (i) => {
     const record = at[i];
     const u = unsure[i];
-    if (u && (!record || record.kind === 'tag' || record.kind === 'comment')) return { record: u.record, closer: -1, after: u.line };
+    if (u && (!record || record.kind === 'tag' || record.kind === 'comment')) return { record: u.record, closer: -1, after: u.line, why: u.why };
     if (record?.kind === 'tag') return record.first === i ? null : { record, closer: -1 };
     if (record?.kind !== 'comment') return null;
     const c = record.closer;
@@ -1548,7 +1633,7 @@ export function hiddenLines(lines) {
     if (wasRowOf[i] >= 0) return { why: 'row', table: wasRowOf[i] + 1 };
     return result ?? { why: 'paragraph' };
   });
-  return { at, open, heads, rowOf, segs, endWhy, note, tables, uncertain, doubtOf };
+  return { at, open, heads, rowOf, segs, endWhy, note, tables, uncertain, doubtOf, endUnsure: body.unsure ?? null };
 }
 
 /**
@@ -2656,8 +2741,19 @@ function blockNamed(record) {
 }
 
 // Why GitHub may show a table that a tag or a comment an HTML block left open hides in the kit, or
-// hide one the kit shows (`doubtOf`): the reason, then the remedy.
-function doubtWords({ record, closer, after }) {
+// hide one the kit shows (`doubtOf`): the reason, then the remedy. Past raw HTML in a paragraph, a
+// heading or a cell (`why` 'inline'), or a `<select>` left open (`why` 'select'), its own (G-1, G-5).
+function doubtWords({ record, closer, after, why }) {
+  if (why === 'select') {
+    return [`a \`<select>\` at line ${record.line} is left open where its block ends, and the browser drops the tables GitHub `
+      + 'writes after it until the select is closed', 'close the select inside its block'];
+  }
+  if (why === 'inline') {
+    const reason = record.kind === 'comment'
+      ? 'leaves an HTML comment open in the browser, which hides what GitHub writes after it up to the next `-->`'
+      : 'leaves a quoted attribute value open, and the browser ends it at the next quote mark GitHub writes, which can come before the table';
+    return [`the raw HTML at line ${record.line} ${reason}`, 'write that HTML in a code span or escape its `<`'];
+  }
   if (after) {
     return [`${blockNamed(record)} is left open where its HTML block ends, and GitHub may close it before the HTML block at `
       + `line ${after}, which the browser would then read otherwise`, `close the ${record.kind === 'tag' ? 'tag' : 'comment'} inside its block`];
@@ -2676,7 +2772,10 @@ function doubtWords({ record, closer, after }) {
  * the row goes below its last row. With none, the writer starts a table at the end of the file,
  * which is in a block as well when the body ends inside one never closed (`open` true): a fence, an
  * HTML block of type 1 or 3 to 5, a comment or a tag left open, or a comment cut off where the
- * block holding it ends (`runaway`). And a table with this header that GitHub does not show as one -
+ * block holding it ends (`runaway`); and no check can judge it past what leaves the body in doubt -
+ * raw HTML in a paragraph, a heading or a cell that leaves a comment or a quoted value open, a
+ * `<select>` left open, an HTML block the browser may read otherwise (`kind` 'doubt', with `end`, the
+ * `line` of what does, and the `reason` and `remedy` of `doubtWords`; G-1, G-5). And a table with this header that GitHub does not show as one -
  * in a block that hides it, a comment or a tag a footnote leaves open among them (`footnote`), or
  * over a delimiter row it makes no table of (`kind` 'not-a-table', with `why`) - with rows below it
  * would be left behind by the new one, which numbers its own from the first id again. A header with
@@ -2735,7 +2834,13 @@ function writeCheck(text, header) {
     if (!namesHeader(splitRow(t.text.trim()), header)) continue;
     return { table, hidden: { kind: 'unread', line: t.cr ? t.gline : t.line + 1, shape: unreadShape(t, lines), open: false } };
   }
-  return { table, hidden: held ? { ...held, open: false } : null };
+  if (held) return { table, hidden: { ...held, open: false } };
+  // What leaves the body in doubt leaves its end so too, and the table the writer would start there
+  // (`endUnsure`, G-1, G-5).
+  const u = read.endUnsure;
+  if (!u) return { table, hidden: null };
+  const [reason, remedy] = doubtWords({ record: u.record, closer: -1, after: u.line, why: u.why });
+  return { table, hidden: { kind: 'doubt', end: true, line: u.line, reason, remedy, before: 0, same: false, open: false } };
 }
 
 // Why a table GitHub shows is passed over by the header search, and the remedy.
@@ -2756,6 +2861,9 @@ function tableHiddenError(rel, hidden) {
       + 'reads as a character if it names an HTML entity, and the kit knows too few entities to tell, so no check can tell '
       + 'which footnote definitions GitHub shows, or in what order. Write the character itself or a numeric reference, '
       + 'then run again.';
+  } else if (hidden.kind === 'doubt' && hidden.end) {
+    detail = `the end of the file cannot be judged: ${hidden.reason}, so no check can tell whether GitHub shows a table `
+      + `written there. ${hidden.remedy[0].toUpperCase()}${hidden.remedy.slice(1)}, then run again.`;
   } else if (hidden.kind === 'doubt') {
     const before = hidden.before ? ` before the table at line ${hidden.before} that the checks read` : '';
     detail = `the table at line ${hidden.line} cannot be judged: ${hidden.reason}, so no check can tell whether GitHub shows it${before}. `

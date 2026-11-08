@@ -232,6 +232,25 @@ test('a request is refused, writing nothing, while GitHub shows an unread table 
   assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'unread.plan.json')), false);
 });
 
+// G-1: a processing instruction in a paragraph left the browser in a comment that GitHub's own `-->`
+// closed later, which no check follows: the request's row went to the archived copy the comment hides.
+test('a request is refused, writing nothing, below raw HTML that leaves the browser in a comment', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const project = makeProject(undefined, { topic: 'Inline comment', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace(head, `Superseded: <?x > <!-- ?> kept below.\n\n${archived}\n\n<div>\n-->\n</div>\n\n${head}\n| U-1 | Burst limit | the retry design | OPEN | |`));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'inline', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'applied');
+  assert(/: the table at line \d+ cannot be judged: the raw HTML at line \d+ leaves an HTML comment open in the browser/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'inline.plan.json')), false);
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);
