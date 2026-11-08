@@ -81,14 +81,26 @@ function splitHostPort(target) {
   return m ? { host: m[1].replace(/^\[|\]$/g, ''), port: Number(m[2]) } : null;
 }
 
-/** The upstream proxy a variable names: its host, port and, when the URL carries one, its credential. */
+/**
+ * The upstream proxy a variable names: its host, port and, when the URL carries one, its
+ * credential. Only a plain-HTTP proxy (ADR-0198): the guard writes its requests and CONNECT
+ * lines to the upstream in clear, and an https:// proxy had been read as one, so the CONNECT and
+ * the URL's credential went in clear to a port that expects TLS (independent audit 2026-11-04,
+ * F02). Any other scheme throws, before anything is listened on or sent, and is never replaced by
+ * a direct connection; the message names the scheme, host and port, never the credential.
+ */
 export function parseUpstream(value) {
   if (!value) return null;
   let url;
   try { url = new URL(String(value).includes('://') ? String(value) : `http://${value}`); } catch { return null; }
   if (!url.hostname) return null;
+  if (url.protocol !== 'http:') {
+    throw new Error(`the configured proxy ${url.protocol}//${url.host} is not a plain-HTTP proxy, and the browser route speaks only plain HTTP to its proxy: `
+      + `its requests, and the credential when the proxy URL carries one, would go in clear to a port that expects ${url.protocol === 'https:' ? 'TLS' : 'another protocol'}. `
+      + 'Name the proxy\'s http:// address if it has one; the browser route does not render behind this one (ADR-0198)');
+  }
   const auth = url.username ? `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`, 'utf8').toString('base64')}` : null;
-  return { host: normalizeHost(url.hostname), port: Number(url.port) || (url.protocol === 'https:' ? 443 : 80), auth };
+  return { host: normalizeHost(url.hostname), port: Number(url.port) || 80, auth };
 }
 
 /**
@@ -193,10 +205,11 @@ export async function judge(host, port, { allowInternal = false, exempt = new Se
  * every request turned away, as `{ host, why }`.
  */
 export async function startGuard({ allowInternal = false, exempt = [], upstream = null, bypass = '', lookup = dns.lookup, onFirstRequest = null, pageFirst = false } = {}) {
-  const configured = parseUpstream(upstream);
   // A host the environment's NO_PROXY names is connected to directly, judged as it is with no
-  // upstream at all; everything else goes to the upstream (#314).
+  // upstream at all; everything else goes to the upstream (#314). Under NO_PROXY=* nothing does,
+  // so the upstream is not read, and not refused (ADR-0198).
   const noProxy = parseNoProxy(bypass);
+  const configured = noProxy === '*' ? null : parseUpstream(upstream);
   const upstreamFor = (host, port) => (configured && !bypassesProxy(noProxy, host, port) ? configured : null);
   const skip = new Set(exempt.map((entry) => { const at = splitHostPort(entry); return at ? `${normalizeHost(at.host)}:${at.port}` : normalizeHost(entry); }));
   const refused = [];

@@ -32,7 +32,7 @@ import {
   PATHS, resolve, relative, exists, isDirectory, isRegularFile, readText, sha256, canonicalJson, nowIso, listFiles, homeCommand, realInside, writeBytes, projectFile,
 } from './core.mjs';
 import { buildZip } from './archive.mjs';
-import { checkEntryName } from './artifact-zip.mjs';
+import { checkEntryName, pathKey } from './artifact-zip.mjs';
 import { readCorpus } from './corpus.mjs';
 import { deriveState, findingsReviewState } from './artifact-state.mjs';
 export { deriveState, findingsReviewState };
@@ -180,15 +180,25 @@ export function collectProjectFiles(root) {
     if (!realInside(root, abs)) { outside.push(top); continue; }
     walk(abs, top);
   }
-  // Two files differing only in case are one file on Windows and macOS. The reader refuses
-  // such a package (ZIP-CASE-COLLISION, the same lowercase comparison), but only after it
-  // was written - in CI, at the collect job's last step, after the credits were spent
-  // (Arena break test 10, 2026-09-28). Asked here, before a byte is written.
+  // Two files differing only in case are one file on Windows and macOS, and two Unicode
+  // forms of one name are one file on macOS. The reader refuses such a package
+  // (ZIP-CASE-COLLISION, the same pathKey comparison), but only after it was written - in
+  // CI, at the collect job's last step, after the credits were spent (Arena break test 10,
+  // 2026-09-28). Asked here, before a byte is written.
   const folded = new Map();
   for (const rel of out) {
-    const first = folded.get(rel.toLowerCase());
-    if (first === undefined) folded.set(rel.toLowerCase(), rel);
-    else if (first !== rel) refused.push({ rel: `${first} and ${rel}`, detail: 'they differ only in case, and on a case-insensitive filesystem one silently overwrites the other' });
+    const first = folded.get(pathKey(rel));
+    if (first === undefined) folded.set(pathKey(rel), rel);
+    else if (first !== rel) refused.push({ rel: `${first} and ${rel}`, detail: 'they differ only in case or Unicode form, and on a filesystem that folds them one silently overwrites the other' });
+  }
+  // A file that is, spelled another way, the folder another file sits in - `docs/a` beside
+  // `docs/A/child.md` - is two paths here and a file-folder contradiction where the names
+  // fold. The reader refuses it (ZIP-PATH-COLLISION, audit F03); asked here for the same reason.
+  for (const rel of out) {
+    for (let slash = rel.indexOf('/'); slash !== -1; slash = rel.indexOf('/', slash + 1)) {
+      const file = folded.get(pathKey(rel.slice(0, slash)));
+      if (file !== undefined) refused.push({ rel: `${file} and ${rel}`, detail: `"${file}" is a file and, spelled another way, the folder that holds "${rel}"` });
+    }
   }
   if (refused.length) {
     const err = new Error(`${refused.map((r) => r.rel).join(', ')} cannot travel in a package faithfully: `

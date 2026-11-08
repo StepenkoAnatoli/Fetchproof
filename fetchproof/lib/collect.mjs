@@ -17,7 +17,7 @@ import { retryWaitMs } from './firecrawl.mjs';
 import { standingFailure } from './fetch-failure.mjs';
 import {
   captureEntry, cacheDecision, rememberCapture, appendRow, upsertRow, nextId,
-  readCaptures, parseTable, readLedger, ledgerRank, CAPTURE_MAX_BYTES,
+  readCaptures, parseTable, readLedger, ledgerRank, CAPTURE_MAX_BYTES, assertTablesWritable,
 } from './corpus.mjs';
 import { appendFetch, withLock } from './provenance.mjs';
 import { firstFinding } from './finding.mjs';
@@ -269,6 +269,11 @@ export function collectOne(root, url, {
     }
     const gone = recentlyGone(root, url, { refreshDays, force, now, transport: transportName });
     if (gone) return gone;
+    // A row this fetch would record where no reader reads it is refused before the money, as
+    // `appendFetch` asks again of the ledger: the writer refuses too, but after the fetch,
+    // and the capture it leaves with no row is a cache hit the next run never writes a row
+    // for (ADR-0204). Asked here, under the lock, a file changed during a run is caught.
+    assertTablesWritable(root);
 
     // A rate limit is not a failure, it is an instruction to wait. Bounded, because a
     // vendor that keeps refusing is a different problem from a busy minute, and a

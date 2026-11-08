@@ -128,6 +128,148 @@ test('applying a request adds an OPEN contract row, the plan entries, and a boun
   assert(/U-9 is not a row/.test(threw), threw);
 });
 
+// ADR-0204: with the contract's table below a comment never closed, the new OPEN row would be
+// written inside it, read by nothing, and its plan run for an unknown no check sees. The append
+// is refused before the plan is touched or the request's own plan written.
+test('a request into a contract whose table is hidden is refused, and nothing is written', () => {
+  const project = makeProject(undefined, { topic: 'Hidden contract', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace('| ID |', '<!-- notes\n\n| ID |'));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'hidden', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN');
+  assert(/research\/DISCOVERY\.md: the file ends inside an HTML comment/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'hidden.plan.json')), false);
+});
+
+// Re-review of 88fe19a (2026-11-07), F1: a row holding a carriage return alone ends the rows the
+// reader reads, and the ids were counted over those, so a request took an id the file already held
+// below it - and the kit wrote such a row itself, from a fact holding one.
+test('a request is refused, writing nothing, where the contract is not read whole, and a fact is written on one line', () => {
+  const sep = '|---|---|---|---|---|\n';
+  const project = makeProject(undefined, { topic: 'One line', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const first = applyRequest(project, 'price', { ...GOOD, fact: 'Price\rper seat' }, 1).unknown;
+  assertEqual(applyRequest(project, 'price', { ...GOOD, fact: 'Price\rper seat' }, 1).unknown, first);
+  const read = parseTable(readText(discovery), HEADERS.unknowns);
+  assert.deepEqual(read.rows.map((r) => [r.ID, r.Unknown]), [[first, 'Price per seat']]);
+  assert.deepEqual(read.problems, []);
+
+  const split = makeProject(undefined, { topic: 'Split contract', content: true });
+  const file = path.join(split, 'research', 'DISCOVERY.md');
+  const planPath = path.join(split, 'research', 'plan.json');
+  const row = (id, fact) => `| ${id} | ${fact} | the design | OPEN |  |`;
+  writeText(file, readText(file).replace(sep, `${sep}${row('U-1', 'Seat price')}\n${row('U-2', 'Price\rper seat')}\n${row('U-3', 'Seats')}\n`));
+  const before = { discovery: readText(file), plan: readText(planPath) };
+  for (const request of [GOOD, { ...GOOD, unknown: 'U-1' }]) {
+    let threw = null;
+    try { applyRequest(split, 'split', request, 1); } catch (err) { threw = err; }
+    assertEqual(threw?.code, 'TABLE_HIDDEN');
+    assert(/research\/DISCOVERY\.md: the table at line \d+ is not read whole - at line \d+, row `U-2` holds a carriage return alone/.test(threw.message), threw.message);
+  }
+  assertEqual(readText(file), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(split, 'research', 'requests', 'split.plan.json')), false);
+});
+
+// Re-review of 116a2a3 (2026-11-07), findings 1, 2 and 5: where GitHub shows the contract's table
+// other than the kit reads it - an archived copy in a footnote below a comment never closed, a table
+// with no outer pipes, in a block quote or ended by carriage returns alone, a file ending inside a
+// `<pre>` - the request's row and plan were written for an unknown no check reads.
+test('a request is refused, writing nothing, where GitHub shows the contract other than the kit reads it', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const indent = (text) => text.split('\n').map((line) => `    ${line}`).join('\n');
+  const bare = (row) => row.replace(/^\|\s?/, '').replace(/\s?\|$/, '');
+  const shapes = [
+    ['a footnote below a comment never closed', `The contract was narrowed.[^old]\n\n[^old]: Kept:\n\n${indent(archived)}\n\n<!-- Drafting below.\n\n${head}`, /: the file ends inside an HTML comment that starts at line \d+ and is never closed/],
+    ['no outer pipes', archived.split('\n').map(bare).join('\n'), /is shown on GitHub, but no check reads it: its header has no outer pipes/],
+    ['a block quote', archived.split('\n').map((line) => `> ${line}`).join('\n'), /is shown on GitHub, but no check reads it: it stands in a block quote/],
+    ['carriage returns alone', archived.split('\n').join('\r'), /cannot be judged: its lines end with a carriage return alone/],
+    ['a <pre> never closed', '<pre>\ncurl -s https://docs.example.com/limits', /: the file ends inside an HTML block that starts at line \d+ and is never closed/],
+  ];
+  for (const [name, body, says] of shapes) {
+    const project = makeProject(undefined, { topic: 'Unread contract', content: true });
+    const discovery = path.join(project, 'research', 'DISCOVERY.md');
+    const planPath = path.join(project, 'research', 'plan.json');
+    assert(readText(discovery).includes(head), 'the scaffold has no unknowns table');
+    writeText(discovery, readText(discovery).replace(head, body));
+    const before = { discovery: readText(discovery), plan: readText(planPath) };
+    let threw = null;
+    try { applyRequest(project, 'unread', GOOD, 1); } catch (err) { threw = err; }
+    assertEqual(threw?.code, 'TABLE_HIDDEN', `${name}: ${threw?.message ?? 'applied'}`);
+    assert(says.test(threw.message), `${name}: ${threw.message}`);
+    assertEqual(readText(discovery), before.discovery, name);
+    assertEqual(readText(planPath), before.plan, name);
+    assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'unread.plan.json')), false, name);
+  }
+});
+
+// F-1: a table GitHub shows before the one the kit reads - here with no outer pipes, the superseded
+// contract archived below it - left the request's row to go to the archive, behind the live table.
+test('a request is refused, writing nothing, while GitHub shows an unread table before the one the kit reads', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const closed = '| U-1 | Seat price | the design | CLOSED | E-01 |';
+  const bare = (row) => row.replace(/^\|\s?/, '').replace(/\s?\|$/, '');
+  const live = [...head.split('\n'), closed, '| U-2 | Burst limit | the retry design | OPEN | |'];
+  const project = makeProject(undefined, { topic: 'Unread contract', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace(head, `${live.map(bare).join('\n')}\n\n## Archive (superseded contract)\n\n${head}\n${closed}`));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try {
+    applyRequest(project, 'unread', { fact: 'What is the rate limit of endpoint Y?', blocks: 'the client design', urls: ['https://example.invalid/docs/limits'] }, 1);
+  } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'applied');
+  assert(/is shown on GitHub before the table at line \d+ that the checks read, but no check reads it: its header has no outer pipes/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'unread.plan.json')), false);
+});
+
+// G-1: a processing instruction in a paragraph left the browser in a comment that GitHub's own `-->`
+// closed later, which no check follows: the request's row went to the archived copy the comment hides.
+test('a request is refused, writing nothing, below raw HTML that leaves the browser in a comment', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const project = makeProject(undefined, { topic: 'Inline comment', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace(head, `Superseded: <?x > <!-- ?> kept below.\n\n${archived}\n\n<div>\n-->\n</div>\n\n${head}\n| U-1 | Burst limit | the retry design | OPEN | |`));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'inline', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'applied');
+  assert(/: the table at line \d+ cannot be judged: the raw HTML at line \d+ leaves an HTML comment open in the browser/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'inline.plan.json')), false);
+});
+
+// The re-review of H: a line end ends a tag's name for the browser, so a quoted value opened on the
+// next line of a paragraph was missed, and the request's row went to the archived copy it hides.
+test('a request is refused, writing nothing, below raw HTML that opens a quoted value over a line end', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const project = makeProject(undefined, { topic: 'Inline quoted value', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace(head, `Superseded: <?x > <b\ntitle=" ?> kept below.\n\n${archived}\n\n<div class="x">\n</div>\n\n${head}\n| U-1 | Burst limit | the retry design | OPEN | |`));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'quoted', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'applied');
+  assert(/: the table at line \d+ cannot be judged: the raw HTML at line \d+ leaves a quoted attribute value open/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'quoted.plan.json')), false);
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);
@@ -1301,6 +1443,32 @@ test('auto-collect refuses to resume a partial request after its unknown is clos
   assert(/already CLOSED/.test(row.detail), row.detail);
   assertEqual(calls(w).length, 1, 'the closed unknown was collected again');
   assertEqual(readAutoCollect(w.m.env).spent.pages, 1, 'the closed unknown spent additional pages');
+});
+
+// Found 2026-11-06 by the re-review of #441's writer (finding 6). With the project's evidence table
+// hidden, research.mjs refused with TABLE_HIDDEN and wrote no accounting, and auto-collect read the
+// exit as an accounting failure: the reserved pages were charged, the queue paused, and the request
+// went back as failed. It is refused before anything is reserved, run or written.
+test('auto-collect refuses a request into a project whose evidence table is hidden, before it reserves, runs or writes', async () => {
+  const w = world();
+  saveAutoCollect({ mode: 'auto' }, w.m.env);
+  const evidence = path.join(w.builder, 'research', 'EVIDENCE.md');
+  writeText(evidence, readText(evidence).replace('| ID |', '<!-- notes\n\n| ID |'));
+  git(w.builder, w.m.env, 'add', 'research/EVIDENCE.md');
+  git(w.builder, w.m.env, '-c', 'core.hooksPath=', 'commit', '-q', '--no-verify', '-m', 'hide the evidence table');
+  git(w.builder, w.m.env, 'push', '-q');
+  builderPushes(w, 'burst-limit', GOOD);
+  const discovery = path.join(w.collector, 'research', 'DISCOVERY.md');
+  const contract = readText(discovery);
+  const status = await loop(w).cycle();
+  const row = status.requests.find((r) => r.id === 'burst-limit');
+  assertEqual(row.status, 'refused', JSON.stringify(row));
+  assert(/research\/EVIDENCE\.md: the file ends inside an HTML comment/.test(row.detail), row.detail);
+  assertEqual(calls(w).length, 0, 'research.mjs ran');
+  assertEqual(readAutoCollect(w.m.env).spent.pages, 0, 'pages were charged');
+  assertEqual(status.paused, '');
+  assertEqual(readText(discovery), contract, 'the request was written into the contract');
+  assert(!fs.existsSync(path.join(w.collector, 'research', 'requests', 'burst-limit.plan.json')), 'the request plan was written');
 });
 
 test('partial delivery retries before pause checks and does not spend another page', async () => {

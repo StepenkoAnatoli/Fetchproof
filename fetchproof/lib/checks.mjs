@@ -7,7 +7,7 @@
 // A check emits findings. It never decides what a finding MEANS for the build - that is
 // the verdict's single judgement, in lib/preflight.mjs.
 
-import { hostOf, siteOf, PATHS, resolve, exists, ageInDays, urlKey, readText, kitCommand, compareText } from './core.mjs';
+import { hostOf, siteOf, PATHS, HEADERS, resolve, exists, ageInDays, urlKey, readText, kitCommand, compareText } from './core.mjs';
 import { captureOf, traceOf, citedIds, parseCapture, ledgerRank, requestedUrl } from './corpus.mjs';
 import { documentGroups, closestPair } from './similarity.mjs';
 import { coverageOfUniversals } from './dimensions.mjs';
@@ -97,7 +97,38 @@ function discoveryContract(corpus) {
 
 // ---------------------------------------------------------------- 2. citations
 
+/**
+ * The evidence table this corpus lost, as `{ rule, detail }`, or null (ADR-0199). A missing
+ * `research/EVIDENCE.md`, a directory in its place, or a file holding no evidence table was read
+ * as an empty table: corpus-shape said the corpus parsed cleanly, citations vouched for its zero
+ * rows, and a corpus of known-unknowns passed (independent audit 2026-11-04, FP-011). Both
+ * checks name it, in every gated project, as raw-missing and contract-missing are named.
+ */
+function lostEvidenceTable(corpus) {
+  const file = corpus.evidenceFile;
+  if (file.present && file.found) return null;
+  if (!file.present) {
+    return {
+      rule: 'evidence-missing',
+      detail: file.unreadable
+        ? `${PATHS.evidence} is not a readable file (a directory, or a file that could not be read)`
+        : `${PATHS.evidence} does not exist`,
+    };
+  }
+  return {
+    rule: 'evidence-unparsed',
+    detail: `${PATHS.evidence} holds no evidence table (a header row of ${HEADERS.evidence.join(' | ')}, outside a code block or an HTML comment)`,
+  };
+}
+
 function citations(corpus) {
+  // With the table lost there is no row to vouch for: the pass over zero rows vouched for
+  // nothing, and a run of this check alone passed over the loss.
+  const lost = lostEvidenceTable(corpus);
+  if (lost) {
+    return [finding('fail', 'citations', lost.rule,
+      `${lost.detail} - every citation rests on a row of that table, so none can be checked; restore the file (from git, or from the handoff it came in) rather than editing the citations that now point at nothing`)];
+  }
   const out = [];
   let quoted = 0;
   for (const row of corpus.evidence) {
@@ -1301,6 +1332,11 @@ function corpusShape(corpus) {
   if (!corpus.rawPresent) {
     out.push(finding('fail', 'corpus-shape', 'raw-missing',
       `${PATHS.raw}/ does not exist - a gated project needs somewhere to keep its captures`));
+  }
+  const lost = lostEvidenceTable(corpus);
+  if (lost) {
+    out.push(finding('fail', 'corpus-shape', lost.rule,
+      `${lost.detail} - a gated project keeps its evidence table there; restore the file rather than editing the citations that now point at nothing`));
   }
   if (!out.length) out.push(finding('pass', 'corpus-shape', 'shape', 'the corpus parses cleanly'));
   return out;

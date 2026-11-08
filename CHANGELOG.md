@@ -5,6 +5,110 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: a lost evidence table is named, and no check passes over it** (independent audit 2026-11-04, FP-011,
+  alias B-2). `readCorpus` read a missing `research/EVIDENCE.md`, a directory in its place, or a file holding no
+  evidence table as an empty table, with no problem recorded: `corpus-shape` said "the corpus parses cleanly",
+  `citations` said "0 evidence rows, each with a cached page", the only failures were the citations that now
+  dangled, and a corpus whose unknowns were all KNOWN-UNKNOWN passed. `citations` now returns one
+  `evidence-missing` or `evidence-unparsed` fail and nothing else, and `corpus-shape` names the same beside
+  `raw-missing`, in every gated project; the dangling citations are still named (ADR-0199). Four tests.
+- **Fixed: the browser route refuses a proxy it cannot speak to, instead of sending it the credential in
+  clear** (independent audit 2026-11-04, F02). The guard proxy writes its requests and CONNECT lines to the
+  upstream in plain HTTP, and `parseUpstream` read an `https://` proxy URL as such a proxy on port 443: behind
+  `HTTPS_PROXY=https://user:pass@proxy:8443` the CONNECT line and its `Proxy-Authorization` header went in clear
+  to a port that expects TLS. Any scheme but `http:` is now refused before the guard listens, so the render
+  answers `GUARD` before a browser is launched and nothing reaches the proxy; the refusal never falls back to a
+  direct connection, its message never contains the credential, and under `NO_PROXY=*` the upstream is not read
+  (ADR-0198). A scheme-less `host:port` is still plain HTTP. Two tests.
+- **Fixed: a ZIP entry name another platform reads as a different name is refused** (independent audit
+  2026-11-04, F03). The artifact reader judged a name by its spelling while an extractor writes it by its
+  meaning: `project/research//BRIEF.md` validated PASS beside the reviewed brief and extracted onto it,
+  `research/gate_off` and `research//GATE_OFF` carried the gate override past the never-packaged check, and a
+  trailing dot, an NTFS stream, a device name or a case-folded file-folder pair each meant another file on
+  Windows. `checkEntryName` now also refuses an empty segment, a character Windows does not allow, a segment
+  ending in a dot or a space, a device name and an 8.3 short-name shape; duplicates, collisions and the
+  never-packaged paths are compared by one key that folds case and Unicode form, and the never-packaged paths
+  are matched as folders too. The producer refuses the same names before it writes (ADR-0197). Thirteen tests.
+- **Fixed: a table in an HTML comment or a code block is no longer read as the contract** (independent audit
+  2026-11-04, F01; review of #441, 2026-11-06). The header search took the first table with the header wherever
+  it stood, so an archived CLOSED copy of the unknowns table, commented out or kept as a fenced example above the
+  live one, was read in its place: a visible OPEN unknown passed preflight and the portable state derived
+  `buildAuthorized: true`. The header search, the stray-row scan and the heading above a table now share one
+  reading of what GitHub shows as code or hides, `hiddenLines`, which follows cmark-gfm's block parser, the one
+  GitHub renders with, line by line: fences, indented code, HTML blocks and comments - a comment reopened by a
+  `<!--` after its `-->` - inside list items, block quotes and footnote definitions (ADR-0203). Read at first
+  from trimmed lines, an indented example of a fence or a comment hid every
+  table below it, and an archived copy after a list marker or in a reopened comment was still read. `appendRow`
+  writes into the table the reader reads, and refuses (`TABLE_HIDDEN`), writing nothing, where its row would be
+  hidden: below a fence or a comment never closed it started a new table inside the block, read by nothing, and
+  numbered its row E-01 again on every run (ADR-0204). A collection, phase 0 and a dry run ask the same before
+  anything is spent, and `collectOne` again before each fetch; `decompose.mjs` now answers the kit's named
+  refusals with their message and exit 2, where it printed a stack under exit 1. The re-review of the fix found five
+  more departures from GitHub's reading, each since checked on GitHub's renderer: with a byte-order mark before it,
+  a fence or a comment opened on the first line was not seen; an empty list item stayed open across a blank line,
+  and a heading's `===` or `--` was read as paragraph text, so a copy indented four below either was read; a list
+  item's lazy continuation line ended the item, so a table indented in it, which GitHub shows, was read as code;
+  and a line of 40,000 list markers took 18-23 s to read. Auto-collect now refuses a request into a project whose
+  evidence or sources table is hidden before it reserves anything: it had charged the pages and paused the queue.
+  The re-review of that fix (2026-11-07) found its own shortcuts reading six more shapes otherwise than GitHub, and
+  the reading was ported to cmark-gfm's rules: an item it ended early let a comment or a fence below it be read as
+  text, so an archived CLOSED copy there passed preflight again and `appendRow` wrote into it; a header and
+  delimiter row written as lazy lines below an item, which GitHub makes no table of, were read as a table, and
+  rows at column 0 below a table in an item as its rows; a footnote definition held nothing, and one nothing
+  refers to, which GitHub leaves out, was read; a carriage return alone, a line end on GitHub, hid a fence's
+  opener; two scans took time in the square of their input; and a comment cut off by its item, which leaves the
+  rest of the page hidden, was taken as closed. A header GitHub makes no table of, and a row it shows apart from
+  its table, are now named with why, the writer refuses in the same words, and a row is written at the
+  indentation of the row it follows. The re-review of the port (2026-11-07) found the writer numbering past
+  where the reader stops: in a table it found but stopped in above rows GitHub still shows, a new row went in
+  above the stop with the next id there, a second U-2 beside one no check read. A write into a table the reader
+  does not read whole is now refused - evidence, sources, and the contract a request is applied to - and a dry run
+  of `decompose` leaves such a map, which it wrote over; `escapeCell` writes a carriage return alone, a line end
+  on GitHub that split the sources table under a fetched title holding one, as a space. A table in a footnote
+  definition, which GitHub shows below the body, is read only when the body holds none, and one in a definition
+  GitHub drops for repeating a label not at all; a comment reopened after its `-->` is closed only by a `-->`
+  GitHub writes as it stands; each line of nested footnote definitions is marked once, where they took 3.9 s
+  on 200,000 lines; and a lazy header and lazy lines below a footnote definition are named in their own words.
+  The re-review of that fix (2026-11-07) found comments read in the file's order, though GitHub shows the
+  footnotes below the body: below a comment the body never closed, an archived CLOSED contract in a footnote
+  passed preflight where GitHub shows no table or the live OPEN one, and a comment reopened in a footnote hid
+  the body's table. A comment the body leaves open now hides the footnotes too, and one a footnote leaves open
+  only what GitHub shows after it; a `[^label]` in a code span, a link or raw HTML no longer keeps a definition
+  GitHub drops; nested definitions are each read in their own place; and a file ending inside a `<pre>` or a
+  `<script>` never closed takes no table at its end. A table GitHub shows that no check reads - with no outer
+  pipes, in a block quote, or ended by carriage returns alone - got a second table beside it, numbered from U-1
+  or E-01 again; the writers now refuse beside it, naming the shape to fix. The re-review of that fix (2026-11-07)
+  found such a table named only where no table was read: with an archived copy of its header further down, the
+  copy was read as the contract, and preflight passed while the table GitHub shows first held an OPEN unknown. It
+  is now a `table-split` problem wherever it stands before the table the checks read, and the writers refuse; one
+  ended by carriage returns alone is named as a table no check can place, not as one GitHub shows. A `[^label]` is
+  read by cmark-gfm's inline parse, with the link references the file defines: three rules had dropped references
+  GitHub reads, so a definition it shows was left out and a later one's archived copy read in its place; one in a
+  cell past the header's count, or followed by a `[ref]` the file defines, was counted; a bare URL or a `www.` link
+  takes in a `[^label]` written straight after it; and a label is case-folded with its escapes and entities read,
+  while one holding an entity name the kit does not know leaves its footnotes unjudged. The body and each footnote
+  definition read their own comments and tags, so a definition's reopened comment is no longer dropped while the
+  body's is open, and a comment or a tag left open in an HTML block of any type hides what follows. GitHub's page
+  is one HTML stream, and what it writes between two HTML blocks can end a tag or a comment the kit keeps open: a
+  table it may then show first, and every table read after an HTML block the browser may read from text, cannot
+  be judged and are named so, where preflight passed on a CLOSED copy below the OPEN table GitHub shows, and the
+  writers refuse beside them. The re-review of that fix (2026-11-08) found inline HTML opening what the kit never
+  saw: GitHub writes a paragraph's, a heading's or a cell's raw HTML as it stands, and the browser ends a
+  processing instruction or a CDATA section at a `>` inside it, and a comment at `--!>`, so a `<!--` or a quoted
+  value after one hid the table below, and a `<select>` left open drops the tables after it: an archived CLOSED
+  copy below either passed preflight again, and a request went into it. The tables after them, and the end of a
+  file they leave in doubt, now cannot be judged, and the writers refuse there. The re-review of that fix found
+  raw HTML over a line end read without it, where the browser takes a line end for white space: a quoted value
+  or a comment opened on the next line still hid the table below, and a CLOSED copy was read; and the texts in
+  doubt marked the lines in time quadratic in the file. Both are fixed. Three rules of the inline parse
+  differed from cmark-gfm's: a link deactivated the brackets around it for good, where a later bracket opens them
+  again; a label was case-folded by Node's Unicode, newer than GitHub's fold tables; and an inline link whose
+  destination leaves a `(` open was taken for none. `upsertRow` of a new key reads the file once. Sixty-eight tests.
+- **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
+  2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
+  reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same
+  function blocked it. It is now an unreadable index (`scratch-failed`) and blocks, with a fix that names the temp
+  folder. One test.
 - **Fixed: the gate reads the address a fetch asked for when that URL holds whitespace** (PR #440 review round 5,
   BR5-1 and its fix review, ADR-0193 decision 8). Every transport writes an argument holding whitespace
   JSON-quoted, and `requestedUrl` split the command on whitespace before it removed quotes, then tested the scheme

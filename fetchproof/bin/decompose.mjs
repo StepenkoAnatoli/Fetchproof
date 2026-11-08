@@ -4,7 +4,7 @@
 // Gathers material with the transport, so a BUILDER machine refuses it (exit 2).
 // It writes a checklist with statuses BLANK: the tool contains no judgment.
 
-import { parseFlags, refuseUnknownFlags, checkFlagValues, listFiles, writeFailure } from '../lib/core.mjs';
+import { parseFlags, refuseUnknownFlags, checkFlagValues, listFiles, writeFailure, NAMED_RUN_REFUSALS } from '../lib/core.mjs';
 import { collectionPolicy, collectionRefusal } from '../lib/machine.mjs';
 import { selectTransport, TRANSPORT_NAMES, SEARCH_PROVIDER_NAMES, unusedKeyNote } from '../lib/transport.mjs';
 import { decompose, searchSummary, resolveTopic, RECIPE_DIR } from '../lib/decompose.mjs';
@@ -159,6 +159,13 @@ try {
   }
   if (err.code === 'UNKNOWN_RECIPE' || err.code === 'INVALID_RECIPE' || err.code === 'INVALID_BUDGET' || err.code === 'SEARCH_PROVIDER_NOT_READY') {
     process.stderr.write(`${err.message}\n`);
+    process.exit(2);
+  }
+  // The refusals the kit writes itself - a ledger that cannot record, a held lock, a table
+  // no reader reads - are answered as research.mjs answers them: the message and exit 2.
+  // Re-thrown, they printed a stack trace under exit 1, which reads as FAIL (ADR-0204).
+  if (NAMED_RUN_REFUSALS.has(err?.code)) {
+    process.stderr.write(`decompose: ${err.message}\n`);
     process.exit(2);
   }
   throw err;

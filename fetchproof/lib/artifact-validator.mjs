@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256, tempBase, looksBinary, HEADERS } from './core.mjs';
-import { openZip, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
+import { openZip, pathKey, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
 import { parseJsonNoDuplicates } from './release/json.mjs';
 import { validateJsonSchema } from './release/schema.mjs';
 import { readCorpus, parseTable } from './corpus.mjs';
@@ -269,9 +269,21 @@ export function validateArtifact({
         { path: name, remedy: 'the package is incomplete; regenerate it from the original corpus' });
     }
 
-    for (const name of FORBIDDEN_PAYLOAD) {
-      if (!zip.has(name)) continue;
-      reject('FAIL', 'FILE-UNDECLARED', `${name} must never be packaged - it is machine-local state, not evidence`,
+    // By pathKey, and as a folder as well as a file (independent audit 2026-11-04, F03): an
+    // extractor on Windows or macOS writes `research/gate_off` onto GATE_OFF, a folder of that
+    // name answers the gate's `exists()` as a file does, and a file below it makes the folder.
+    const forbidden = new Map(FORBIDDEN_PAYLOAD.map((name) => [pathKey(name), name]));
+    for (const name of [...zip.names, ...zip.directories]) {
+      const key = pathKey(name.replace(/\/$/, ''));
+      let hit = forbidden.get(key);
+      for (const [forbiddenKey, forbiddenName] of forbidden) {
+        if (hit === undefined && key.startsWith(`${forbiddenKey}/`)) hit = forbiddenName;
+      }
+      if (hit === undefined) continue;
+      let named = name;
+      if (name !== hit && key === pathKey(hit)) named = `${name} is ${hit} ${name.endsWith('/') ? 'as a folder' : 'where case or Unicode form is folded'}, and ${hit}`;
+      else if (name !== hit) named = `${name} makes a folder ${hit}, and ${hit}`;
+      reject('FAIL', 'FILE-UNDECLARED', `${named} must never be packaged - it is machine-local state, not evidence`,
         { path: name, remedy: 'regenerate the artifact with a producer that excludes it' });
     }
     for (const name of payload) {
