@@ -1,12 +1,15 @@
 # ADR-0203 — Which lines GitHub shows as code or hides is read in columns, inside list items
 
-- **Date:** 2026-11-06 (amended 2026-11-07)
+- **Date:** 2026-11-06 (amended 2026-11-07 and 2026-11-08)
 - **Status:** accepted
-- **Area:** `fetchproof/lib/corpus.mjs` (`hiddenLines`, `parseTable`, `notATable`, `tableHidden`)
+- **Area:** `fetchproof/lib/corpus.mjs` (`hiddenLines`, `footnoteRefs`, `feedHtml`, `parseTable`,
+  `notATable`, `tableHidden`)
 - **Prompted by:** the fresh-eyes review of PR #441 (2026-11-06), findings 3 and 4, the
   re-review of its fix (2026-11-06), findings 1-5, the re-review of 9b9afaa (2026-11-07),
-  findings F-A to F-E and N1, the re-review of 88fe19a (2026-11-07), findings F2-F6, and the
-  re-review of 116a2a3 (2026-11-07), findings 1 and 3-5
+  findings F-A to F-E and N1, the re-review of 88fe19a (2026-11-07), findings F2-F6, the
+  re-review of 116a2a3 (2026-11-07), findings 1 and 3-5, the re-review of dde656a
+  (2026-11-07), findings F-1 to F-4, and the re-review of 50b18d1 (2026-11-08), findings G-1
+  to G-6
 - **Extends:** the F01 fix of the same branch (independent audit 2026-11-04, F01: a table in a
   code block or an HTML comment is not the table), which had no ADR
 - **Freeze (ADR-0117):** a bug fix. F01's rule is that a table GitHub shows as code or hides is
@@ -98,21 +101,69 @@ found two defects in that reading.
     open past a `-->` in a footnote definition, which GitHub shows below the body; and a comment
     cut off inside a footnote definition hides the rest of that definition and the definitions
     GitHub shows after it - a table in either was read - but not one it shows before it.
+- **The re-review of dde656a found four more in the reading** (2026-11-07; its F-5 and F-6 are
+  the writer's, ADR-0204), each where a rule of the reader's own stood in for GitHub's inline
+  parse or for the browser:
+  - F-1: a table GitHub shows that the header search passes over - its header without outer
+    pipes, in a block quote, on a list marker's or a footnote label's line, or its lines ended by
+    a carriage return
+    alone - was named only when no table was read. With an archived copy of the header further
+    down, the copy was read as the contract, and preflight passed while the table GitHub shows
+    first held an OPEN unknown.
+  - F-2: three rules dropped references GitHub reads - `<!` and any letter taken for a
+    declaration, which needs uppercase letters and a space after them; a label given up at a
+    backtick or a `<` where no code span or tag starts; and a reference followed by `(` with no
+    link after it - so a definition GitHub shows was left out, and the next one's archived copy
+    read in its place: preflight passed on a CLOSED copy.
+  - F-3: two references GitHub does not read were counted: one in a row's cell past the header's
+    count, which GitHub drops unparsed, and `[^label]` followed by `[ref]` where a link reference
+    definition defines `ref`, which GitHub reads as a link.
+  - F-4: one comment state served the body and every footnote definition, so a definition's own
+    reopened comment was dropped while the body's was open, and the archived copy it hides read.
+  - Found while fixing them, each checked on GitHub's renderer: a bare URL or a `www.` link written
+    straight before a `[^label]` takes it in, outside brackets only; `![^label]` opens no image; a
+    label is the text GitHub merges into one - escapes and entities decoded, up to a code span,
+    inline HTML or a line break - and is case-folded, as a definition's label is, not lowercased;
+    a comment or a tag left open in an HTML block of any type, not only a comment's, hides what
+    follows; a footnote definition the body's open comment reaches in the file is shown when the
+    body closes the comment further down; and a label holding an entity name the kit does not know
+    cannot be judged.
+- **Found while fixing those, in the fix's own first reading** (2026-11-08), each rendered by
+  GitHub. GitHub's page is one HTML stream, and what it writes between two HTML blocks - a
+  paragraph's raw inline HTML, the markup of every block - can end a tag or a comment the first
+  one left open, where the kit, reading only the blocks, keeps it open:
+  - shapes this ADR had named as read more strictly than GitHub - a reopened comment closed only by
+    an HTML block's `-->`, a comment the body leaves open hiding every footnote, a footnote's comment
+    hiding past a `-->` - were not stricter wherever a later table is read. GitHub showed the OPEN
+    table the kit hid, above the CLOSED copy the checks read, and preflight passed;
+  - a tag left open hid every table to its close, where the browser ends it at the first `>` or
+    quote mark GitHub writes, and showed the OPEN table above the copy read;
+  - an HTML block after such a tag or comment was read in the state the kit kept, where the browser
+    may read it from text: a `<!--` or an open value in it hid, on GitHub, the table the kit read,
+    in the body, in a footnote below a body that did so, and in the footnote after one that did;
+  - a table without outer pipes that a tag hides was never weighed, as the doubt was looked for
+    only at the headers the header search takes: GitHub showed it first, and the copy below passed.
 
 ## Decision
 
 1. **One pass over the raw lines, `hiddenLines(lines)`,** returns, line by line: `at`, the block
    that hides a line - `{ kind: 'fence' | 'indented' | 'comment' | 'html' (with its `type`) |
-   'footnote', line }`, naming the line that opened it, for a reopened comment the line of the
-   `-->` it was reopened after (`reopened`), and for a comment a footnote definition leaves open
-   that definition's line (`footnote`); `open`, a fence, an HTML block of type 1 or 3 to 5, a
-   comment or a reopened comment the body ends inside, or a comment cut off in the body where the
-   block holding it ends (`runaway`); `heads`, whether GitHub makes a table of a header there, or
-   why not; `rowOf`, the table a line is a row of; `segs`, how many lines GitHub reads in it;
-   `endWhy`, why a table ended there; `note`, the innermost footnote definition GitHub shows that
-   holds a line, with its place in the footnotes' order; and `tables`, every table GitHub makes,
-   with its header as GitHub read it. The header search, the stray-row scan, the search for the
-   heading above a table and the writer (ADR-0204) all ask it.
+   'tag' | 'footnote', line }`, naming the line that opened it, for a reopened comment the line of
+   the `-->` it was reopened after (`reopened`), and for a comment or a tag a footnote definition
+   leaves open that definition's line (`footnote`); `open`, a fence or an HTML block of type 1 or
+   3 to 5 the body ends inside, a comment or a tag it leaves open, or a comment cut off in the body
+   where the block holding it ends (`runaway`); `heads`, whether GitHub makes a table of a header
+   there, or why not; `rowOf`, the table a line is a row of; `segs`, how many lines GitHub reads in
+   it; `endWhy`, why a table ended there; `note`, the innermost footnote definition GitHub shows
+   that holds a line, with its place in the footnotes' order; `tables`, every table GitHub makes,
+   with its header as GitHub read it; `uncertain`, the first reference whose label the kit
+   cannot decode (decision 7); and `doubtOf`, whether GitHub may show a line the kit hides, or hide
+   one it shows - a tag with the block GitHub wrote first after it (`first`), a comment with the
+   `-->` that may close it (`closer`), a line past an HTML block the browser may read otherwise,
+   or past inline HTML or a `<select>` that may leave it in a comment, a quoted value or a select
+   (`unsure`; decision 8); and `endUnsure`, the first of those that leaves the body's end in
+   doubt. The header search, the stray-row scan, the search for the heading
+   above a table and the writer (ADR-0204) all ask it.
 2. **cmark-gfm's block parser, line by line** - the parser GitHub renders with; `blocks.c` and
    `table.c` read on 2026-11-07:
    - a line ends at LF, CR LF or a carriage return alone; a NUL reads as U+FFFD; a byte-order mark
@@ -138,24 +189,48 @@ found two defects in that reading.
      with an optional `:` at either end, between pipes or with none (`:--`); after one failed
      attempt that paragraph makes none. Its rows are the lines below it that are not blank and
      start no block, to a cap on its cells;
-   - a comment's `-->` ends its block. A `<!--` after it reopens the comment in GitHub's page,
-     which keeps it open to the next `-->` GitHub writes as it stands, an HTML block's - one in a
-     paragraph or in code is written `--&gt;` (F3) - and a comment cut off where its container
-     ends (N1) hides the rest of the file;
-   - a comment's reach is read in the order GitHub shows the page: the body, then the footnote
-     definitions. One the body leaves open hides every definition too, and a `-->` in a definition,
-     shown below the body, closes it for none of the body. One a definition leaves open - cut off,
-     never closed or reopened - hides the rest of that definition and the definitions shown after
-     it, and nothing of the body (finding 1);
-   - a footnote definition nothing refers to - no `[^label]`, matched without regard to case,
-     where GitHub reads one: in a paragraph, a heading or a table's cell, not in a code span, an
-     autolink or inline HTML (a tag, a comment, a processing instruction, a declaration, CDATA),
-     not escaped (`\[^label]`, `[^label\]`), and not followed by `(` (finding 3) - is left out,
-     with all it holds, and so is a label's definition that ends after another of it: the second,
-     or the one holding a nested one (cmark-gfm's `process_footnotes` keeps the first to end). The
-     others are shown below the body, in the order of their first reference (F2), a nested one
-     moved out to its own place in that order, and a line is the innermost definition's that
-     holds it (finding 4).
+   - GitHub writes an HTML block out as it stands and the browser reads what it writes, so the
+     raw lines of every HTML block, of any type, are read as the browser's tokenizer reads them
+     (`feedHtml`): a comment from `<!--` to `-->` or `--!>` (`<!-->` and `<!--->` close at once);
+     a bogus comment from `<!`, `<?`, or `</` followed by neither a letter nor `>`, to the first
+     `>`; a tag, its attributes and their quoted values, to its `>`; and the nine tags GitHub's
+     tagfilter writes out as text (`<script`, `<style` and `<textarea` among them) as text. A
+     comment or a tag a block ends inside - a `<!--` after the `-->` that ended a comment's block,
+     a `<div title="` - stays open in the page and hides what follows, to where the raw lines of a
+     later HTML block close it, unless GitHub may close it earlier (decision 8). A `-->` in text
+     or in code is written escaped (F3); the inline HTML of a paragraph, a heading or a cell - a
+     tag, a comment, a processing instruction, a declaration or CDATA, whole to cmark-gfm - is
+     written as it stands, and the browser may end it earlier and be left in a comment or a quoted
+     value, which decision 8 weighs (G-1). A comment
+     cut off where its container ends (N1) hides the rest of the file. A file that ends inside an
+     HTML block of type 3 to 5 takes in what is written at its end but hides no footnote: the
+     browser's bogus comment ends at the first `>` of the footnotes section GitHub writes below;
+   - this is read in the order GitHub shows the page: the body, then the footnote definitions,
+     each with a tokenizer of its own, as GitHub writes each in a place of its own (F-4). A comment
+     or a tag the body leaves open hides every definition too, and a `-->` in a definition, shown
+     below the body, closes it for none of the body, and leaves the definitions shown after it in
+     doubt (decision 8); a definition the comment reaches in the file is shown when the body closes
+     the comment further down. One a definition leaves open - cut off or never closed - hides the
+     rest of that definition and the definitions shown after it, and nothing of the body (finding 1);
+   - a footnote definition nothing refers to is left out, with all it holds. A reference is a
+     `[^label]` that cmark-gfm's inline parse (`inlines.c`, read on 2026-11-07) makes one of, in a
+     paragraph, a heading or a table row's cells up to the header's count (F-3), the link reference
+     definitions of the whole file known first - taken out of the paragraphs they lead, as
+     cmark-gfm takes them: not in a code span, an autolink - `<...>`, or outside brackets a bare URL
+     or a `www.` link written straight before it - or inline HTML (a tag, a comment, a processing
+     instruction, a declaration of `<!`, uppercase letters and a space, CDATA); not escaped; and
+     not part of a link - followed by an inline link `(...)`, a `(` its destination leaves open
+     kept in it as cmark-gfm keeps one (G-4), or by a `[ref]` a definition defines, or holding a
+     link, which deactivates the brackets around it until a bracket not an image's opens after it
+     (cmark-gfm's `no_link_openers`; F-2, F-3, G-2). A `!` before it opens no image. Its label is the text GitHub merges into one - escapes and entities decoded, up to
+     a code span, inline HTML or a line break - matched to a definition's after both are
+     case-folded and their spaces collapsed, as cmark-gfm matches them, by
+     GitHub's own fold tables, of Unicode 9 or 10: the cased blocks they cover are folded, and any
+     other character is kept as written (G-3). A label's definition that
+     ends after another of it is left out too: the second, or the one holding a nested one
+     (cmark-gfm's `process_footnotes` keeps the first to end). The others are shown below the
+     body, in the order of their first reference (F2), a nested one moved out to its own place in
+     that order, and a line is the innermost definition's that holds it (finding 4).
 3. **A table in indented code is not the table.** GitHub shows it as code. It was read before F01
    and after it, and below an item a blank line ended or a heading's underline until the
    re-review.
@@ -165,7 +240,11 @@ found two defects in that reading.
    reader takes is the first with the table's columns that GitHub makes a table of, outside a
    block that hides it, in the order GitHub shows them: the body's first, else the first in the
    footnote definition GitHub shows first, a header counted in the innermost definition that
-   holds it (F2, finding 4). With none, the first such header GitHub makes no
+   holds it (F2, finding 4). A table with the header that GitHub shows before it, in that order,
+   and that the header search passes over - its header without outer pipes, in a block quote, on
+   a list marker's or a footnote label's line - is a `table-split` problem with the reason and the
+   remedy, and one whose lines a carriage return alone ends cannot be judged wherever it stands
+   (F-1); the writer refuses beside both (ADR-0204). With none, the first such header GitHub makes no
    table of is a `table-split` problem, with the reason and the remedy: its header and delimiter
    row are lazy lines below a list item's paragraph, a footnote definition's or a block quote's,
    each named in its own words (F6); its header alone is, and GitHub reads its leading space as
@@ -185,27 +264,75 @@ found two defects in that reading.
    where the item or footnote holding the table ends, indented 4 past it, after a carriage return
    alone, or holding no cell - is named once, with why, and the rows run on below it are its
    consequence.
-6. **Not followed, and named here.** Eight shapes are read more strictly than GitHub shows them,
+6. **Not followed, and named here.** Three shapes are read more strictly than GitHub shows them,
    so a project is blocked, or a row refused, that GitHub would show: a table inside a block
-   quote, whose lines start with `>`, which the header search does not take (the writer refuses
-   beside it, ADR-0204); what follows a comment cut off where its block ends, hidden to the end of
-   the file, where the browser shows text again after the next raw `-->`; the rows below a line
-   of prose straight below a table, which GitHub reads as one more row and which ends the table
-   here; a reopened comment, closed only by a `-->` in an HTML block, where the browser also
-   closes it at an inline comment in a paragraph, which GitHub writes as it stands (F3); a
-   comment the body leaves open, which hides every footnote definition, where the browser shows
-   text again after a raw `-->` in one; a comment a footnote definition leaves open, which hides
-   all GitHub shows after it, past such a `-->` too; a footnote definition the body's reopened
-   comment reaches in the file, hidden though the body closes the comment further down, where
-   GitHub shows the definition below the body; and a `[^label]` followed by `(`, no reference
-   here, where GitHub reads one unless a link follows (a `(` with no link after it leaves it
-   one), so a definition it shows may be left out. One errs the other way: a `[^label]` in a link's
-   destination, a bare URL or a link reference definition is a reference here and on GitHub is
-   none, so a definition GitHub leaves out is read, with any table in it - modelling it needs
-   GitHub's inline link and autolink parse, for a shape that needs an archived table referred to
-   only from inside a URL. Three are not modelled: link reference definitions, read as a
-   paragraph's text; the rows of an HTML block of type 1, skipped by the stray-row scan though the
-   browser shows a `<pre>`'s; and a second table with the header, also shown (ADR-0204).
+   quote, whose lines start with `>`, which the header search does not take (named before the
+   table read, F-1, and refused by the writer beside it, ADR-0204); what follows a comment cut off
+   where its block ends, hidden to the end of the file, where the browser shows text again after
+   the next raw `-->`; and the rows below a line of prose straight below a table, which GitHub
+   reads as one more row and which ends the table here. The comments and tags GitHub may close
+   earlier than the kit are no longer named here: no check can judge a table they leave in doubt,
+   and it is refused (decision 8). The shapes of the inline parse once named here - a definition
+   the body's reopened comment reaches, a `[^label]` followed by `(`, one in a link's destination,
+   a bare URL or a link reference definition - are read as GitHub reads them (decision 2). Two
+   are not modelled: the rows of an HTML block of type 1, skipped by the stray-row scan though the
+   browser shows a `<pre>`'s; and a second table with the header after the one read, also shown
+   (ADR-0204).
+7. **A label holding an entity name the kit does not know cannot be judged.** The kit decodes
+   eleven names - `amp`, `lt`, `gt` and `quot`, each in capitals too, `apos`, `nbsp` and `Hat` - and every
+   numeric reference; GitHub decodes the 2,125 of HTML5. Such a label may name a definition GitHub shows, or none, and so move the
+   footnotes it shows and their order. Where the table is looked for among the footnotes, the
+   first such reference is a `table-split` problem with the remedy - write the character itself
+   or a numeric reference - and the writer refuses it before any other refusal (`uncertain`,
+   ADR-0204).
+8. **A table no check can tell GitHub shows or hides is refused.** The kit reads the raw lines
+   of HTML blocks in the pass, and the inline HTML GitHub writes as it stands after it; what GitHub
+   writes between them may end, in the browser, a tag or a comment one left open earlier than the
+   kit does. So the reading weighs it:
+   - a tag left open hides surely only the table GitHub writes first after its block (`first`):
+     the browser ends a tag at the first `>` or quote mark GitHub writes raw, and any block written
+     before the table may hold one;
+   - a comment left open hides a line surely until a `-->` that may close it on GitHub comes
+     before the line: in a paragraph, past a `<`, where it may be inline HTML GitHub writes as it
+     stands (`closer`); or, for a line in a footnote, a `-->` in a footnote GitHub shows before
+     it, in its order (`sooner`);
+   - an HTML block that starts where GitHub may already have closed what an earlier one left open
+     is read from text as well (`alt`). Where the two readings leave the browser apart at its end,
+     no line its owner reads after it can be judged, nor any footnote GitHub shows after that
+     owner: the body's doubt reaches every footnote, a footnote's those shown after it (`unsure`);
+   - the inline HTML of a paragraph, a heading or a cell - not in a code span, an autolink, an
+     image's alt text, which GitHub writes escaped, or a footnote reference's brackets, which it
+     drops (`footnoteRefs`' `spans`) - is read from text with a tokenizer of its own, each line
+     with its line end, which the browser reads as white space: one ends a tag's name or an
+     unquoted value, and the tagfilter writes a filtered tag out as text before one. The browser
+     may end what cmark-gfm takes whole earlier - a processing instruction or CDATA at a `>` in
+     it, a comment at `--!>` - and be left in a comment or a quoted value; and a `<select>` left
+     open where its block ends, an HTML block's too, drops the tables GitHub writes after it until
+     `</select>`, another `<select>`, an `<input>` or a `<keygen>`, or the end of the cell it is
+     in. Either leaves its owner `unsure` from that line on, with the table that cell is in (G-1,
+     G-5; the line ends, the re-review of 50c0afd, A);
+   - every table GitHub makes with the header is weighed so, whether the header search takes it
+     or passes it over (`doubtOf`). The first in GitHub's order that is in doubt - before the table
+     read, that table itself, or anywhere when none is read - is a `table-split` problem naming
+     the tag or the comment, with the remedy: close it inside its block, or write inline HTML in
+     a code span or escape its `<`. The writer refuses (`doubt`, ADR-0204), and with no table
+     read refuses the end of the file past what leaves the body in doubt (`endUnsure`).
+
+   Where it is not exact, the reading errs to a refusal, in each shape rendered on GitHub: an
+   HTML block counts as a block written; a
+   paragraph of link reference definitions alone, which GitHub writes as nothing, counts as one; a
+   container's end counts as one, though the end tag GitHub writes there ends any tag but one in a
+   quoted value, and to the writer a tag the body leaves open at the end of the file hides what it
+   would add below, even past the list item or block quote that holds the tag; a `<` once seen in
+   a comment's hidden paragraphs counts for the rest of them; any `-->` in a footnote counts as one
+   that may close; and the doubt lasts to its owner's end and over the footnotes shown after it,
+   though a later block may bring the two readings together. So a table GitHub surely hides or
+   surely shows may be refused - one below `<div title="x` and a paragraph, which no written block
+   ends, is one, and a row the writer would add below a `<?php`, a `<!DOCTYPE` or a CDATA section
+   left open at the end of a list item or a block quote, which GitHub shows (2026-11-08), another;
+   so are a table below inline HTML that leaves a comment open, which a later HTML block's `-->`
+   closes, below a `<select>` a later block or line closes, and below a `<select>` in a cell of a
+   raw `<table>`, all of which GitHub shows (G-1, G-5).
 
 ## Rejected alternatives
 
@@ -256,12 +383,37 @@ found two defects in that reading.
   re-review of 116a2a3 offered for finding 1). A comment a definition leaves open hides only what
   GitHub shows after it, and nothing of the body; hidden as well, the body's table and a
   definition GitHub shows before it, whole on its renderer, would block a contract GitHub shows.
+- **Name or refuse a table in doubt only where no table is read.** The table GitHub shows above
+  the one the checks read is the false PASS itself: the CLOSED copy below passed.
+- **Document the doubtful shapes as residuals,** as decision 6 first did. Rendered by GitHub, each
+  showed a table the kit hid above the one read, or hid the one read: a false PASS is not a
+  residual.
+- **Model GitHub's markup exactly.** Which `-->`, `>` or quote mark reaches the page raw depends on
+  the whole inline parse and on the sanitizer: modelled exactly, it is the renderer itself.
+- **Take any `-->` in a footnote, in the file's order, as one that may close a comment a footnote
+  left open.** A footnote GitHub shows after the table is no closer before it: so read, a table
+  GitHub surely hides - in a footnote shown between two nested ones - was named as one no check
+  can judge.
+- **Take any `-->` in a hidden paragraph as one that may close a comment.** GitHub writes one with
+  no `<` before it as `--&gt;`, text, and the comment stays open: a correct project hiding an
+  archived copy below such a line would be blocked.
+- **Count every HTML block after a tag or a comment GitHub may have closed as leaving what follows
+  in doubt, without reading it a second time.** It refuses the commonest block there, a closed
+  `<div>` ... `</div>`, which the browser reads the same either way.
+- **Ship HTML5's 2,125 entity names** (cmark-gfm's `entities.inc`). A table kept by hand beside the
+  reading, for a label no contract needs; refused instead, with a remedy of one edit.
+- **Read an unknown entity as its text, or as matching any definition.** As text, a definition
+  GitHub shows may be left out and the next one's copy read; as a wildcard, one GitHub leaves out
+  may be read.
 
 ## Consequences
 
 - The header search, the stray scan, the section heading and the writer are judged by one
   reading, so a table is hidden or shown wherever it stands by the same rule.
 - The residuals of decision 6 remain, each named with the way it errs.
+- A table no check can judge is refused (decisions 7 and 8), so a correct project may be blocked
+  until the tag or the comment is closed inside its block, or the label is written plainly; the
+  reason names the block or the label, and the remedy is one edit.
 - Each rule the re-reviews raised was checked on GitHub's own renderer (`gh api markdown`): 22
   synthetic cases on 2026-11-06 - an empty item before a blank line, `===` and `--` under a
   paragraph, lazy lines of text, of `===`, of `:--`, of `>`, `#` and `[^x]:`, delimiter rows with
@@ -273,19 +425,33 @@ found two defects in that reading.
   definitions shown before and after one another; `[^label]` in code spans, comments, tags,
   processing instructions, autolinks, links, bare URLs, link reference definitions, headings and
   table cells, escaped or not, and followed by `(`; nested definitions both referred to; and the
-  shapes of a table the header search passes over. Where the reader departs from it, decision 6
-  names the departure.
+  shapes of a table the header search passes over. On 2026-11-08, for decision 8: eleven shapes of
+  a tag or a comment left open with a table below it that GitHub may show, and six of an HTML
+  block after one, in the body and in footnotes, and of a table without outer pipes that a tag
+  hides. For the re-review of 50b18d1, the same day: inline HTML the browser ends early in
+  paragraphs, headings, cells, list items, link text, image alt text and footnote definitions
+  and their references; `<select>` there and in HTML blocks, and what closes it; brackets around
+  a link; labels in and past the blocks GitHub's fold tables cover; and link destinations that
+  leave a `(` open. For the re-review of 50c0afd, the same day: raw HTML over a line end - after
+  a tag's name, an attribute's name, an unquoted value or a filtered tag's name, and a `>` in a
+  value - in paragraphs, list items, block quotes, setext headings and footnote definitions.
+  Where the reader departs from it, decision 6 names the departure.
 - The reading is linear in the file. Each line is read once; a line left blank by its containers'
   prefixes finds the containers it ends by a binary search over two lists kept as they open, not
   by walking each; `isSeparator` reads a line in one pass; and the stray-row scan finds once where
   the rows run on below a named line end; a line of nested footnote definitions is marked once,
   in one sweep over the definitions as they nest, with the innermost (F4, finding 4); and a
   paragraph's references are found in one pass, a code span's closer by a pointer kept for each
-  length of backtick run, a quote's and a `-->`'s next place remembered. 40,000 markers on a line
+  length of backtick run, a quote's and a `-->`'s next place remembered; an HTML block read from
+  text as well (decision 8) is read once more, no more, and so is the inline HTML of a text, its
+  lines counted as the read goes; and each owner's lines are marked once, from the first of its
+  texts in doubt (the re-review of 50c0afd, B: each such text had marked them to the file's end,
+  and 20,000 took 3 to 5 s). 40,000 markers on a line
   with 40,000 lazy lines below, 40,000 characters of a delimiter row's, 16,000 rows below a line
   that ended the table, a tag of 50,000 attributes, 7,200 nested footnote definitions over
-  200,000 lines, and a paragraph of 4,000 backtick runs or of 100,000 to 200,000 comments, tags
-  or labels never closed are each read within the tests' 2 s bound.
+  200,000 lines, a paragraph of 4,000 backtick runs or of 100,000 to 200,000 comments, tags
+  or labels never closed, and 40,000 paragraphs or 20,000 footnote definitions whose raw HTML
+  each leaves a comment open are each read within the tests' 2 s bound.
 - `open`, `heads` and `tables` let the writer refuse a row that would be hidden, left in a table
   GitHub does not show, or written beside one it shows that the reader does not read (ADR-0204).
 
@@ -298,3 +464,5 @@ found two defects in that reading.
   only by `<!` and an uppercase letter are read as GitHub's cmark-gfm reads them on 2026-11-07,
   not as the newest CommonMark does.
 - GitHub changes how it renders a comment left open.
+- GitHub's fold tables move to a newer Unicode (G-3), or browsers change what a `<select>` keeps
+  of the tags written inside it (G-5).
