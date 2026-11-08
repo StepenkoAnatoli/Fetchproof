@@ -302,13 +302,15 @@ found two defects in that reading.
      owner: the body's doubt reaches every footnote, a footnote's those shown after it (`unsure`);
    - the inline HTML of a paragraph, a heading or a cell - not in a code span, an autolink, an
      image's alt text, which GitHub writes escaped, or a footnote reference's brackets, which it
-     drops (`footnoteRefs`' `spans`) - is read from text with a tokenizer of its own. The browser
+     drops (`footnoteRefs`' `spans`) - is read from text with a tokenizer of its own, each line
+     with its line end, which the browser reads as white space: one ends a tag's name or an
+     unquoted value, and the tagfilter writes a filtered tag out as text before one. The browser
      may end what cmark-gfm takes whole earlier - a processing instruction or CDATA at a `>` in
      it, a comment at `--!>` - and be left in a comment or a quoted value; and a `<select>` left
      open where its block ends, an HTML block's too, drops the tables GitHub writes after it until
      `</select>`, another `<select>`, an `<input>` or a `<keygen>`, or the end of the cell it is
      in. Either leaves its owner `unsure` from that line on, with the table that cell is in (G-1,
-     G-5);
+     G-5; the line ends, the re-review of 50c0afd, A);
    - every table GitHub makes with the header is weighed so, whether the header search takes it
      or passes it over (`doubtOf`). The first in GitHub's order that is in doubt - before the table
      read, that table itself, or anywhere when none is read - is a `table-split` problem naming
@@ -430,7 +432,10 @@ found two defects in that reading.
   paragraphs, headings, cells, list items, link text, image alt text and footnote definitions
   and their references; `<select>` there and in HTML blocks, and what closes it; brackets around
   a link; labels in and past the blocks GitHub's fold tables cover; and link destinations that
-  leave a `(` open. Where the reader departs from it, decision 6 names the departure.
+  leave a `(` open. For the re-review of 50c0afd, the same day: raw HTML over a line end - after
+  a tag's name, an attribute's name, an unquoted value or a filtered tag's name, and a `>` in a
+  value - in paragraphs, list items, block quotes, setext headings and footnote definitions.
+  Where the reader departs from it, decision 6 names the departure.
 - The reading is linear in the file. Each line is read once; a line left blank by its containers'
   prefixes finds the containers it ends by a binary search over two lists kept as they open, not
   by walking each; `isSeparator` reads a line in one pass; and the stray-row scan finds once where
@@ -439,11 +444,14 @@ found two defects in that reading.
   paragraph's references are found in one pass, a code span's closer by a pointer kept for each
   length of backtick run, a quote's and a `-->`'s next place remembered; an HTML block read from
   text as well (decision 8) is read once more, no more, and so is the inline HTML of a text, its
-  lines counted as the read goes. 40,000 markers on a line
+  lines counted as the read goes; and each owner's lines are marked once, from the first of its
+  texts in doubt (the re-review of 50c0afd, B: each such text had marked them to the file's end,
+  and 20,000 took 3 to 5 s). 40,000 markers on a line
   with 40,000 lazy lines below, 40,000 characters of a delimiter row's, 16,000 rows below a line
   that ended the table, a tag of 50,000 attributes, 7,200 nested footnote definitions over
-  200,000 lines, and a paragraph of 4,000 backtick runs or of 100,000 to 200,000 comments, tags
-  or labels never closed are each read within the tests' 2 s bound.
+  200,000 lines, a paragraph of 4,000 backtick runs or of 100,000 to 200,000 comments, tags
+  or labels never closed, and 40,000 paragraphs or 20,000 footnote definitions whose raw HTML
+  each leaves a comment open are each read within the tests' 2 s bound.
 - `open`, `heads` and `tables` let the writer refuse a row that would be hidden, left in a table
   GitHub does not show, or written beside one it shows that the reader does not read (ADR-0204).
 

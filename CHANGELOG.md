@@ -97,10 +97,13 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
   processing instruction or a CDATA section at a `>` inside it, and a comment at `--!>`, so a `<!--` or a quoted
   value after one hid the table below, and a `<select>` left open drops the tables after it: an archived CLOSED
   copy below either passed preflight again, and a request went into it. The tables after them, and the end of a
-  file they leave in doubt, now cannot be judged, and the writers refuse there. Three rules of the inline parse
+  file they leave in doubt, now cannot be judged, and the writers refuse there. The re-review of that fix found
+  raw HTML over a line end read without it, where the browser takes a line end for white space: a quoted value
+  or a comment opened on the next line still hid the table below, and a CLOSED copy was read; and the texts in
+  doubt marked the lines in time quadratic in the file. Both are fixed. Three rules of the inline parse
   differed from cmark-gfm's: a link deactivated the brackets around it for good, where a later bracket opens them
   again; a label was case-folded by Node's Unicode, newer than GitHub's fold tables; and an inline link whose
-  destination leaves a `(` open was taken for none. `upsertRow` of a new key reads the file once. Sixty-five tests.
+  destination leaves a `(` open was taken for none. `upsertRow` of a new key reads the file once. Sixty-eight tests.
 - **Fixed: the commit gate blocks when it cannot make the folder it reads the index into** (independent audit
   2026-11-04, A-1). A `TEMP` that does not exist made `mkdtempSync` throw out of `materializeIndex`; the hook
   reported an internal error and, fail-open by default, allowed the commit, while a git failure in the same

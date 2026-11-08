@@ -2152,6 +2152,75 @@ test('a select left open where its block ends makes the tables after it doubt', 
   assert.match(refusal(page('<select>')), /: the end of the file cannot be judged: a `<select>` at line 5 is left open where its block ends/);
 });
 
+// The re-review of H: the inline scan read each line of a span without its line end, which the
+// browser reads as white space - it ends a tag's name and an unquoted value, and the tagfilter writes
+// a filtered tag out as text before one. So a quoted value or a comment the browser opens after a
+// line end was missed, and a `>` in a value over a line end was taken for the tag's end (finding A;
+// each body rendered by GitHub, 2026-11-08).
+test('raw HTML over a line end is read with its line end, as the browser reads it', () => {
+  const T = liveTable('OPEN');
+  const comment = (at) => `the raw HTML at line ${at} leaves an HTML comment open in the browser, which hides what GitHub writes after it up to the next \`-->\``;
+  const quoted = (at) => `the raw HTML at line ${at} leaves a quoted attribute value open, and the browser ends it at the next quote mark GitHub writes, which can come before the table`;
+  const remedy = 'write that HTML in a code span or escape its `<`';
+  // [id, lines, the header in doubt, which the checks read, why]
+  const doubted = [
+    ['MLa', ['Text <?x > <b', 'title=" ?> end.', '', T], 8, quoted(5)],
+    ['MLb', ['Text <?x > <b a=1', 'title=" ?> end.', '', T], 8, quoted(5)],
+    ['MLc', ['Text <title', 'x="<!--"> end.', '', T], 8, comment(6)],
+    ['MLd', ['- Item <style', '  media="<!--"> end.', '', T], 8, comment(6)],
+    ['MLe', ['Superseded <?x > <b', 'title=" ?> kept below.', '', ARCHIVED, '', '<div class="x">', '</div>', '', T], 8, quoted(5)],
+    ['MLf', ['Text <?x > <b', 'a=1', 'title=" ?> end.', '', T], 9, quoted(5)],
+    ['MLg', ['First line.', 'Text <title', 'x="<!--"> end.', '', T], 9, comment(7)],
+    ['MLh', ['Note <?x > <b', 'title=" ?> end.', '===', '', T], 9, quoted(5)],
+    ['MLi', ['> Text <?x > <b', 'title=" ?> end.', '', T], 8, quoted(5)],
+    ['MLj', ['See[^n].', '', '[^n]: Note <?x > <b', '    title=" ?> end.', '', padBy(4, T)], 10, quoted(7)],
+  ];
+  for (const [id, body, line, why] of doubted) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, splits(table).map((p) => p.line)], [true, line, [line]], id);
+    assert.ok(splits(table)[0].detail.endsWith(` cannot be judged: ${why}, so no check can tell whether GitHub shows it - ${remedy}`), `${id}: ${splits(table)[0].detail}`);
+    assert.deepEqual([tableHidden(text, HEADERS.unknowns)?.kind, tableHidden(text, HEADERS.unknowns)?.line], ['doubt', line], id);
+    assert.equal(refusal(text), `refusing to write to research/DISCOVERY.md: the table at line ${line} cannot be judged: ${why}, so no check can tell whether GitHub shows it. A row written now could go to a table GitHub hides. Write that HTML in a code span or escape its \`<\`, then run again.`, id);
+  }
+  // A value or a comment closed over the line end, a `>` in a value included, leaves the table judged.
+  for (const [id, body] of [
+    ['MLo', ['Text <b', 'title="x><!--"> end.', '', T]],
+    ['MLp', ['Text <b', 'title="x"> end.', '', T]],
+    ['MLq', ['Text <!-- a', 'b --> end.', '', T]],
+    ['MLr', ['Text <b title', '="x><!--"> end.', '', T]],
+  ]) {
+    const text = page(body.join('\n'));
+    const table = parseTable(text, HEADERS.unknowns);
+    assert.deepEqual([table.found, table.line, statuses(text), splits(table)], [true, 8, [['U-1', 'OPEN']], []], id);
+    assert.equal(tableHidden(text, HEADERS.unknowns), null, id);
+  }
+  // With no table, a table written at the end of the file could be hidden as well.
+  const end = page('Text <?x > <b\ntitle=" ?> end.');
+  assert.deepEqual([parseTable(end, HEADERS.unknowns).found, tableHidden(end, HEADERS.unknowns)?.kind, tableHidden(end, HEADERS.unknowns)?.line], [false, 'doubt', 5]);
+  assert.equal(refusal(end), `refusing to write to research/DISCOVERY.md: the end of the file cannot be judged: ${quoted(5)}, so no check can tell whether GitHub shows a table written there. Write that HTML in a code span or escape its \`<\`, then run again.`);
+});
+
+// The re-review of H: each text in doubt marked its owner's lines from its own line to the file's
+// end, so many such texts took time in the square of the file - 5 s for 260 KB (finding B).
+test('the reader takes linear time on many texts whose raw HTML leaves something open', () => {
+  const T = liveTable('OPEN');
+  const n = 20_000;
+  const cases = [
+    // A comment left open in each of 40,000 paragraphs, above the table: the table is in doubt.
+    ['40,000 paragraphs', `${Array.from({ length: 2 * n }, () => 'x <?><!--?>').join('\n\n')}\n\n${T}`, 4 * n + 5, [4 * n + 5]],
+    // One in each of 20,000 footnote definitions, below it: the table is judged.
+    ['20,000 footnote definitions', `${T}\n\n${Array.from({ length: n }, (_, i) => `p [^f${i}]`).join('\n\n')}\n\n${Array.from({ length: n }, (_, i) => `[^f${i}]: x <?><!--?>`).join('\n\n')}`, 5, []],
+  ];
+  for (const [name, body, line, doubt] of cases) {
+    const started = performance.now();
+    const table = parseTable(page(body), HEADERS.unknowns);
+    const ms = performance.now() - started;
+    assert.deepEqual([table.found, table.line, table.rows.map((r) => r.ID), splits(table).map((p) => p.line)], [true, line, ['U-1'], doubt], name);
+    assert(ms < 2_000, `${name}: ${ms.toFixed(0)} ms - the reader is not linear`);
+  }
+});
+
 // F-6: upsertRow of a new key read and judged the file, then appendRow read and judged it again.
 test('upsertRow of a new key reads the file once', () => {
   const dir = makeProject();

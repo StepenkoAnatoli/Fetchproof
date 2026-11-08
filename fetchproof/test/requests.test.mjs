@@ -251,6 +251,25 @@ test('a request is refused, writing nothing, below raw HTML that leaves the brow
   assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'inline.plan.json')), false);
 });
 
+// The re-review of H: a line end ends a tag's name for the browser, so a quoted value opened on the
+// next line of a paragraph was missed, and the request's row went to the archived copy it hides.
+test('a request is refused, writing nothing, below raw HTML that opens a quoted value over a line end', () => {
+  const head = '| ID | Unknown | Why it blocks the build | Status | Evidence |\n|---|---|---|---|---|';
+  const archived = `${head}\n| U-1 | Seat price | the design | CLOSED | E-01 |`;
+  const project = makeProject(undefined, { topic: 'Inline quoted value', content: true });
+  const discovery = path.join(project, 'research', 'DISCOVERY.md');
+  const planPath = path.join(project, 'research', 'plan.json');
+  writeText(discovery, readText(discovery).replace(head, `Superseded: <?x > <b\ntitle=" ?> kept below.\n\n${archived}\n\n<div class="x">\n</div>\n\n${head}\n| U-1 | Burst limit | the retry design | OPEN | |`));
+  const before = { discovery: readText(discovery), plan: readText(planPath) };
+  let threw = null;
+  try { applyRequest(project, 'quoted', GOOD, 1); } catch (err) { threw = err; }
+  assertEqual(threw?.code, 'TABLE_HIDDEN', threw?.message ?? 'applied');
+  assert(/: the table at line \d+ cannot be judged: the raw HTML at line \d+ leaves a quoted attribute value open/.test(threw.message), threw.message);
+  assertEqual(readText(discovery), before.discovery);
+  assertEqual(readText(planPath), before.plan);
+  assertEqual(fs.existsSync(path.join(project, 'research', 'requests', 'quoted.plan.json')), false);
+});
+
 test('a request cannot add searches to a closed unknown', () => {
   const project = makeProject(undefined, { topic: 'Closed unknown', content: true });
   appendRow(project, 'research/DISCOVERY.md', HEADERS.unknowns, ['U-1', 'Answered fact', 'the implementation', 'CLOSED', '']);

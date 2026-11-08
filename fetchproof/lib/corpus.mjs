@@ -1572,6 +1572,8 @@ export function hiddenLines(lines) {
   // browser reads it as it reads an HTML block: what leaves it in a comment or a quoted value, or in a
   // `<select>` outside a cell, whose end closes one, leaves the owner `unsure` from that line on, and
   // the table the cell is in (G-1, G-5). Each text is read from text: a line hidden reads none.
+  const earliest = new Map();
+  const rowMarks = [];
   for (const { text, lines: where, spans, cell } of pending) {
     if (!spans?.length || at[where[0]]) continue;
     const holder = note[where[0]];
@@ -1581,19 +1583,33 @@ export function hiddenLines(lines) {
     let nl = text.indexOf('\n');
     for (const { start, end } of spans) {
       while (nl >= 0 && nl < start) { row += 1; nl = text.indexOf('\n', nl + 1); }
-      text.slice(start, end).split('\n').forEach((piece, j) => feedHtml(scratch, piece, where[row + j]));
+      // A span's lines are read with their line ends, which the browser reads as white space: one ends
+      // a tag's name or an unquoted value, and the tagfilter writes a filtered tag out as text before
+      // one (the re-review of 50c0afd, A).
+      const pieces = text.slice(start, end).split('\n');
+      pieces.forEach((piece, j) => feedHtml(scratch, j < pieces.length - 1 ? `${piece}\n` : piece, where[row + j]));
       if (scratch.state === 4 || scratch.state === 5) { u = { kind: 'tag', line: scratch.since, why: 'inline' }; break; }
     }
     if (!u && scratch.state === 1) u = { kind: 'comment', line: scratch.since, why: 'inline' };
     if (!u && scratch.select && !cell) u = { kind: 'tag', line: scratch.select, why: 'select' };
     if (!u) continue;
     const mark = { record: { kind: u.kind, line: u.line, inline: true }, line: u.line, why: u.why };
-    for (let k = u.line - 1; k < n; k += 1) if (holder ? note[k] === holder : !note[k]) unsure[k] ??= mark;
-    if (wasRowOf[where[0]] >= 0) unsure[wasRowOf[where[0]]] ??= mark;
-    if (!holder) body.unsure ??= mark;
+    const key = holder || null;
+    if (!earliest.has(key) || u.line < earliest.get(key).line) earliest.set(key, mark);
+    if (wasRowOf[where[0]] >= 0) rowMarks.push([wasRowOf[where[0]], mark]);
+  }
+  // Each owner's lines are marked once, from the first of its texts in doubt, so the marking is linear
+  // in the file however many texts are in doubt (the re-review of 50c0afd, B).
+  for (let k = 0; earliest.size && k < n; k += 1) {
+    const m = earliest.get(note[k] || null);
+    if (m && k >= m.line - 1) unsure[k] ??= m;
+  }
+  for (const [k, m] of rowMarks) unsure[k] ??= m;
+  for (const [holder, m] of earliest) {
+    if (!holder) body.unsure ??= m;
     else {
       if (!owners.has(holder)) owners.set(holder, { state: 0, since: 0, record: null });
-      owners.get(holder).unsure ??= mark;
+      owners.get(holder).unsure ??= m;
     }
   }
   // GitHub writes the footnotes below the body, in their order: an owner `unsure` leaves every one shown
