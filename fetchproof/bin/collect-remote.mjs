@@ -27,8 +27,9 @@ import path from 'node:path';
 import { parseFlags, flagList, canonicalJson, checkFlagValues, refuseUnknownFlags } from '../lib/core.mjs';
 import { requireRuntime, honourEnvProxy } from '../lib/runtime.mjs';
 import { checkClientRef } from '../lib/artifact.mjs';
+import { printable, printableFile, renderProblems } from '../lib/render.mjs';
 import {
-  dispatchCollection, waitForRun, MAX_POLL_RETRIES, fetchCorpus, queriesInput, usableOutDir,
+  dispatchCollection, waitForRun, MAX_POLL_RETRIES, fetchCorpus, downloadRemedy, queriesInput, usableOutDir,
   tokenFromEnv, redact, DispatchError, API_VERSION, TOKEN_VARS,
 } from '../lib/dispatch.mjs';
 
@@ -86,11 +87,15 @@ const EXIT = Object.freeze({ VALID: 0, INVALID: 1, RUN_FAILED: 2, CANNOT_START: 
 const json = Boolean(flags.json);
 
 function say(text) { if (!json) process.stdout.write(`${redact(text)}\n`); }
+// A refusal's error and its remedy are one line each, printed redacted, then escaped: an error can
+// quote what the network sent - the artifact's name, a server's message - and printed redacted only,
+// an artifact named with U+2028 wrote a verdict line of its own (re-review of #442, second pass,
+// 2026-11-06).
 function die(code, payload) {
   if (json) process.stdout.write(`${canonicalJson(payload)}\n`);
   else {
-    process.stderr.write(`${redact(payload.error ?? 'failed')}\n`);
-    if (payload.remedy) process.stderr.write(`  fix: ${redact(payload.remedy)}\n`);
+    process.stderr.write(`${printable(redact(payload.error ?? 'failed'))}\n`);
+    if (payload.remedy) process.stderr.write(`  fix: ${printable(redact(payload.remedy))}\n`);
   }
   process.exit(code);
 }
@@ -288,10 +293,14 @@ try {
   });
 } catch (err) {
   const e = err instanceof DispatchError ? err : new DispatchError('UNKNOWN', err.message);
-  die(EXIT.RUN_FAILED, { error: `${e.code}: ${e.message}`, code: e.code, remedy: e.remedy ?? pickUpAgain(), workflowRunId: started.workflowRunId });
+  die(EXIT.RUN_FAILED, { error: `${e.code}: ${e.message}`, code: e.code, remedy: downloadRemedy(e, pickUpAgain()), workflowRunId: started.workflowRunId });
 }
 const { file, validation: result } = got;
-say(`saved ${file}`);
+// The name is the one the artifact was stored under: redacted, then escaped, as the package's
+// problems are below (re-review of #442's follow-up). The folder is the operator's own, and prints as
+// it is: escaped with the name, a folder spelled with a joiner named one that does not exist (second
+// pass).
+say(`saved ${printableFile(file, { clean: redact })}`);
 
 
 const payload = {
@@ -304,10 +313,8 @@ const payload = {
 
 if (json) process.stdout.write(`${canonicalJson(payload)}\n`);
 else {
-  if (result.errors.length) {
-    say(`\n${result.errors.length} problem(s)`);
-    for (const e of result.errors) say(`  ${e.code}  ${e.message}`);
-  }
+  // Redacted before it is escaped: an escape ends the word a credential's pattern starts at.
+  if (result.errors.length) say(`\n${renderProblems(result.errors, { clean: redact })}`);
   say(`\n${result.status}  build ${result.buildAuthorized ? 'AUTHORIZED' : 'NOT authorized'}  state=${result.state}`);
   if (result.status === 'PASS' && !result.buildAuthorized) {
     say('\nThis is a COLLECTED CORPUS, not an approved brief. It does not authorize building.');

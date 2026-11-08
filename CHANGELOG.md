@@ -5,6 +5,64 @@ Each release of Fetchproof, newest first. The version is `KIT_VERSION` in
 
 ## Unreleased
 
+- **Fixed: the remote watch ends at its deadline, even with a poll in flight** (independent audit 2026-11-04,
+  F06). `waitForRun` checked its deadline only once a poll had answered: a request that never answered - no
+  headers, or a body that never finished - held `collect-remote` past `--timeout` for as long as it hung, and a
+  completed run it released late was returned as if in time. One signal per watch, aborted at the deadline,
+  now goes to each poll's fetch and body reads and cuts off what is still unanswered then: the watch ends with
+  TIMEOUT (exit 4), naming the run, the status it last had and `--run-id`. A wait ends at the deadline at the
+  latest, and no poll starts after it; a failure being retried at the deadline is still reported as itself
+  (ADR-0201). A 403 whose body is cut off there answered in time: its TIMEOUT says so, with the refusal's own
+  remedy first - the rate limit's wait when a header names it, else both causes, the wait and then the token's
+  "Actions" permission, since a secondary limit is named only in the body that was cut off; a 403 from the
+  dispatch or a run read whose body could not be read names both too. An error that ends the watch is
+  followed by the way back to the run (`--run-id`), which may be fine, unless its remedy names it already or
+  the run's number is in doubt (a 404 before any poll read the run): "wait ... before retrying" sent the
+  operator to a command that dispatches another run. A 404 after a poll read the run is about a number that is
+  right - the token lost sight of the run, or it was deleted - and names the way back too, where it said to
+  check the number. `collect-remote` gives an error that ends the download the same way back, unless the
+  artifact itself is the problem (none, several, a name that is not a file name, too large, expired): "retry"
+  after a proxy's HTML page or a dropped download, and a folder to fix, did the same. Seven tests, and one now
+  expects no poll after the deadline.
+- **Fixed: a ZIP whose local header disagrees with its directory, or whose bytes miss their CRC-32, is
+  refused** (independent audit 2026-11-04, F05). The artifact reader took each entry's name, method, sizes and
+  CRC-32 from the central directory alone: a package whose local header named `README-ALTER.md` where the
+  directory lists `README-FIRST.md`, and one whose CRC-32 fields were zeroed, validated PASS and stayed
+  `buildAuthorized`, while Python's `zipfile` refuses both and a streaming extractor writes another file. The
+  local header must now agree with the directory on the name, the method, the encryption and UTF-8 name bits
+  and - unless bit 3 defers them to a data descriptor - the CRC-32 and sizes, judged before anything is
+  inflated, and a local header giving its sizes as ZIP64 is refused as ZIP64, as the directory's already
+  were (such an entry was read before); each body's CRC-32 is checked when it is read, from a table on a
+  Node without `zlib.crc32` (22.0 and 22.1); a `manifest.json` or `manifest.sha256` that does not read is
+  FAIL, not BLOCKED. A GitHub wrapper whose package does not read - a CRC-32 now among the reasons - is
+  reported with that reason and a remedy to download again (`--run-id`), where the validator could only say
+  the wrapper holds no `manifest.json` and to regenerate it. All `ZIP-READ` (ADR-0200). `collect-remote` and
+  `artifact create` now print that remedy, and every package problem's, as a `fix:` line, through the renderer
+  `artifact validate` uses: collect-remote printed no remedy and its messages unescaped, and create no remedy.
+  collect-remote redacts each problem, and the saved file's name, before it is escaped: an escape such as
+  `\x09` ends in a word character, and a credential's pattern starts at a word boundary. What `artifact` and
+  `collect-remote` print from a package escapes, beyond C0 and DEL, every control, the characters a reader may
+  take for a line end (U+0085, U+2028, U+2029) and every character that hides or reorders text - each format
+  character, a lone surrogate and each one Unicode lets a renderer draw as nothing, the tag characters,
+  variation selectors and Hangul fillers among them - as `\xNN`, `\uNNNN` or `\u{NNNNN}`. A refusal
+  `collect-remote` prints is escaped so too, and so is the text the MCP server's `fetch_corpus` gives the
+  agent - a package's diagnostics, an error, the saved file's link name: an artifact named with U+2028 wrote a
+  line of its own in either, and a manifest key holding a line feed wrote the server's own PASS sentence on a
+  line of its own. The saved file's folder prints as the operator gave it: escaped with the name, one spelled
+  with a joiner (Persian's U+200C) named a folder that does not exist. Eighteen tests, and an older one now
+  expects the reason.
+- **Fixed: a quote of repeated fragments is judged in bounded time** (independent audit 2026-11-04, F04).
+  `anchorFound` searched where a quote's fragments lie by recursion over every chain of their occurrences, so a
+  quote repeating one phrase over a page that repeats it, ending in a fragment the page lacks, took time
+  exponential in the fragment count: twenty copies of `alpha beta gamma` over 680 characters did not finish in
+  3 s, and the citations check - which preflight and the commit gate run - waited on it. The leftmost
+  placement is now tried first, one search per fragment, and decides a quote it places within the bound and
+  one with a fragment that does not occur after it; otherwise the placements are carried as a set, fragment
+  by fragment, over only the occurrences a placement can reach, each fragment's listed once per distinct text
+  when the set first needs them (ADR-0202). Every placement the search
+  accepted is still accepted, a later occurrence of any fragment still counts (ADR-0162), and the
+  300-character bound is unchanged. A crafted quote whose leftmost placement goes past the bound still costs
+  up to one read of every occurrence per fragment. Three tests.
 - **Fixed: a lost evidence table is named, and no check passes over it** (independent audit 2026-11-04, FP-011,
   alias B-2). `readCorpus` read a missing `research/EVIDENCE.md`, a directory in its place, or a file holding no
   evidence table as an empty table, with no problem recorded: `corpus-shape` said "the corpus parses cleanly",

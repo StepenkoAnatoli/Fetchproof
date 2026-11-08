@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeBytes, tempBase } from './core.mjs';
 import { fetchFailure } from './runtime.mjs';
-import { openZip, ZIP_LIMITS } from './artifact-zip.mjs';
+import { openZip, ZipError, ZIP_LIMITS } from './artifact-zip.mjs';
 import { validateArtifact, MANIFEST_PATH } from './artifact-validator.mjs';
 
 /** The version whose dispatch response carries the run id. Changing this is a decision. */
@@ -138,17 +138,46 @@ function splitRepository(repository) {
   return parts;
 }
 
-async function readError(response) {
-  let body = '';
-  try { body = (await response.text()).slice(0, 400); } catch { /* a body we cannot read is not a body */ }
-  return redact(body);
+/**
+ * `promise`, or a rejection with `signal`'s reason once it aborts - whichever comes first.
+ * Without a signal, the promise itself. The promise is not cancelled, only no longer waited
+ * for: the signal also goes to `fetch`, which cancels a real request, and this covers a fetch
+ * or a body that does not honour it (independent audit 2026-11-04, F06).
+ */
+function unlessAborted(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) abort();
+  });
 }
 
-async function rateLimitError(response) {
-  const body = await readError(response);
+// null for a body that could not be read: it said nothing, which is not saying "no rate limit".
+async function readError(response, signal) {
+  try { return redact((await unlessAborted(response.text(), signal)).slice(0, 400)); } catch { return null; }
+}
+
+/**
+ * The error for a 403, which is a rate limit or a refusal: `refusal` when the response names no
+ * limit. GitHub may name one only in the body - a secondary limit sends no rate-limit header - so
+ * with the headers silent and the body unread (cut off at the watch's deadline, or lost), which of
+ * the two it is is not known, and the remedy names both, the wait first. It named the token's
+ * permission alone, to a token that had read the run one poll before (re-review of #442). `lead`
+ * begins that message.
+ */
+async function forbiddenError(response, { lead, refusal, signal }) {
+  const body = await readError(response, signal);
   const remaining = response.headers?.get?.('x-ratelimit-remaining');
   const retry = response.headers?.get?.('retry-after');
-  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body)) return null;
+  if (remaining !== '0' && retry == null && !/rate[ -]?limit/i.test(body ?? '')) {
+    if (body !== null) return refusal;
+    return new DispatchError(refusal.code, `${lead}: HTTP 403, a rate limit or a refusal - its body, which says which, could not be read`, {
+      status: 403,
+      remedy: `wait at least one minute before retrying; if it is refused again, ${refusal.remedy}`,
+    });
+  }
   const waits = [];
   if (retry != null && /^\d+$/.test(retry)) waits.push(`wait at least ${retry} seconds (Retry-After) before retrying`);
   const reset = response.headers?.get?.('x-ratelimit-reset');
@@ -236,15 +265,16 @@ export async function dispatchCollection({
     });
   }
   if (response.status === 403) {
-    const limited = await rateLimitError(response);
-    if (limited) throw limited;
-    throw new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
-      status: 403,
-      remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
+    throw await forbiddenError(response, {
+      lead: 'dispatch failed',
+      refusal: new DispatchError('FORBIDDEN', 'the token may not dispatch this workflow', {
+        status: 403,
+        remedy: 'the fine-grained token needs repository permission "Actions" set to read and write',
+      }),
     });
   }
   if (!response.ok) {
-    throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${await readError(response)}`, { status: response.status });
+    throw new DispatchError('HTTP', `dispatch failed: HTTP ${response.status}. ${(await readError(response)) ?? ''}`, { status: response.status });
   }
 
   const body = await readJsonBody(response, 'dispatch');
@@ -276,10 +306,12 @@ function stringifyInputs(inputs) {
  * as UNKNOWN, with no status and no remedy (found 2026-09-30, break-test). The parser's
  * first line is kept: it usually shows the doctype or the cache's own error text.
  */
-async function readJsonBody(response, what) {
+async function readJsonBody(response, what, signal) {
   try {
-    return await response.json();
+    return await unlessAborted(response.json(), signal);
   } catch (err) {
+    // A body cut off by the caller's deadline is not a body that is not JSON: the caller names it.
+    if (signal?.aborted) throw err;
     throw new DispatchError('BAD_BODY', `${what}: HTTP ${response.status} returned a body that is not JSON (${String(err.message).split('\n')[0]})`, {
       status: response.status,
       remedy: 'a JSON API answering with HTML is usually a proxy or a maintenance page - retry, then check api.github.com',
@@ -289,30 +321,30 @@ async function readJsonBody(response, what) {
 
 async function callApi(doFetch, url, init, { api = GITHUB_API, remedy = 'check connectivity, then retry' } = {}) {
   try {
-    return await doFetch(url, init);
+    return await unlessAborted(doFetch(url, init), init.signal);
   } catch (err) {
+    // Nor is a request cut off by it a network failure, which a watch would retry.
+    if (init.signal?.aborted) throw err;
     throw new DispatchError('NETWORK', `could not reach ${api}: ${redact(fetchFailure(err))}`, { remedy });
   }
 }
 
-export async function getRun({ repository, runId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API }) {
+/** `signal`, when given, cuts the request and the reading of its body short once it aborts. */
+export async function getRun({ repository, runId, token, fetch: doFetch = globalThis.fetch, api = GITHUB_API, signal }) {
   const [owner, name] = splitRepository(repository);
   const response = await callApi(doFetch, `${api}/repos/${owner}/${name}/actions/runs/${runId}`,
-    { headers: headers(token) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
+    { headers: headers(token), ...(signal && { signal }) }, { api, remedy: `check connectivity, then retry with --run-id ${runId}` });
   if (!response.ok) {
-    if (response.status === 403) {
-      const limited = await rateLimitError(response);
-      if (limited) throw limited;
-    }
     // A refusal names its own way out; the caller's generic "pick it up again" would send
     // somebody back to a run number that does not exist, with a token that cannot see it.
     const remedy = response.status === 404 ? `no run ${runId} on ${repository}, or the token cannot see it - check the number the dispatch printed`
       : response.status === 401 ? 'the token was refused - it is expired or mistyped; create a new one'
         : response.status === 403 ? 'the token may not read this repository\'s runs - it needs "Actions" set to read and write'
           : null;
-    throw new DispatchError('HTTP', `could not read run ${runId}: HTTP ${response.status}`, { status: response.status, remedy });
+    const refusal = new DispatchError('HTTP', `could not read run ${runId}: HTTP ${response.status}`, { status: response.status, remedy });
+    throw response.status === 403 ? await forbiddenError(response, { lead: `could not read run ${runId}`, refusal, signal }) : refusal;
   }
-  return readJsonBody(response, `could not read run ${runId}`);
+  return readJsonBody(response, `could not read run ${runId}`, signal);
 }
 
 /**
@@ -327,8 +359,21 @@ export async function getRun({ repository, runId, token, fetch: doFetch = global
  * lasts up to 30 minutes, and every failed poll used to be fatal: one dropped connection ended
  * it with RUN_FAILED while the run went on unwatched (found 2026-10-01, break-test). A refusal
  * a retry cannot change - 401, 403, 404 - still ends it at once, and no retry outlasts the deadline.
+ *
+ * The deadline bounds the polls as well as the waits between them (ADR-0201). It used to be
+ * checked only once a poll had answered, so a request that never answered - no headers, or a
+ * body that never finished - held the watch past `--timeout` for as long as it hung, and a
+ * completed run it released late was returned as if in time (independent audit 2026-11-04,
+ * F06). Now one signal, aborted at the deadline, goes to each poll's fetch and cuts off what
+ * is still unanswered then, ending the watch with TIMEOUT; a wait ends at the deadline at the
+ * latest, and no poll starts after it. A failure being retried when it comes is reported as
+ * itself, as before.
  */
 export const MAX_POLL_RETRIES = 5;
+
+// A setTimeout holds at most 2^31-1 ms, about 24.8 days: a longer delay fires after 1 ms, with
+// a warning (AbortSignal.timeout does the same). A longer watch re-arms its timer instead.
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function transientPoll(err) {
   if (!(err instanceof DispatchError)) return false;
@@ -348,29 +393,78 @@ export async function waitForRun({
   onRetry = () => {},
 } = {}) {
   const deadline = now() + timeoutMs;
+  const watch = new AbortController();
+  let timer;
+  const arm = (ms) => {
+    timer = setTimeout(() => (ms > MAX_TIMER_MS ? arm(ms - MAX_TIMER_MS) : watch.abort()), Math.min(ms, MAX_TIMER_MS));
+  };
+  arm(timeoutMs);
   let last = null;
+  let seen = null;
+  let failed = null;
   let failures = 0;
-  for (;;) {
-    let run;
-    try {
-      run = await getRun({ repository, runId, token, fetch: doFetch, api });
-    } catch (err) {
-      failures += 1;
-      if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw err;
-      onRetry(err, failures);
-      await sleep(intervalMs);
-      continue;
+  const seconds = Math.round(timeoutMs / 1000);
+  // Not a failure of the run: the caller stopped watching, and the run keeps going. `first`
+  // is a remedy that comes before the watch's own: the cut-off poll's, when it had one.
+  const timedOut = (message, first = null) => new DispatchError('TIMEOUT', message, {
+    remedy: `${first ? `${first}; ` : ''}the run ${seen ? 'is still going' : 'is not known to have failed'}; check ${seen?.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
+  });
+  // An error that ends the watch ends only the watch: the run goes on, and the command that was run
+  // dispatches another. So a remedy of the error's own - wait out a limit, a new token, a permission,
+  // a proxy, any of which may say to retry - is followed by the way back to this run, unless it names
+  // it already or the run's number is what is in doubt (a 404 before any poll read the run); one
+  // with none is left to the caller. A 403 ended the watch with "wait ... before retrying" and no run
+  // number (re-review of #442's follow-up, 2026-11-06). A 404 after a poll read the run is about a
+  // number that is right - the token lost sight of the run, or it was deleted - and "check the
+  // number" with no way back sent the operator to the command that dispatches another (second pass).
+  const wayBack = (err) => {
+    if (!(err instanceof DispatchError) || !err.remedy || err.remedy.includes('--run-id')) return err;
+    if (err.status === 404 && !seen) return err;
+    const own = err.status === 404
+      ? `run ${runId} was read at an earlier poll, so its number is right: the token may have lost access to ${repository}, or the run was deleted - check ${seen.html_url ?? `run ${runId}`}`
+      : err.remedy;
+    return new DispatchError(err.code, err.message, {
+      status: err.status,
+      remedy: `${own}; the run may be fine - pick it up again with --run-id ${runId} rather than dispatching another`,
+    });
+  };
+  try {
+    for (;;) {
+      if (watch.signal.aborted || now() >= deadline) {
+        throw failed ? wayBack(failed) : timedOut(seen ? `run ${runId} was still ${seen.status} after ${seconds}s` : `run ${runId} was not read within ${seconds}s`);
+      }
+      let run;
+      try {
+        run = await getRun({ repository, runId, token, fetch: doFetch, api, signal: watch.signal });
+      } catch (err) {
+        if (watch.signal.aborted) {
+          const before = seen ? `; it was ${seen.status} at the poll before` : '';
+          // A refusal whose status came in time is an answer, though its body was cut off: a 403
+          // is read for a rate limit first, and with its body unread names both causes. Its own
+          // remedy comes first - "a longer --timeout" alone sent a token without "Actions" back to
+          // the same refusal (review of #442).
+          if (err instanceof DispatchError && err.status) {
+            throw timedOut(`the status poll for run ${runId} answered HTTP ${err.status}, but its body was still being read when the watch ended after ${seconds}s${before}`, err.remedy);
+          }
+          throw timedOut(`the status poll for run ${runId} had no answer when the watch ended after ${seconds}s${before}`);
+        }
+        failures += 1;
+        if (!transientPoll(err) || failures > MAX_POLL_RETRIES || now() >= deadline) throw wayBack(err);
+        failed = err;
+        onRetry(err, failures);
+      }
+      if (run) {
+        failures = 0;
+        failed = null;
+        seen = run;
+        if (run.status !== last) { last = run.status; onStatus(run); }
+        // An answer in hand is taken: a poll the deadline did not cut off answered in time.
+        if (run.status === 'completed') return run;
+      }
+      if (now() < deadline) await sleep(Math.min(intervalMs, deadline - now()));
     }
-    failures = 0;
-    if (run.status !== last) { last = run.status; onStatus(run); }
-    if (run.status === 'completed') return run;
-    if (now() >= deadline) {
-      throw new DispatchError('TIMEOUT', `run ${runId} was still ${run.status} after ${Math.round(timeoutMs / 1000)}s`, {
-        // Not a failure of the run: the caller stopped watching, and the run keeps going.
-        remedy: `the run is still going; check ${run.html_url ?? `run ${runId}`}, or pick it up again with --run-id ${runId} (and a longer --timeout)`,
-      });
-    }
-    await sleep(intervalMs);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -458,12 +552,13 @@ export function unwrapArtifact(bytes) {
   const inner = zip.names.filter((n) => n.endsWith('.zip'));
   if (inner.length !== 1 || inner[0].includes('/')) return { bytes, unwrapped: false };
   // An inner package that cannot be read is handed on as it came, as a wrapper that cannot be
-  // opened is: judging such bytes is the validator's job, and a ZIP-READ thrown from here went
-  // past it (found 2026-10-01, break-test).
+  // opened is - a ZIP-READ thrown from here went past the validator (found 2026-10-01,
+  // break-test) - and with the reason it did not read, `unreadable`. The validator, given the
+  // wrapper, can only say that it holds no manifest (review of #442, 2026-11-06).
   try {
     return { bytes: zip.read(inner[0]), unwrapped: true, name: inner[0] };
-  } catch {
-    return { bytes, unwrapped: false };
+  } catch (err) {
+    return { bytes, unwrapped: false, unreadable: { entry: inner[0], code: err instanceof ZipError ? err.code : 'ZIP-READ', message: err.message } };
   }
 }
 
@@ -504,6 +599,25 @@ export function usableOutDir(dir, { create = true } = {}) {
     });
   }
   return absolute;
+}
+
+// The errors that are the artifact's own: another download from the same run meets them again (no
+// corpus artifact or several, a name that is not a file name, too large, expired), and
+// re-collecting is their way.
+const ARTIFACT_OWN = new Set(['NO_ARTIFACT', 'ARTIFACT_NAME', 'TOO_LARGE', 'EXPIRED']);
+
+/**
+ * `downloadRemedy(err, wayBack)` -> the remedy `collect-remote` prints for an error that ended the
+ * download from a run that finished well: the error's own, then `wayBack` - how to pick the run up
+ * again - unless the error is the artifact's own or its remedy names `--run-id` already; `wayBack`
+ * alone for an error with none. A remedy of its own - "retry" after a proxy's HTML page or a
+ * dropped download, a folder to fix - read as running `collect-remote` again, which dispatches and
+ * pays for another run (re-review of #442, second pass, 2026-11-06). The watch's errors carry
+ * their way back from `waitForRun`; the MCP server's caller holds the run's number already.
+ */
+export function downloadRemedy(err, wayBack) {
+  if (!err?.remedy) return wayBack;
+  return ARTIFACT_OWN.has(err.code) || err.remedy.includes('--run-id') ? err.remedy : `${err.remedy}; ${wayBack}`;
 }
 
 /**
@@ -551,7 +665,7 @@ export async function fetchCorpus({
   }
   const dir = folder(false);
   const bytes = await downloadArtifact({ repository, artifactId: wanted[0].id, token, fetch: doFetch, api });
-  const { bytes: pkg, unwrapped, name } = unwrapArtifact(bytes);
+  const { bytes: pkg, unwrapped, name, unreadable } = unwrapArtifact(bytes);
 
   // A name from the API is data, never a path (found 2026-10-01, break-test): joined as it
   // came, `fetchproof-corpus-v1-/../../../pwned` wrote the package outside --out. A wrapper's
@@ -578,5 +692,17 @@ export async function fetchCorpus({
   // package already at this name (Arena break test 10, 2026-09-28).
   writeBytes(file, pkg);
 
-  return { file, artifact: wanted[0], validation: validateArtifact({ file, expectedClientRef }) };
+  const validation = validateArtifact({ file, expectedClientRef });
+  if (!unreadable) return { file, artifact: wanted[0], validation };
+  // The wrapper is judged, and FAILs, but for the wrong reason: "manifest.json is not in the
+  // package", whose remedy is to regenerate a package the damage may not be in. Why the package
+  // inside did not read is the finding, and a download is the cheap thing to repeat (review of
+  // #442, 2026-11-06).
+  const problem = {
+    code: unreadable.code,
+    message: `the package inside GitHub's wrapper does not read: ${unreadable.message}`,
+    path: unreadable.entry,
+    remedy: `download it again with --run-id ${runId}; if it fails the same way, the stored artifact is damaged - re-collect`,
+  };
+  return { file, artifact: wanted[0], validation: { ...validation, errors: [problem, ...validation.errors.filter((e) => e.code !== 'MANIFEST-MISSING')] } };
 }

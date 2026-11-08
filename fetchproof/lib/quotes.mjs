@@ -176,22 +176,76 @@ export const MAX_QUOTE_GAP = 300;
  * nothing is skipped, and an anchor with no fragment left is not found (2026-10-08). A placement
  * is TRIED at each occurrence, not only at the first: a word that appears earlier out of context
  * must not hide the passage the quote meant, which a bounded first-occurrence match would.
+ *
+ * The leftmost chain is tried first: each fragment at its first occurrence after the one before
+ * it ends, one `indexOf` per fragment. A chain within the bound is a placement. Each end it reaches
+ * is the earliest any placement of those fragments can reach, so a fragment that does not occur
+ * after it occurs after no placement, and the quote is not found - the audit's case, a final
+ * fragment the page lacks, ends there. Only a chain that is complete but past the bound somewhere
+ * sends the search on.
+ *
+ * Then the placements are carried as a set, fragment by fragment, not tried one chain at a time:
+ * `ends` holds where each placement of the fragments so far ends, and an occurrence of the next
+ * fragment extends one when it starts no more than `maxGap` after the nearest end before it. Only
+ * the occurrences between the first end and the last end plus `maxGap` are read: none outside
+ * them is reached. A fragment's occurrences are listed when the pass first needs them, once per
+ * distinct text, as 32-bit positions; listed for every fragment before any was needed, 101
+ * distinct fragments over 200 KB held 201 MiB (review of #442). The recursion this replaces tried every chain of occurrences, so a quote
+ * repeating one phrase over a page that repeats it, ending in a fragment the page lacks, took time
+ * exponential in the fragment count (independent audit 2026-11-04, F04: twenty copies of
+ * `alpha beta gamma` did not finish in 3 s). The set pass is polynomial, not small: up to one read
+ * of every occurrence per fragment, O(fragments x occurrences), which a crafted quote whose
+ * leftmost chain fails at the bound still reaches. A cap on a quote's fragments would bound it
+ * outright; that is a limit of its own, not taken (ADR-0202).
  */
 export function anchorFound(fragments, body, { maxGap = MAX_QUOTE_GAP } = {}) {
   const haystack = normalizeForMatch(body);
   const parts = fragments.map((f) => normalizeForMatch(f)).filter(Boolean);
   if (!parts.length) return false;
-  const place = (i, from, first) => {
-    if (i === parts.length) return true;
-    const needle = parts[i];
-    for (let at = haystack.indexOf(needle, from); at >= 0; at = haystack.indexOf(needle, at + 1)) {
-      // Occurrences are increasing, so once one is past the bound every later one is too.
-      if (!first && at - from > maxGap) return false;
-      if (place(i + 1, at + needle.length, false)) return true;
+  let end = 0;
+  let leftmost = true;
+  for (let i = 0; i < parts.length; i += 1) {
+    const at = haystack.indexOf(parts[i], end);
+    if (at < 0) return false;
+    // Written as the set pass tests it, so a bound that compares as NaN places nothing here either.
+    // Past a gap over the bound the chain goes on, as the earliest ends, for the test above.
+    if (i > 0 && !(at - end <= maxGap)) leftmost = false;
+    end = at + parts[i].length;
+  }
+  if (leftmost) return true;
+  // Ascending, because occurrences are: the nearest end before an occurrence only moves forward.
+  const listed = new Map();
+  const occurrences = (needle) => {
+    let at = listed.get(needle);
+    if (!at) {
+      const found = [];
+      for (let k = haystack.indexOf(needle); k >= 0; k = haystack.indexOf(needle, k + 1)) found.push(k);
+      at = Int32Array.from(found);
+      listed.set(needle, at);
     }
-    return false;
+    return at;
   };
-  return place(0, 0, true);
+  let ends = occurrences(parts[0]).map((at) => at + parts[0].length);
+  for (let i = 1; i < parts.length && ends.length; i += 1) {
+    const at = occurrences(parts[i]);
+    const length = parts[i].length;
+    const reach = ends[ends.length - 1] + maxGap;
+    // From the first occurrence at or after the first end: none before it follows an end.
+    let k = 0;
+    for (let hi = at.length; k < hi;) {
+      const mid = (k + hi) >>> 1;
+      if (at[mid] < ends[0]) k = mid + 1; else hi = mid;
+    }
+    const next = new Int32Array(at.length - k);
+    let n = 0;
+    let e = 0;
+    for (; k < at.length && at[k] <= reach; k += 1) {
+      while (e + 1 < ends.length && ends[e + 1] <= at[k]) e += 1;
+      if (ends[e] <= at[k] && at[k] - ends[e] <= maxGap) { next[n] = at[k] + length; n += 1; }
+    }
+    ends = next.subarray(0, n);
+  }
+  return ends.length > 0;
 }
 
 /**

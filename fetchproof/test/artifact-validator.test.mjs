@@ -5,12 +5,15 @@
 // can review. Everything runs offline, reads no credential, and writes only into a temp
 // directory the harness removes.
 
-import { test, describe, assert, fs, path, os, cleanup, tempDir } from './harness.mjs';
+import { execFileSync } from 'node:child_process';
+import zlib from 'node:zlib';
+import { test, describe, assert, fs, path, os, cleanup, tempDir, requirePython } from './harness.mjs';
 import { sha256, canonicalJson } from '../lib/core.mjs';
 import { validateArtifact, authorizationProblems, SUPPORTED_FORMAT_MAJOR } from '../lib/artifact-validator.mjs';
 import { legacyBriefInputsHash } from '../lib/artifact-state.mjs';
 import { readCorpus } from '../lib/corpus.mjs';
 import { ZIP_LIMITS, openZip, checkEntryName } from '../lib/artifact-zip.mjs';
+import { crc32 } from '../lib/archive.mjs';
 import {
   rawZip, seal, basePackage, collectedProject, approvedProject, writeFixture,
 } from './artifact-fixtures.mjs';
@@ -590,6 +593,170 @@ test('a lying uncompressed size is caught by zlib, not by trusting the field', (
   const zip = openZip(bytes, { limits: { ...ZIP_LIMITS, ratioFloorBytes: 1, maxRatio: 1_000_000 } });
   assert.throws(() => zip.read('a.md'), /inflated to|could not be decompressed/,
     'the declared size must not be taken on trust');
+});
+
+// F05 (independent audit 2026-11-04): the reader took each entry's name, method and CRC-32 from
+// the central directory, never comparing the local header or the bytes, so a package whose local
+// header named README-ALTER.md where the directory lists README-FIRST.md, and one whose two
+// CRC-32 fields were zeroed, validated PASS and stayed buildAuthorized - and Python's zipfile,
+// like most extractors, refuses both. Where an entry's two headers lie, found as a reader finds
+// them, by walking the central directory.
+function headersOf(bytes, name) {
+  const eocd = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let at = bytes.readUInt32LE(eocd + 16);
+  for (let i = 0; i < bytes.readUInt16LE(eocd + 10); i += 1) {
+    const nameLength = bytes.readUInt16LE(at + 28);
+    if (bytes.toString('utf8', at + 46, at + 46 + nameLength) === name) return { central: at, local: bytes.readUInt32LE(at + 42) };
+    at += 46 + nameLength + bytes.readUInt16LE(at + 30) + bytes.readUInt16LE(at + 32);
+  }
+  throw new Error(`no entry ${name}`);
+}
+
+/** The audit's two fixtures, on the approved package: a local name changed, and both CRC-32 fields zeroed. */
+function auditFixtures() {
+  const renamed = seal(copyPayload(approved.payload), clone(approved.manifest));
+  Buffer.from('README-ALTER.md').copy(renamed, headersOf(renamed, 'README-FIRST.md').local + 30);
+  const unchecked = seal(copyPayload(approved.payload), clone(approved.manifest));
+  const readme = headersOf(unchecked, 'README-FIRST.md');
+  unchecked.writeUInt32LE(0, readme.local + 14);
+  unchecked.writeUInt32LE(0, readme.central + 16);
+  return { renamed, unchecked };
+}
+
+test('a local header naming another entry than the directory lists is refused before anything is inflated (audit F05a)', () => {
+  const { renamed } = auditFixtures();
+  assert.ok(openZip(renamed).problems.some((p) => p.code === 'ZIP-READ' && p.path === 'README-FIRST.md' && p.detail.includes('"README-ALTER.md"')),
+    'the container pass, which inflates nothing, did not see it');
+  const result = validateArtifact({ file: writeFixture(scratch, 'f05-local-name', renamed), tempRoot: scratch });
+  assert.equal(result.status, 'FAIL', JSON.stringify(result.errors));
+  assert.equal(result.buildAuthorized, false);
+  assert.ok(result.errors.some((e) => e.code === 'ZIP-READ' && e.message.includes('"README-FIRST.md"') && e.message.includes('README-ALTER.md')), JSON.stringify(result.errors));
+});
+
+test('each field an extractor takes from a local header must agree with the directory, and no other (audit F05)', () => {
+  const problemsAfter = (patch) => {
+    const zip = rawZip([{ name: 'a.md', data: 'a body long enough to be worth deflating, a body long enough', deflate: true }]);
+    patch(zip, headersOf(zip, 'a.md').local);
+    return openZip(zip).problems.map((p) => `${p.code} ${p.detail}`);
+  };
+  const fields = {
+    'the compression method': (zip, at) => zip.writeUInt16LE(0, at + 8),
+    encryption: (zip, at) => zip.writeUInt16LE(0x1, at + 6),
+    'the UTF-8 name flag': (zip, at) => zip.writeUInt16LE(0x800, at + 6),
+    'the CRC-32': (zip, at) => zip.writeUInt32LE(0, at + 14),
+    'the compressed size': (zip, at) => zip.writeUInt32LE(zip.readUInt32LE(at + 18) + 1, at + 18),
+    'the uncompressed size': (zip, at) => zip.writeUInt32LE(0, at + 22),
+  };
+  for (const [field, patch] of Object.entries(fields)) {
+    const problems = problemsAfter(patch);
+    assert.ok(problems.some((p) => p.startsWith('ZIP-READ ') && p.includes(field)), `${field}: ${JSON.stringify(problems)}`);
+  }
+  // The version needed, the timestamp and a deflate option bit change nothing an extractor writes.
+  for (const patch of [(zip, at) => zip.writeUInt16LE(45, at + 4), (zip, at) => zip.writeUInt32LE(0x5a5a5a5a, at + 10), (zip, at) => zip.writeUInt16LE(0x2, at + 6)]) {
+    assert.deepEqual(problemsAfter(patch), [], 'a field no extractor writes from was compared');
+  }
+});
+
+test('an entry whose bytes do not match its CRC-32 is refused, in the manifest as in the payload (audit F05b)', () => {
+  const { unchecked } = auditFixtures();
+  const result = validateArtifact({ file: writeFixture(scratch, 'f05-crc', unchecked), tempRoot: scratch });
+  assert.equal(result.status, 'FAIL', JSON.stringify(result.errors));
+  assert.equal(result.buildAuthorized, false);
+  assert.ok(result.errors.some((e) => e.code === 'ZIP-READ' && e.message.includes('README-FIRST.md') && e.message.includes('CRC-32')), JSON.stringify(result.errors));
+  // The manifest is read before the payload, outside its loop: a body that does not read there is
+  // a broken package too, not a validation that could not complete.
+  const sealed = seal(copyPayload(approved.payload), clone(approved.manifest));
+  const manifest = headersOf(sealed, 'manifest.json');
+  sealed.writeUInt32LE(0, manifest.local + 14);
+  sealed.writeUInt32LE(0, manifest.central + 16);
+  const broken = validateArtifact({ file: writeFixture(scratch, 'f05-crc-manifest', sealed), tempRoot: scratch });
+  assert.equal(broken.status, 'FAIL', JSON.stringify(broken.errors));
+  assert.ok(broken.errors.some((e) => e.code === 'ZIP-READ' && e.message.includes('manifest.json') && e.message.includes('CRC-32')), JSON.stringify(broken.errors));
+});
+
+test('a ZIP that defers its CRC-32 and sizes to a data descriptor is read, and its bytes are still checked (audit F05)', () => {
+  const zip = rawZip([
+    { name: 'stored.md', data: 'stored body', descriptor: true },
+    { name: 'deflated.md', data: 'deflated body, deflated body, deflated body', deflate: true, descriptor: true },
+  ]);
+  const opened = openZip(zip);
+  assert.deepEqual(opened.problems, []);
+  assert.equal(opened.read('stored.md').toString('utf8'), 'stored body');
+  assert.equal(opened.read('deflated.md').toString('utf8'), 'deflated body, deflated body, deflated body');
+  const wrong = Buffer.from(zip);
+  wrong.writeUInt32LE(0, headersOf(wrong, 'stored.md').central + 16);
+  assert.deepEqual(openZip(wrong).problems, [], 'bit 3 defers the local fields, so only the directory says what the CRC-32 is');
+  assert.throws(() => openZip(wrong).read('stored.md'), /CRC-32/);
+});
+
+test('a body is checked against its CRC-32 on a Node without zlib.crc32, which 22.0 and 22.1 lack and the runtime checks admit (#442 review)', () => {
+  const body = 'deflated body, deflated body, deflated body';
+  const zip = rawZip([{ name: 'stored.md', data: 'stored body' }, { name: 'deflated.md', data: body, deflate: true }]);
+  const wrong = Buffer.from(zip);
+  const at = headersOf(wrong, 'deflated.md');
+  wrong.writeUInt32LE(0x12345678, at.local + 14);
+  wrong.writeUInt32LE(0x12345678, at.central + 16);
+  // Taken away and put back in one synchronous step, so nothing else in this process meets it gone.
+  const native = Object.getOwnPropertyDescriptor(zlib, 'crc32');
+  let read;
+  let refusal;
+  delete zlib.crc32;
+  try {
+    const opened = openZip(zip);
+    read = opened.names.map((name) => opened.read(name).toString('utf8'));
+    try { openZip(wrong).read('deflated.md'); } catch (err) { refusal = err; }
+  } finally {
+    if (native) Object.defineProperty(zlib, 'crc32', native);
+  }
+  assert.deepEqual(read, ['stored body', body]);
+  // The writer's sum, pinned to the published vectors (audit.test.mjs): zlib.crc32 is the very
+  // function 22.0 and 22.1 lack, and a test that computed with it threw there (re-review of #442).
+  const sum = `0x${crc32(Buffer.from(body)).toString(16).padStart(8, '0')}`;
+  assert.equal(refusal?.code, 'ZIP-READ', String(refusal));
+  assert.ok(refusal.message.includes(`the directory declares 0x12345678, its bytes give ${sum}`), refusal.message);
+});
+
+test('a local header giving its sizes as ZIP64 is refused for that, not as a disagreement with the directory (#442 review)', () => {
+  // 0xFFFFFFFF in the local sizes, the real ones in a ZIP64 extra field, 32-bit sizes in the
+  // directory: the two headers agree, and the reader, which does not implement ZIP64, must say why it refuses.
+  const data = 'a body long enough to be worth deflating, a body long enough';
+  const problems = openZip(rawZip([{ name: 'a.md', data, deflate: true, zip64Local: true }])).problems;
+  assert.deepEqual(problems.map((p) => [p.code, p.path]), [['ZIP-READ', 'a.md']], JSON.stringify(problems));
+  assert.equal(problems[0].detail, 'entry "a.md" uses ZIP64 size fields in its local header, which this reader does not implement');
+  // With bit 3 set the local sizes are not the ones read, so they are not judged: such an entry still reads.
+  const deferred = openZip(rawZip([{ name: 'a.md', data, deflate: true, zip64Local: true, descriptor: true }]));
+  assert.deepEqual(deferred.problems, []);
+  assert.equal(deferred.read('a.md').toString('utf8'), data);
+});
+
+test('the fixtures an independent reader refuses are refused here, and the archives it reads are read (audit F05)', () => {
+  const { renamed, unchecked } = auditFixtures();
+  const cases = {
+    approved: seal(copyPayload(approved.payload), clone(approved.manifest)),
+    renamed,
+    unchecked,
+    descriptor: rawZip([{ name: 'a.md', data: 'a body, a body, a body', deflate: true, descriptor: true }]),
+  };
+  const files = Object.entries(cases).map(([name, bytes]) => writeFixture(scratch, `f05-reader-${name}`, bytes));
+  const script = [
+    'import json, sys, zipfile',
+    'out = []',
+    'for f in sys.argv[1:]:',
+    '    with zipfile.ZipFile(f) as z:',
+    '        out.append(z.testzip())',
+    'print(json.dumps(out))',
+  ].join('\n');
+  const python = JSON.parse(execFileSync(requirePython('the agreement with an independent ZIP reader'), ['-I', '-c', script, ...files], { encoding: 'utf8' }));
+  const here = Object.values(cases).map((bytes) => {
+    const zip = openZip(bytes);
+    if (zip.problems.length) return zip.problems[0].path;
+    for (const name of zip.names) {
+      try { zip.read(name); } catch (err) { return err.entry; }
+    }
+    return null;
+  });
+  assert.deepEqual(python, [null, 'README-FIRST.md', 'README-FIRST.md', null], 'the independent reader moved, so the controls no longer say what they did');
+  assert.deepEqual(here, python);
 });
 
 test('validation writes nothing outside its own temporary directory', () => {

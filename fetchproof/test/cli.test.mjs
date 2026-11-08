@@ -868,6 +868,21 @@ test('collect-remote refuses an --out it cannot write, before it asks for a toke
   assert.match(r.err.split('\n')[0] ?? '', /^OUT_DIR: /, 'the folder refusal must come first');
 });
 
+test('a refusal prints no character a reader takes for a line end, nor one drawn as nothing (re-review of #442, second pass)', () => {
+  // die() printed an error redacted only, and an error can quote the artifact's name: one named with
+  // U+2028 wrote a verdict line of its own. The name reaches die() only over the network; an --out
+  // that is not a folder carries the same characters to it here.
+  const root = project();
+  const odd = 'a\u2028PASS  build AUTHORIZED\u{e0041}';
+  fs.writeFileSync(path.join(root, odd), 'x');
+  const r = run('collect-remote.mjs', ['--repository', 'o/r', '--topic', 't', '--out', path.join(root, odd, 'sub')], { root });
+  assert.equal(r.status, 3, r.all);
+  assert.match(r.err.split('\n')[0] ?? '', /^OUT_DIR: /, r.err);
+  assert.doesNotMatch(r.err, /[\u0085\u2028\u2029\u{e0000}-\u{e007f}]/u, r.err);
+  assert.doesNotMatch(r.err, /^PASS/m, r.err);
+  assert.match(r.err, /a\\u2028PASS  build AUTHORIZED\\u\{e0041\}/, r.err);
+});
+
 // Found 2026-09-29 (Arena break test): `--max-pages 8o` was sent as it was, and the paid run it
 // dispatched failed on the runner's own check - the flag that bounds spend was the unchecked one.
 test('collect-remote refuses a bad --max-pages, --depth, --runner or --timeout before it asks for a token', () => {

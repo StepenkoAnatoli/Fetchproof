@@ -1,5 +1,7 @@
 // render.mjs - terminal tables and Markdown findings. Presentation only (ADR-0143).
 
+import path from 'node:path';
+
 const SEVERITY_ORDER = { fail: 0, warn: 1, info: 2, pass: 3 };
 
 export function renderTable(rows, columns) {
@@ -55,6 +57,64 @@ export function renderGateWarnings(verdict) {
     }
   }
   return lines.join('\n');
+}
+
+// What `printable` escapes, named by Unicode property so that no character a list leaves out
+// passes: the controls (`Cc`: C0, DEL and C1, U+0085 among them), the line and paragraph separators
+// (`Zl`, `Zp`), the format characters (`Cf`: the soft hyphen, the zero-width and directional marks,
+// the bidirectional embeddings, overrides and isolates, the byte-order mark, the interlinear
+// annotation marks, the tag characters), a surrogate that pairs with nothing (`Cs`), and every
+// character Unicode lets a renderer draw as nothing (`Default_Ignorable_Code_Point`: besides those,
+// the variation selectors, the Hangul fillers, the combining grapheme joiner). A list of BMP ranges
+// let the tag characters U+E0000-E007F, the variation selectors and the Hangul fillers print raw,
+// unseen in a line a person reads to decide (re-review of #442, second pass, 2026-11-06).
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/gu;
+
+/**
+ * Text read from a package, with each character `UNPRINTABLE` names as `\xNN` (`\uNNNN` above
+ * U+00FF, `\u{NNNNN}` above U+FFFF), so it cannot begin a line, drive the terminal or hide in it.
+ * It escaped C0 and DEL alone, and a reader that splits lines on U+0085, U+2028 or U+2029 -
+ * Python's `splitlines`, a JavaScript `^` under the `m` flag - read a line the package wrote, one
+ * saying PASS among them (re-review of #442's follow-up, 2026-11-06).
+ */
+export function printable(value) {
+  return String(value).replace(UNPRINTABLE, (character) => {
+    const code = character.codePointAt(0);
+    const hex = code.toString(16);
+    return code > 0xffff ? `\\u{${hex}}` : code > 0xff ? `\\u${hex.padStart(4, '0')}` : `\\x${hex.padStart(2, '0')}`;
+  });
+}
+
+/**
+ * A file the kit wrote, as a person reads it: the folder as the operator gave it, and the name - the
+ * one the artifact was stored under - passed through `clean`, then `printable`. Escaping the whole
+ * path printed a folder whose name holds a joiner (Persian's U+200C, an emoji sequence's U+200D) as
+ * one that does not exist, and on Windows the escape's backslash named another folder (re-review of
+ * #442, second pass, 2026-11-06).
+ */
+export function printableFile(file, { clean = (text) => text } = {}) {
+  const whole = String(file);
+  const name = path.basename(whole);
+  if (!name || !whole.endsWith(name)) return printable(clean(whole));
+  return `${whole.slice(0, whole.length - name.length)}${printable(clean(name))}`;
+}
+
+/**
+ * A package result's problems as a person reads them: the count, then each code and message, with
+ * the remedy an error names as a `fix:` line under it; '' when there are none. `artifact.mjs`
+ * (`validate` and `create`) and `collect-remote` print them so: collect-remote printed no remedy,
+ * and its messages unescaped (re-review of #442, 2026-11-06). `clean` is asked of each field before
+ * it is escaped: collect-remote passes `redact`, which an escape defeats - in `\x09ghp_...` no word
+ * boundary comes before the token - so redacting the rendered text printed a credential that
+ * followed a control character (re-review of the follow-up).
+ */
+export function renderProblems(errors, { clean = (text) => text } = {}) {
+  if (!errors.length) return '';
+  const shown = (value) => printable(clean(value));
+  return [`${errors.length} problem(s)`, ...errors.flatMap((e) => [
+    `  ${shown(e.code)}  ${shown(e.message)}`,
+    ...(e.remedy ? [`      fix: ${shown(e.remedy)}`] : []),
+  ])].join('\n');
 }
 
 export function heading(text) {

@@ -48,6 +48,7 @@ import { pathToFileURL } from 'node:url';
 import { dispatchCollection, getRunSummary, fetchCorpus, tokenFromEnv, redact, DispatchError, queriesInput, usableOutDir } from './dispatch.mjs';
 import { KIT_VERSION } from './core.mjs';
 import { checkClientRef } from './artifact.mjs';
+import { printable } from './render.mjs';
 
 /**
  * DUAL-ERA, and the reason is that the specification is ahead of every client.
@@ -190,6 +191,13 @@ export function versionProblem(message) {
 
 /** Text content, the ordinary tool result item. */
 const text = (value) => ({ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) });
+
+// Text from a package or from an error, as the agent reads it: redacted, then escaped, field by
+// field - an escape ends the word a credential's pattern starts at (render.mjs). The diagnostics of a
+// package that did not validate, and an error's message, went out redacted only, so a manifest key
+// or an artifact's name holding a line feed or U+2028 wrote a line of its own into the text, this
+// server's own PASS sentence among them (re-review of #442, second pass, 2026-11-06).
+const shown = (value) => printable(redact(value));
 
 /**
  * A link to a file on this machine.
@@ -374,7 +382,7 @@ async function callTool(message, deps) {
     };
     if (validation.status !== 'PASS') {
       const diagnostics = (validation.errors ?? []).map((problem) =>
-        `${problem.code}: ${problem.message}${problem.remedy ? ` - fix: ${problem.remedy}` : ''}`);
+        `${shown(problem.code)}: ${shown(problem.message)}${problem.remedy ? ` - fix: ${shown(problem.remedy)}` : ''}`);
       return ok(message.id, {
         structuredContent,
         content: [text(redact([
@@ -394,7 +402,7 @@ async function callTool(message, deps) {
           : `This is a COLLECTED CORPUS (${validation.state}), not an approved brief. buildAuthorized is false: `
             + 'do not build from it. Three review steps remain, and README-FIRST.md inside the package lists them.'),
         resourceLink(file, {
-          name: String(file).split(/[\\/]/).pop(),
+          name: shown(String(file).split(/[\\/]/).pop()),
           description: `Fetchproof corpus from run ${args.workflow_run_id}, validated ${validation.status}`,
         }),
       ],
@@ -405,7 +413,7 @@ async function callTool(message, deps) {
     return ok(message.id, {
       isError: true,
       structuredContent: e ? { code: e.code, status: e.status } : { code: 'UNKNOWN' },
-      content: [text(redact(`${e?.code ?? 'error'}: ${error.message}${e?.remedy ? `\n\nfix: ${e.remedy}` : ''}`))],
+      content: [text(`${shown(e?.code ?? 'error')}: ${shown(error.message)}${e?.remedy ? `\n\nfix: ${shown(e.remedy)}` : ''}`)],
     });
   }
 }

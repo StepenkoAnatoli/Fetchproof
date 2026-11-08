@@ -332,6 +332,24 @@ test('create writes a package, re-validates it, and says so', () => {
   assert.equal(run(['validate', '--file', out]).code, 0);
 });
 
+// Found 2026-11-06 (re-review of #442's follow-up): create printed its own problem lines, with no
+// remedy, so a package refused for a credential did not say to rotate it - and the workflow's next
+// step, which would have, does not run after a failed one.
+test('create prints the problems of a package it wrote that does not validate, each with its remedy', () => {
+  const root = collectedProject();
+  // A synthetic key, shaped like the real thing and belonging to nobody, in docs/, which travels
+  // whole: a file at the project's root other than its scaffolding does not travel at all.
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'notes.md'), `fc-${'a1b2c3d4'.repeat(3)}\n`);
+  const r = run(['create', '--root', root, '--output', path.join(scratch, 'carries-a-key.zip'),
+    '--repository', 'example-org/example-project', '--ref', 'main',
+    '--commit', '0123456789abcdef0123456789abcdef01234567',
+    '--workflow', 'start-research.yml', '--run-id', '35548135379']);
+  assert.equal(r.code, 1, `${r.out}${r.err}`);
+  assert.match(r.err, /^the package this run just wrote does NOT validate:\n\d+ problem\(s\)$/m, r.err);
+  assert.match(r.err, /^  SECRET-DETECTED  \S*notes\.md:1 matches the .+ credential pattern\n      fix: treat the credential as compromised and rotate it, then regenerate the artifact without it$/m, r.err);
+});
+
 test('create leaves the source artifact of a previous run untouched', () => {
   const { file } = packageTo('untouched', approvedProject());
   const before = sha256(fs.readFileSync(file));

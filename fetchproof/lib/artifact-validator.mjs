@@ -154,8 +154,18 @@ export function validateArtifact({
       return report();
     }
 
-    const manifestBytes = zip.read(MANIFEST_PATH);
-    const digestText = zip.read(MANIFEST_DIGEST_PATH).toString('utf8');
+    // A body that does not read - its CRC-32 or its length wrong - is a broken package, as it
+    // is for a payload file below, not a validation that could not complete (audit F05).
+    let manifestBytes;
+    let digestText;
+    try {
+      manifestBytes = zip.read(MANIFEST_PATH);
+      digestText = zip.read(MANIFEST_DIGEST_PATH).toString('utf8');
+    } catch (err) {
+      if (!(err instanceof ZipError)) throw err;
+      reject('FAIL', err.code, err.message, { path: err.entry, remedy: 'download the artifact again, or regenerate it from the original corpus' });
+      return report();
+    }
     const declared = (digestText.match(/^([0-9a-f]{64})\s{1,2}manifest\.json\s*$/m) ?? [])[1] ?? null;
     const actual = sha256(manifestBytes);
     if (!declared) {
